@@ -1,0 +1,410 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Bảng điều khiển quảng cáo — Meta Ads</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&family=Space+Grotesk:wght@500;600;700&display=swap" rel="stylesheet">
+<style>
+  :root{
+    --ink:#10192B; --ink-soft:#1C2A42; --paper:#EEF1F5; --card:#FFFFFF;
+    --line:#E2E6EC; --line-soft:#EFF2F6; --text:#1A2436; --muted:#697587; --faint:#9AA4B2;
+    --teal:#0E8C76; --teal-bg:#E2F4F0; --amber:#B7791F; --amber-bg:#FBF1DD;
+    --red:#C2412D; --red-bg:#FBE7E2; --accent:#3D5AFE;
+    --shadow:0 1px 2px rgba(16,25,43,.04), 0 6px 24px rgba(16,25,43,.05); --radius:14px;
+  }
+  *{box-sizing:border-box;margin:0;padding:0}
+  body{font-family:'Inter',system-ui,sans-serif;background:var(--paper);color:var(--text);
+    -webkit-font-smoothing:antialiased;font-variant-numeric:tabular-nums;line-height:1.45;}
+  .num{font-family:'Space Grotesk',sans-serif;font-variant-numeric:tabular-nums;}
+  .wrap{max-width:1240px;margin:0 auto;padding:0 22px 64px;}
+
+  header.topbar{background:var(--ink);color:#fff;border-bottom:1px solid rgba(255,255,255,.06);}
+  .topbar-inner{max-width:1240px;margin:0 auto;padding:16px 22px;display:flex;align-items:center;justify-content:space-between;gap:16px;}
+  .brand{display:flex;align-items:center;gap:11px;}
+  .brand .mark{width:34px;height:34px;border-radius:9px;background:linear-gradient(135deg,var(--teal),#0a6f5e);display:grid;place-items:center;flex:none;}
+  .brand .mark span{font-family:'Space Grotesk';font-weight:700;color:#fff;font-size:17px;}
+  .brand h1{font-family:'Space Grotesk';font-size:16px;font-weight:600;letter-spacing:.2px;}
+  .brand p{font-size:12px;color:#9FB0C8;margin-top:1px;}
+  .topbar .right{display:flex;align-items:center;gap:14px;}
+  .avatar{width:34px;height:34px;border-radius:50%;flex:none;background:#324568;color:#fff;display:grid;place-items:center;font-size:13px;font-weight:600;font-family:'Space Grotesk';}
+
+  /* date controls in topbar */
+  .daterange{display:flex;align-items:center;gap:8px;background:rgba(255,255,255,.06);border:1px solid rgba(255,255,255,.10);padding:7px 11px;border-radius:9px;}
+  .daterange label{font-size:11px;color:#9FB0C8;}
+  .daterange input[type=date]{font-family:'Inter';font-size:12.5px;color:#fff;background:transparent;border:none;outline:none;color-scheme:dark;}
+  .daterange .sep{color:#5C6E8C;}
+
+  .summary{background:var(--ink);padding:6px 0 30px;}
+  .summary-inner{max-width:1240px;margin:0 auto;padding:0 22px;display:grid;grid-template-columns:repeat(4,1fr);gap:1px;background:rgba(255,255,255,.07);border-radius:14px;overflow:hidden;border:1px solid rgba(255,255,255,.07);}
+  .kpi{background:var(--ink-soft);padding:18px 20px;}
+  .kpi .label{font-size:12px;color:#9FB0C8;letter-spacing:.3px;text-transform:uppercase;font-weight:500;}
+  .kpi .val{font-family:'Space Grotesk';font-size:26px;font-weight:600;color:#fff;margin-top:7px;letter-spacing:-.5px;}
+  .kpi .val small{font-size:15px;color:#B7C3D6;font-weight:500;margin-left:2px;}
+  .kpi .sub{font-size:12px;margin-top:5px;color:#8C9BB4;}
+  .kpi .sub.good{color:#5FD0B5;}
+  .pace{margin-top:10px;height:5px;border-radius:3px;background:rgba(255,255,255,.12);overflow:hidden;}
+  .pace i{display:block;height:100%;border-radius:3px;background:linear-gradient(90deg,#0E8C76,#3ec9ab);}
+
+  .controls{margin-top:24px;display:flex;flex-direction:column;gap:13px;}
+  .controls-row{display:flex;align-items:center;gap:12px;flex-wrap:wrap;justify-content:space-between;}
+  .viewtoggle{display:inline-flex;background:var(--card);border:1px solid var(--line);border-radius:10px;padding:3px;gap:3px;}
+  .viewtoggle button{font-family:'Inter';font-size:13.5px;font-weight:500;color:var(--muted);background:transparent;border:none;cursor:pointer;padding:8px 15px;border-radius:7px;transition:all .15s;}
+  .viewtoggle button.active{background:var(--ink);color:#fff;}
+
+  .accounts{display:flex;gap:7px;flex-wrap:wrap;}
+  .acc-tab{border:1px solid var(--line);background:var(--card);padding:9px 15px;border-radius:10px;cursor:pointer;font-size:13.5px;color:var(--muted);font-weight:500;display:flex;align-items:center;gap:9px;transition:all .15s;}
+  .acc-tab:hover{border-color:#C9D1DC;}
+  .acc-tab .dot{width:8px;height:8px;border-radius:50%;flex:none;}
+  .acc-tab.active{background:var(--ink);color:#fff;border-color:var(--ink);}
+  .toolbar{display:flex;gap:10px;align-items:center;flex-wrap:wrap;}
+  .search{position:relative;}
+  .search input{font-family:'Inter';font-size:13.5px;color:var(--text);border:1px solid var(--line);background:var(--card);border-radius:10px;padding:10px 13px 10px 36px;width:220px;outline:none;transition:border .15s;}
+  .search input:focus{border-color:var(--teal);box-shadow:0 0 0 3px var(--teal-bg);}
+  .search svg{position:absolute;left:12px;top:50%;transform:translateY(-50%);color:var(--faint);}
+  select.pick{font-family:'Inter';font-size:13.5px;color:var(--text);border:1px solid var(--line);background:var(--card);border-radius:10px;padding:10px 13px;outline:none;cursor:pointer;}
+
+  .panel{background:var(--card);border:1px solid var(--line);border-radius:var(--radius);margin-top:16px;box-shadow:var(--shadow);overflow:hidden;}
+  .panel-head{padding:15px 20px;border-bottom:1px solid var(--line-soft);display:flex;justify-content:space-between;align-items:baseline;}
+  .panel-head h2{font-family:'Space Grotesk';font-size:15px;font-weight:600;}
+  .panel-head .count{font-size:13px;color:var(--muted);}
+  .tablescroll{overflow-x:auto;}
+  table{width:100%;border-collapse:collapse;min-width:920px;}
+  thead th{text-align:left;font-size:11.5px;font-weight:600;color:var(--faint);text-transform:uppercase;letter-spacing:.4px;padding:12px 16px;border-bottom:1px solid var(--line-soft);white-space:nowrap;background:#FBFCFD;}
+  thead th.r{text-align:right;}
+  tbody td{padding:15px 16px;border-bottom:1px solid var(--line-soft);font-size:13.5px;vertical-align:middle;}
+  tbody tr:last-child td{border-bottom:none;}
+  tbody tr:hover{background:#FAFBFC;}
+  td.r{text-align:right;}
+
+  .switch{position:relative;width:40px;height:22px;border-radius:11px;flex:none;background:var(--teal);display:inline-block;}
+  .switch.off{background:#CBD2DC;}
+  .switch::after{content:"";position:absolute;top:2px;left:2px;width:18px;height:18px;border-radius:50%;background:#fff;box-shadow:0 1px 2px rgba(0,0,0,.2);}
+  .switch.off::after{left:20px;}
+  .status-cell{display:flex;align-items:center;gap:10px;}
+  .status-cell span{font-size:12.5px;color:var(--muted);font-weight:500;}
+
+  .camp-name{font-weight:600;color:var(--text);font-size:14px;}
+  .camp-meta{font-size:12px;color:var(--faint);margin-top:3px;display:flex;align-items:center;gap:7px;flex-wrap:wrap;}
+  .nv-chip{background:#EEF1FB;color:#3949AB;border-radius:5px;padding:2px 7px;font-size:11px;font-weight:600;}
+  .objtag{background:#F0F3F8;color:#5A6679;border-radius:5px;padding:2px 7px;font-size:11px;font-weight:500;}
+
+  .money{font-family:'Space Grotesk';font-weight:500;color:var(--text);font-size:14px;white-space:nowrap;}
+  .money .cur{color:var(--faint);font-size:12px;margin-left:2px;}
+  .spendcell{min-width:150px;}
+  .spendbar{height:5px;background:#EDF0F4;border-radius:3px;margin-top:7px;overflow:hidden;}
+  .spendbar i{display:block;height:100%;border-radius:3px;background:var(--teal);}
+  .spendbar i.warn{background:var(--amber);}
+  .spendbar i.over{background:var(--red);}
+  .pct{font-size:11.5px;color:var(--faint);margin-top:4px;}
+  .cpr{display:inline-flex;align-items:center;gap:6px;font-family:'Space Grotesk';font-weight:600;font-size:13.5px;padding:4px 9px;border-radius:7px;}
+  .cpr.good{background:var(--teal-bg);color:var(--teal);}
+  .cpr.mid{background:var(--amber-bg);color:var(--amber);}
+  .cpr.bad{background:var(--red-bg);color:var(--red);}
+  .res{font-family:'Space Grotesk';font-weight:600;font-size:15px;}
+  .res small{font-family:'Inter';font-weight:400;font-size:11.5px;color:var(--faint);display:block;margin-top:1px;}
+
+  /* employee cards */
+  .emp-grid{padding:18px 20px;display:grid;grid-template-columns:repeat(auto-fill,minmax(330px,1fr));gap:14px;}
+  .emp-card{border:1px solid var(--line);border-radius:12px;padding:16px;background:#fff;}
+  .emp-top{display:flex;align-items:center;gap:11px;margin-bottom:14px;}
+  .emp-av{width:38px;height:38px;border-radius:10px;flex:none;display:grid;place-items:center;color:#fff;font-family:'Space Grotesk';font-weight:600;font-size:14px;}
+  .emp-name{font-family:'Space Grotesk';font-weight:600;font-size:15px;}
+  .emp-cc{font-size:12px;color:var(--faint);}
+  .emp-rank{margin-left:auto;font-family:'Space Grotesk';font-size:12px;color:var(--faint);background:#F4F6F9;padding:3px 8px;border-radius:6px;}
+  .emp-spent{font-family:'Space Grotesk';font-size:25px;font-weight:600;letter-spacing:-.5px;}
+  .emp-spent .cur{font-size:15px;color:var(--faint);}
+  .emp-spent-lbl{font-size:11.5px;color:var(--muted);text-transform:uppercase;letter-spacing:.3px;margin-bottom:2px;}
+  .emp-stats{display:flex;gap:18px;margin-top:12px;padding-top:12px;border-top:1px solid var(--line-soft);}
+  .emp-stat .v{font-family:'Space Grotesk';font-weight:600;font-size:15px;}
+  .emp-stat .k{font-size:11px;color:var(--faint);margin-top:1px;}
+  .emp-stat .v.good{color:var(--teal);} .emp-stat .v.mid{color:var(--amber);} .emp-stat .v.bad{color:var(--red);}
+  .spark{margin-top:14px;}
+  .spark-lbl{font-size:11px;color:var(--faint);margin-bottom:6px;}
+  .bars{display:flex;align-items:flex-end;gap:4px;height:52px;}
+  .bars .bcol{flex:1;display:flex;flex-direction:column;align-items:center;gap:4px;min-width:0;}
+  .bars .bar{width:100%;max-width:22px;border-radius:3px 3px 0 0;background:var(--teal);min-height:3px;}
+  .bars .bday{font-size:9px;color:var(--faint);white-space:nowrap;}
+
+  .empty{padding:48px 20px;text-align:center;color:var(--muted);}
+  .empty b{display:block;color:var(--text);font-family:'Space Grotesk';margin-bottom:6px;}
+  .note{margin-top:18px;font-size:12.5px;color:var(--muted);display:flex;gap:9px;align-items:flex-start;background:#FBFCFD;border:1px dashed var(--line);border-radius:10px;padding:13px 15px;}
+  .note svg{flex:none;margin-top:1px;color:var(--faint);}
+
+  @media (max-width:720px){
+    .summary-inner{grid-template-columns:repeat(2,1fr);}
+    .topbar .daterange{display:none;}
+    .search input{width:100%;}
+  }
+  @media (prefers-reduced-motion:reduce){*{transition:none!important;}}
+  :focus-visible{outline:2px solid var(--accent);outline-offset:2px;border-radius:6px;}
+</style>
+</head>
+<body>
+
+<header class="topbar">
+  <div class="topbar-inner">
+    <div class="brand">
+      <div class="mark"><span>M</span></div>
+      <div><h1>Bảng điều khiển quảng cáo</h1><p>Theo dõi Meta Ads · Tổng hợp mọi tài khoản</p></div>
+    </div>
+    <div class="right">
+      <div class="daterange">
+        <label>Từ</label><input type="date" id="from">
+        <span class="sep">→</span>
+        <label>Đến</label><input type="date" id="to">
+      </div>
+      <div class="avatar">QT</div>
+    </div>
+  </div>
+</header>
+
+<section class="summary">
+  <div class="summary-inner">
+    <div class="kpi"><div class="label">Tổng ngân sách / ngày</div><div class="val num" id="k-budget">—</div><div class="sub">trên các chiến dịch đang lọc</div></div>
+    <div class="kpi"><div class="label">Đã chi tiêu (khoảng ngày)</div><div class="val num" id="k-spent">—</div><div class="sub" id="k-spent-sub">—</div><div class="pace"><i id="k-pace" style="width:0%"></i></div></div>
+    <div class="kpi"><div class="label">Tổng kết quả</div><div class="val num" id="k-results">—</div><div class="sub good">tin nhắn · đơn hàng · lead</div></div>
+    <div class="kpi"><div class="label">Chi phí / kết quả (TB)</div><div class="val num" id="k-cpr">—</div><div class="sub">đã pha trộn mọi loại kết quả</div></div>
+  </div>
+</section>
+
+<div class="wrap">
+  <div class="controls">
+    <div class="controls-row">
+      <div class="viewtoggle">
+        <button id="v-camp" class="active" onclick="setView('camp')">Theo chiến dịch</button>
+        <button id="v-emp" onclick="setView('emp')">Theo nhân viên</button>
+      </div>
+      <div class="toolbar">
+        <select class="pick" id="empfilter" aria-label="Lọc theo nhân viên"></select>
+        <div class="search">
+          <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="7"/><path d="M21 21l-4-4"/></svg>
+          <input id="search" type="text" placeholder="Tìm chiến dịch…" aria-label="Tìm chiến dịch">
+        </div>
+        <select class="pick" id="statusfilter" aria-label="Lọc theo trạng thái">
+          <option value="all">Mọi trạng thái</option><option value="on">Đang chạy</option><option value="off">Tạm dừng</option>
+        </select>
+        <select class="pick" id="sortby" aria-label="Sắp xếp">
+          <option value="spent_desc">Chi tiêu: cao → thấp</option>
+          <option value="spent_asc">Chi tiêu: thấp → cao</option>
+          <option value="results_desc">Kết quả: cao → thấp</option>
+          <option value="results_asc">Kết quả: thấp → cao</option>
+          <option value="cpr_desc">CP/kết quả: cao → thấp</option>
+          <option value="cpr_asc">CP/kết quả: thấp → cao</option>
+        </select>
+        <label class="pick" id="hidezero-wrap" style="display:flex;align-items:center;gap:7px;cursor:pointer;user-select:none">
+          <input type="checkbox" id="hidezero" checked style="cursor:pointer">Ẩn chi tiêu = 0
+        </label>
+      </div>
+    </div>
+    <div class="controls-row">
+      <div class="accounts" id="accounts"></div>
+    </div>
+  </div>
+
+  <div id="state-msg" style="margin-top:16px;font-size:13.5px;color:var(--muted);display:none"></div>
+
+  <div class="panel">
+    <div class="panel-head"><h2 id="panel-title">Tất cả chiến dịch</h2><div class="count" id="panel-count">—</div></div>
+    <div id="campview">
+      <div class="tablescroll">
+        <table>
+          <thead><tr>
+            <th>Trạng thái</th><th>Tên chiến dịch</th><th class="r">Ngân sách</th>
+            <th class="r">Đã chi tiêu</th><th class="r">Kết quả</th><th class="r">Chi phí / kết quả</th>
+          </tr></thead>
+          <tbody id="rows"></tbody>
+        </table>
+      </div>
+    </div>
+    <div id="empview" style="display:none"><div class="emp-grid" id="empgrid"></div></div>
+  </div>
+
+  <div class="note">
+    <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><path d="M12 16v-4M12 8h.01"/></svg>
+    <div>Tên nhân viên được tự tách từ đoạn đầu tên chiến dịch (trước dấu " - "). Đây là bản mẫu dữ liệu giả định; công tắc Tắt/Bật chỉ để xem. Khi nối Meta Marketing API, số liệu theo ngày sẽ được lấy thật từ tài khoản của bạn.</div>
+  </div>
+</div>
+
+<script>
+/* ====== Bản nối Meta API thật (lấy dữ liệu từ backend /api/data) ====== */
+const EMP_COLORS=["#0E8C76","#B7791F","#7C4DFF","#3949AB","#C2412D","#0277BD"];
+const ACC_COLORS=["#0E8C76","#B7791F","#7C4DFF","#3949AB","#C2412D","#0277BD"];
+
+let DAYS=[], CAMPAIGNS=[], ACCOUNTS=[];
+let state={view:"camp",acc:"all",emp:"all",q:"",status:"all",sort:"spent_desc",hideZero:true};
+
+const fmtVND=n=>Math.round(n).toLocaleString('vi-VN');
+const accOf=id=>ACCOUNTS.find(a=>a.id===id);
+const empOf=c=>c.employee||(c.name.split(/\s*-\s*/)[0]||'').trim()||'Chưa xác định';
+const dayLbl=iso=>{const[,m,d]=iso.split("-");return parseInt(d)+"/"+parseInt(m);};
+const msg=document.getElementById('state-msg');
+
+/* mặc định: 7 ngày gần nhất */
+(function(){
+  const fmt=d=>d.toISOString().slice(0,10);
+  const to=new Date(); const from=new Date(); from.setDate(to.getDate()-6);
+  document.getElementById('to').value=fmt(to);
+  document.getElementById('from').value=fmt(from);
+})();
+
+/* ---------- tải dữ liệu thật ---------- */
+async function loadData(){
+  const since=document.getElementById('from').value, until=document.getElementById('to').value;
+  if(!since||!until)return;
+  msg.style.display='block'; msg.textContent='Đang tải dữ liệu từ Meta…';
+  try{
+    const res=await fetch(`/api/data?since=${since}&until=${until}`);
+    const data=await res.json();
+    if(data.error){ msg.textContent='Lỗi: '+data.error; return; }
+    DAYS=data.days; CAMPAIGNS=data.campaigns;
+    /* dựng danh sách tài khoản từ dữ liệu */
+    const seen={}; ACCOUNTS=[{id:"all",name:"Tất cả tài khoản",color:"#3D5AFE"}];
+    CAMPAIGNS.forEach(c=>{ if(!seen[c.acc]){ seen[c.acc]=1; ACCOUNTS.push({id:c.acc,name:c.accName||("TK "+c.acc),color:ACC_COLORS[(ACCOUNTS.length-1)%ACC_COLORS.length]}); }});
+    buildAccountTabs(); buildEmpFilter();
+    msg.style.display='none';
+    render();
+  }catch(e){ msg.style.display='block'; msg.textContent='Không kết nối được backend. Kiểm tra server đang chạy. ('+e.message+')'; }
+}
+
+/* ---------- tabs tài khoản ---------- */
+function buildAccountTabs(){
+  const el=document.getElementById('accounts'); el.innerHTML='';
+  if(!ACCOUNTS.find(a=>a.id===state.acc)) state.acc="all";
+  ACCOUNTS.forEach(a=>{
+    const b=document.createElement('button');
+    b.className='acc-tab'+(a.id===state.acc?' active':''); b.dataset.id=a.id;
+    b.innerHTML=(a.id!=="all"?`<span class="dot" style="background:${a.color}"></span>`:'')+`<span>${a.name}</span>`;
+    b.onclick=()=>{state.acc=a.id;document.querySelectorAll('.acc-tab').forEach(x=>x.classList.toggle('active',x.dataset.id===a.id));render();};
+    el.appendChild(b);
+  });
+}
+/* ---------- bộ lọc nhân viên ---------- */
+function buildEmpFilter(){
+  const emps=[...new Set(CAMPAIGNS.map(empOf))].sort();
+  const sel=document.getElementById('empfilter');
+  if(!emps.includes(state.emp)) state.emp="all";
+  sel.innerHTML=`<option value="all">Mọi nhân viên</option>`+emps.map(e=>`<option value="${e}"${e===state.emp?' selected':''}>${e}</option>`).join('');
+}
+
+document.getElementById('empfilter').onchange=e=>{state.emp=e.target.value;render();};
+document.getElementById('search').addEventListener('input',e=>{state.q=e.target.value.toLowerCase();render();});
+document.getElementById('statusfilter').addEventListener('change',e=>{state.status=e.target.value;render();});
+document.getElementById('sortby').addEventListener('change',e=>{state.sort=e.target.value;render();});
+document.getElementById('hidezero').addEventListener('change',e=>{state.hideZero=e.target.checked;render();});
+document.getElementById('from').addEventListener('change',loadData);
+document.getElementById('to').addEventListener('change',loadData);
+
+function setView(v){
+  state.view=v;
+  document.getElementById('v-camp').classList.toggle('active',v==='camp');
+  document.getElementById('v-emp').classList.toggle('active',v==='emp');
+  document.getElementById('campview').style.display=v==='camp'?'':'none';
+  document.getElementById('empview').style.display=v==='emp'?'':'none';
+  document.getElementById('search').closest('.search').style.display=v==='camp'?'':'none';
+  document.getElementById('statusfilter').style.display=v==='camp'?'':'none';
+  document.getElementById('sortby').style.display=v==='camp'?'':'none';
+  render();
+}
+
+/* tổng chi/kết quả của 1 chiến dịch trong toàn khoảng đã tải */
+function sums(c){let s=0,r=0;(c.daily||[]).forEach(d=>{s+=d.spent;r+=d.results;});return{s,r};}
+
+/* màu chi phí/kết quả: so với trung bình cùng loại mục tiêu */
+function buildCprBenchmark(list){
+  const g={};
+  list.forEach(c=>{const {s,r}=sums(c);const k=c.obj||'kết quả';g[k]=g[k]||{s:0,r:0};g[k].s+=s;g[k].r+=r;});
+  const avg={}; for(const k in g) avg[k]=g[k].r?g[k].s/g[k].r:0;
+  return avg;
+}
+function cprClass(cpr,obj,bench){const a=bench[obj]||0;if(!a||!cpr)return 'mid';const ratio=cpr/a;return ratio<=0.9?'good':ratio<=1.15?'mid':'bad';}
+
+function render(){
+  if(!DAYS.length){return;}
+  const nDays=DAYS.length;
+  let scope=CAMPAIGNS.filter(c=>(state.acc==="all"||c.acc===state.acc)&&(state.emp==="all"||empOf(c)===state.emp));
+  let tB=scope.reduce((a,c)=>a+(c.budget||0),0),tS=0,tR=0;
+  scope.forEach(c=>{const{s,r}=sums(c);tS+=s;tR+=r;});
+  const cpr=tR?Math.round(tS/tR):0, budgetWindow=tB*nDays;
+  document.getElementById('k-budget').innerHTML=fmtVND(tB)+'<small> ₫</small>';
+  document.getElementById('k-spent').innerHTML=fmtVND(tS)+'<small> ₫</small>';
+  document.getElementById('k-results').textContent=fmtVND(tR);
+  document.getElementById('k-cpr').innerHTML=fmtVND(cpr)+'<small> ₫</small>';
+  const pace=budgetWindow?Math.min(100,Math.round(tS/budgetWindow*100)):0;
+  document.getElementById('k-pace').style.width=pace+'%';
+  document.getElementById('k-spent-sub').textContent=`${dayLbl(DAYS[0])}–${dayLbl(DAYS[nDays-1])} · ${nDays} ngày · ${pace}% NS`;
+  if(state.view==='camp')renderCamp(); else renderEmp();
+}
+
+function renderCamp(){
+  const nDays=DAYS.length;
+  let list=CAMPAIGNS.filter(c=>
+    (state.acc==="all"||c.acc===state.acc)&&
+    (state.emp==="all"||empOf(c)===state.emp)&&
+    (state.status==="all"||(state.status==="on"?c.on:!c.on))&&
+    (state.q===""||c.name.toLowerCase().includes(state.q)));
+  // ẩn chiến dịch chi tiêu = 0
+  if(state.hideZero) list=list.filter(c=>sums(c).s>0);
+  // sắp xếp theo lựa chọn
+  const keyOf=c=>{const{s,r}=sums(c);return state.sort.startsWith('spent')?s:state.sort.startsWith('results')?r:(r?s/r:0);};
+  const dir=state.sort.endsWith('asc')?1:-1;
+  list.sort((a,b)=>(keyOf(a)-keyOf(b))*dir);
+  const bench=buildCprBenchmark(list);
+  document.getElementById('panel-title').textContent=state.emp!=="all"?'Chiến dịch của '+state.emp:'Tất cả chiến dịch';
+  document.getElementById('panel-count').textContent=list.length+' chiến dịch';
+  const tb=document.getElementById('rows');
+  if(!list.length){tb.innerHTML=`<tr><td colspan="6"><div class="empty"><b>Không có chiến dịch nào</b>Thử đổi bộ lọc hoặc khoảng ngày.</div></td></tr>`;return;}
+  tb.innerHTML=list.map(c=>{
+    const acc=accOf(c.acc)||{name:c.accName,color:'#888'}, nv=empOf(c), {s,r}=sums(c);
+    const budgetWindow=(c.budget||0)*nDays;
+    const pct=budgetWindow?Math.min(100,Math.round(s/budgetWindow*100)):0;
+    const barCls=pct>=100?'over':(pct>=90?'warn':'');
+    const cprVal=r?Math.round(s/r):0, cls=cprClass(cprVal,c.obj,bench);
+    return `<tr>
+      <td><div class="status-cell"><span class="switch ${c.on?'':'off'}"></span><span>${c.on?'Đang chạy':'Tạm dừng'}</span></div></td>
+      <td><div class="camp-name">${c.name}</div><div class="camp-meta"><span class="nv-chip">${nv}</span><span class="dot" style="display:inline-block;width:7px;height:7px;border-radius:50%;background:${acc.color}"></span>${acc.name} · <span class="objtag">${c.obj}</span></div></td>
+      <td class="r"><span class="money">${fmtVND(c.budget||0)}<span class="cur">₫</span></span><div style="font-size:11px;color:var(--faint);margin-top:2px">/ ngày</div></td>
+      <td class="r"><div class="spendcell"><span class="money">${fmtVND(s)}<span class="cur">₫</span></span><div class="spendbar"><i class="${barCls}" style="width:${pct}%"></i></div><div class="pct">${pct}% NS kỳ này</div></div></td>
+      <td class="r"><span class="res">${fmtVND(r)}<small>${c.obj}</small></span></td>
+      <td class="r"><span class="cpr ${cls}">${fmtVND(cprVal)} ₫</span></td>
+    </tr>`;}).join('');
+}
+
+function renderEmp(){
+  const nDays=DAYS.length;
+  let scope=CAMPAIGNS.filter(c=>(state.acc==="all"||c.acc===state.acc)&&(state.emp==="all"||empOf(c)===state.emp));
+  if(state.hideZero) scope=scope.filter(c=>sums(c).s>0);
+  const map={};
+  scope.forEach(c=>{const nv=empOf(c);if(!map[nv])map[nv]={budget:0,spent:0,results:0,n:0,daily:Array(nDays).fill(0)};
+    const g=map[nv];g.budget+=(c.budget||0);g.n++;
+    (c.daily||[]).forEach((d,i)=>{g.spent+=d.spent;g.results+=d.results;g.daily[i]+=d.spent;});});
+  let arr=Object.entries(map).map(([nv,g])=>({nv,...g})).sort((a,b)=>b.spent-a.spent);
+  document.getElementById('panel-title').textContent='Thống kê theo nhân viên';
+  document.getElementById('panel-count').textContent=`${arr.length} nhân viên · ${dayLbl(DAYS[0])}–${dayLbl(DAYS[nDays-1])}`;
+  const grid=document.getElementById('empgrid');
+  if(!arr.length){grid.innerHTML=`<div class="empty"><b>Không có dữ liệu</b>Thử đổi bộ lọc hoặc khoảng ngày.</div>`;return;}
+  grid.innerHTML=arr.map((e,idx)=>{
+    const color=EMP_COLORS[idx%EMP_COLORS.length];
+    const cpr=e.results?Math.round(e.spent/e.results):0, avg=Math.round(e.spent/nDays), maxDay=Math.max(...e.daily,1);
+    const bars=e.daily.map((v,d)=>`<div class="bcol"><div class="bar" style="height:${Math.max(3,Math.round(v/maxDay*48))}px;background:${color}" title="${dayLbl(DAYS[d])}: ${fmtVND(v)} ₫"></div><div class="bday">${dayLbl(DAYS[d])}</div></div>`).join('');
+    const initials=e.nv.split(' ').map(w=>w[0]).slice(0,2).join('').toUpperCase();
+    return `<div class="emp-card">
+      <div class="emp-top"><div class="emp-av" style="background:${color}">${initials}</div>
+        <div><div class="emp-name">${e.nv}</div><div class="emp-cc">${e.n} chiến dịch</div></div>
+        <div class="emp-rank">#${idx+1}</div></div>
+      <div class="emp-spent-lbl">Đã chi tiêu (${nDays} ngày)</div>
+      <div class="emp-spent num">${fmtVND(e.spent)} <span class="cur">₫</span></div>
+      <div class="emp-stats">
+        <div class="emp-stat"><div class="v num">${fmtVND(e.results)}</div><div class="k">kết quả</div></div>
+        <div class="emp-stat"><div class="v num">${fmtVND(cpr)} ₫</div><div class="k">CP / kết quả</div></div>
+        <div class="emp-stat"><div class="v num">${fmtVND(avg)} ₫</div><div class="k">TB / ngày</div></div></div>
+      <div class="spark"><div class="spark-lbl">Chi tiêu theo từng ngày</div><div class="bars">${bars}</div></div>
+    </div>`;}).join('');
+}
+
+loadData();
+</script>
+</body>
+</html>
