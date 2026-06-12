@@ -299,7 +299,7 @@ let DAYS=[], CAMPAIGNS=[], ACCOUNTS=[];
 let state={view:"camp",acc:"all",emp:"all",q:"",status:"all",sort:"spent_desc",hideZero:true,expanded:new Set()};
 
 const fmtVND=n=>Math.round(n).toLocaleString('vi-VN');
-const TAX=0.10;                       // Thuế VAT quảng cáo (10%). Đổi ở đây nếu cần.
+const TAX=0.11;                       // Thuế VAT quảng cáo (11%). Đổi ở đây nếu cần.
 const withTax=n=>n*(1+TAX);
 const accOf=id=>ACCOUNTS.find(a=>a.id===id);
 const empOf=c=>c.employee||(c.name.split(/\s*-\s*/)[0]||'').trim()||'Chưa xác định';
