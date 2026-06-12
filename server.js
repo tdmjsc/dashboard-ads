@@ -28,10 +28,10 @@ const USERS = [
   { user: 'admin',  pass: '12345678', role: 'admin' },
 
   // Ví dụ trưởng phòng — xem được nhiều nhân viên:
-  { user: 'truongphong1', pass: '123456', role: 'viewer', employees: ['Phương', 'My', 'Huân'] },
+  { user: 'mkt.phuong', pass: '12345678', role: 'viewer', employees: ['Phương','Việt Hà','Huân','Thúy An'] },
 
   // Ví dụ nhân viên — chỉ xem chính mình:
-  { user: 'phuong', pass: '123456', role: 'viewer', employees: ['Phương'] },
+  { user: 'mkt.truong', pass: '12345678', role: 'viewer', employees: ['Trường','My','Minh','Ánh'] },
 ];
 
 /* =========================================================================
