@@ -25,7 +25,7 @@ const BASE = `https://graph.facebook.com/${V}`;
    Thêm/sửa tài khoản = sửa danh sách này rồi commit lên GitHub (Render tự cập nhật).
    ========================================================================= */
 const USERS = [
-  { user: 'admin',  pass: 'DOI_MAT_KHAU_NAY', role: 'admin' },
+  { user: 'tdmjsc',  pass: 'Tdmjsc@0611', role: 'admin' },
 
   // Ví dụ trưởng phòng — xem được nhiều nhân viên:
   { user: 'truongphong1', pass: '123456', role: 'viewer', employees: ['Trịnh Đức Phương', 'Nguyễn Thị Trà My', 'Nguyễn Duy Huân'] },
