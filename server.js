@@ -25,13 +25,13 @@ const BASE = `https://graph.facebook.com/${V}`;
    Thêm/sửa tài khoản = sửa danh sách này rồi commit lên GitHub (Render tự cập nhật).
    ========================================================================= */
 const USERS = [
-  { user: 'admin',  pass: 'DOI_MAT_KHAU_NAY', role: 'admin' },
+  { user: 'tdmjsc',  pass: 'Tdmjsc@0611', role: 'admin' },
 
   // Ví dụ trưởng phòng — xem được nhiều nhân viên:
-  { user: 'truongphong1', pass: '123456', role: 'viewer', employees: ['Trịnh Đức Phương', 'Nguyễn Thị Trà My', 'Nguyễn Duy Huân'] },
+  { user: 'mkt.phuong', pass: 'Phuong@45678', role: 'viewer', employees: ['Trịnh Đức Phương', 'Đoàn Việt Hà', 'Nguyễn Duy Huân', 'Vũ Thuý An'] },
 
   // Ví dụ nhân viên — chỉ xem chính mình:
-  { user: 'phuong', pass: '123456', role: 'viewer', employees: ['Trịnh Đức Phương'] },
+  { user: 'mkt.truong', pass: 'Truong@1234', role: 'viewer', employees: ['Tạ Quang Trường', 'Nguyễn Thị Trà My', 'Lê Thị Ánh', 'Dương Văn Minh'] },
 ];
 
 /* =========================================================================
@@ -55,7 +55,7 @@ const EMPLOYEES = [
   { code: 'TD9',  short: 'Việt Hà', full: 'Đoàn Việt Hà' },
   { code: 'TD10', short: 'Thuý An', full: 'Vũ Thuý An', aliases: ['Thúy An'] },
   // Nhân viên cũ (chiến dịch cũ chưa có mã) — giữ để vẫn nhận ra, xóa nếu không cần:
-  { code: '',     short: 'Thắng',   full: 'Thắng' },
+  { code: '',     short: 'Thắng',   full: 'Nguyễn Sỹ Thắng' },
 ];
 
 /* Nhận diện nhân viên: tách tên chiến dịch thành các "chữ" riêng, rồi tìm xem
