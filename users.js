@@ -18,15 +18,15 @@
 export const USERS = [
 
   // ----- Chủ hệ thống (xem tất cả) -----
-  { user: 'admin', pass: 'DAT_MAT_KHAU_MANH', role: 'admin' },
+  { user: 'tdmjsc', pass: 'Tdmjsc@0611', role: 'admin' },
 
   // ----- Trưởng phòng (xem nhiều nhân viên) — ví dụ, sửa lại theo thực tế -----
-  { user: 'truongphong1', pass: 'doi_mat_khau', role: 'viewer',
-    employees: ['Trịnh Đức Phương', 'Nguyễn Thị Trà My', 'Nguyễn Duy Huân'] },
+  { user: 'mkt.phuong', pass: 'Phuong@45678', role: 'viewer',
+    employees: ['Trịnh Đức Phương', 'Đoàn Việt Hà', 'Nguyễn Duy Huân', 'Vũ Thuý An'] },
 
   // ----- Nhân viên (chỉ xem chính mình) — ví dụ -----
-  { user: 'phuong', pass: 'doi_mat_khau', role: 'viewer',
-    employees: ['Trịnh Đức Phương'] },
+  { user: 'mkt.truong', pass: 'Truong@1234', role: 'viewer',
+    employees: ['Tạ Quang Trường', 'Nguyễn Thị Trà My', 'Dương Văn Minh', 'Lê Thị Ánh'] },
 
   // Thêm các tài khoản khác ở đây, ví dụ:
   // { user: 'truong', pass: '...', role: 'viewer', employees: ['Tạ Quang Trường'] },
