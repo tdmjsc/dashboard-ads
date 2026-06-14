@@ -430,6 +430,7 @@ async function refreshMarketing(since, until) {
   MKT.fetching = true; MKT.error = null; MKT.since = since; MKT.until = until;
   MKT.rows = []; MKT.loaded = 0; MKT.totalRecord = 0;
   const acc = {};
+  const seenOrders = new Set(); // mã đơn đã tính -> chống đếm trùng khi API trả lại trang cũ
   try {
     for (let page = 1; page <= MKT_MAX_PAGES; page++) {
       const res = await fetch(`${SANDBOX_BASE}/DonHangLogistic/GetOrderByConditions`, {
@@ -449,10 +450,17 @@ async function refreshMarketing(since, until) {
       const json = await res.json();
       if (!json.success) { MKT.error = json.message || 'API Sandbox báo lỗi (kiểm tra token).'; break; }
       const orders = json.data || [];
-      aggregateMarketing(orders, acc);
-      MKT.loaded += orders.length;
-      const tr = Number(json.totalRecord) || 0;
-      MKT.totalRecord = tr || MKT.loaded;
+      // Chỉ tính ĐƠN MỚI (chưa thấy ở các trang trước) để không cộng trùng
+      const fresh = [];
+      for (const o of orders) {
+        const id = String(o.orderId || o.orderNumber || o.orderCode || '');
+        if (!id || seenOrders.has(id)) continue;
+        seenOrders.add(id);
+        fresh.push(o);
+      }
+      aggregateMarketing(fresh, acc);
+      MKT.loaded = seenOrders.size;
+      MKT.totalRecord = seenOrders.size;
       MKT.rows = Object.values(acc).map(r => {
         const prods = Object.values(r.products).sort((x, y) => y.soDon - x.soDon);
         return {
@@ -461,9 +469,9 @@ async function refreshMarketing(since, until) {
           doanhthu: r.doanhthu, products: prods,
         };
       }).sort((a, b) => (b.chot - a.chot) || (b.doanhthu - a.doanhthu)); // điền dần để xem tiến độ
-      if (orders.length < 100) break;          // trang chưa đủ 100 -> đã hết dữ liệu
-      if (tr && MKT.loaded >= tr) break;        // hoặc đã lấy đủ theo totalRecord
-      await sleep(MKT_PAGE_DELAY_MS);           // tôn trọng giới hạn 60s/endpoint
+      if (orders.length < 100) break;   // trang chưa đủ 100 -> đã hết dữ liệu
+      if (fresh.length === 0) break;    // không còn đơn mới -> API lặp lại trang cũ, dừng
+      await sleep(MKT_PAGE_DELAY_MS);    // tôn trọng giới hạn 60s/endpoint
     }
     MKT.lastUpdated = new Date().toISOString();
   } catch (e) {
@@ -525,6 +533,39 @@ app.get('/api/marketing/sample', async (req, res) => {
       detailsSampleKeys: withDetails ? Object.keys(withDetails.details[0]) : null,
       detailsSample: withDetails ? withDetails.details.slice(0, 2) : [],
     });
+  } catch (e) { res.json({ error: e.message }); }
+});
+
+// (TẠM — để kiểm tra) Thử gọi API BÁO CÁO của Sandbox bằng token đối tác.
+//  Mở /api/marketing/report-test để xem token có quyền gọi báo cáo không.
+const SANDBOX_REPORT_URL = 'https://api.sandbox.com.vn/report/api/report/ReportLeadByNhanSuMktSearch';
+const SANDBOX_REPORT_BRANCH = process.env.SANDBOX_REPORT_BRANCH || 'f13cc0dc-28f0-4d17-b7aa-4f190fe6c4ae';
+app.get('/api/marketing/report-test', async (req, res) => {
+  if (!SANDBOX_TOKEN) return res.json({ error: 'Chưa khai SANDBOX_TOKEN' });
+  const today = new Date().toISOString().slice(0, 10);
+  const since = req.query.since || today;
+  const until = req.query.until || today;
+  const branch = req.query.branch || SANDBOX_REPORT_BRANCH;
+  const body = {
+    pageInfo: { page: 1, pageSize: 50 }, sorts: [],
+    kieuXem: 4, loaiNhanVien: 1, isChietKhau: true, isVat: true,
+    kieuNgay: 'NgayTao',
+    date: [`${since}T00:00:00.000+07:00`, `${until}T23:59:59.998+07:00`],
+    tuNgay: `${since}T00:00:00.000+07:00`,
+    denNgay: `${until}T23:59:59.998+07:00`,
+    idChiNhanh: branch === 'null' ? null : branch,
+    idNhomNhanVienMkts: null, idNhomNhanVienSale: null,
+    idPhongBanMkts: null, idPhongBanSale: null,
+    idUserMkts: null, idUserSale: null, typeViewDetail: null,
+  };
+  try {
+    const r = await fetch(SANDBOX_REPORT_URL, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${SANDBOX_TOKEN}` },
+      body: JSON.stringify(body),
+    });
+    const text = await r.text();
+    res.json({ status: r.status, ok: r.ok, bodyHead: text.slice(0, 2000) });
   } catch (e) { res.json({ error: e.message }); }
 });
 
