@@ -64,11 +64,12 @@
     <thead>
       <tr>
         <th>Nhân viên marketing</th>
-        <th class="num">Số đơn</th>
-        <th class="num">Đơn chốt</th>
+        <th class="num">Số contact</th>
+        <th class="num">Số đơn hàng</th>
+        <th class="num">Tỷ lệ chốt</th>
         <th class="num">Đơn ship TC</th>
         <th class="num">Số SP</th>
-        <th class="num">Doanh thu (VND)</th>
+        <th class="num">Doanh số (VND)</th>
       </tr>
     </thead>
     <tbody id="rows"></tbody>
@@ -93,8 +94,9 @@ function esc(s){ return String(s==null?'':s).replace(/[&<>"]/g, c=>({'&':'&amp;'
 function renderRows(rows){
   lastRows = rows || [];
   const tb = $('rows');
-  if(!lastRows.length){ tb.innerHTML = '<tr><td colspan="6" class="empty">Chưa có dữ liệu. Chọn khoảng ngày rồi bấm "Cập nhật".</td></tr>'; return; }
+  if(!lastRows.length){ tb.innerHTML = '<tr><td colspan="7" class="empty">Chưa có dữ liệu. Chọn khoảng ngày rồi bấm "Cập nhật".</td></tr>'; return; }
   let tDon=0,tChot=0,tShip=0,tSP=0,tRev=0, html='';
+  const pct = (a,b)=> b ? Math.round(a/b*100) + '%' : '–';
   lastRows.forEach((r,i)=>{
     tDon+=r.soDon||0; tChot+=r.chot||0; tShip+=r.ship||0; tSP+=r.soSP||0; tRev+=r.doanhthu||0;
     const prods = r.products||[];
@@ -103,12 +105,13 @@ function renderRows(rows){
       <td>${open?'▾':'▸'} ${esc(r.name)} <span class="pcount">(${prods.length} loại)</span></td>
       <td class="num">${vnd(r.soDon)}</td>
       <td class="num">${vnd(r.chot)}</td>
+      <td class="num">${pct(r.chot, r.soDon)}</td>
       <td class="num">${vnd(r.ship)}</td>
       <td class="num">${vnd(r.soSP)}</td>
       <td class="num rev">${vnd(r.doanhthu)}</td>
     </tr>`;
     if(open){
-      html += '<tr class="detail"><td colspan="6"><div class="prodbox">';
+      html += '<tr class="detail"><td colspan="7"><div class="prodbox">';
       if(!prods.length){ html += '<div class="pempty">Đơn của nhân viên này chưa có dữ liệu sản phẩm.</div>'; }
       else {
         html += '<table class="ptbl"><thead><tr><th>Tên sản phẩm</th><th class="num">Số đơn</th><th class="num">Số lượng</th></tr></thead><tbody>';
@@ -118,7 +121,7 @@ function renderRows(rows){
       html += '</div></td></tr>';
     }
   });
-  html += `<tr class="total"><td>Tổng cộng</td><td class="num">${vnd(tDon)}</td><td class="num">${vnd(tChot)}</td><td class="num">${vnd(tShip)}</td><td class="num">${vnd(tSP)}</td><td class="num">${vnd(tRev)}</td></tr>`;
+  html += `<tr class="total"><td>Tổng cộng</td><td class="num">${vnd(tDon)}</td><td class="num">${vnd(tChot)}</td><td class="num">${pct(tChot, tDon)}</td><td class="num">${vnd(tShip)}</td><td class="num">${vnd(tSP)}</td><td class="num">${vnd(tRev)}</td></tr>`;
   tb.innerHTML = html;
 }
 
