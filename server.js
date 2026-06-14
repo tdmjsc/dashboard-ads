@@ -442,9 +442,8 @@ async function refreshMarketing(since, until) {
         body: JSON.stringify({
           idChiNhanh: SANDBOX_BRANCH,
           kieuNgay: 'NgayTao',
-          date: [`${since}T00:00:00.000+07:00`, `${until}T23:59:59.998+07:00`],
-          tuNgay: `${since}T00:00:00.000+07:00`,
-          denNgay: `${until}T23:59:59.998+07:00`,
+          tuNgay: `${since}T00:00:00+07:00`,
+          denNgay: `${until}T23:59:59+07:00`,
           pageInfo: { page, pageSize: 100 },
           sorts: [],
           isIncludeDetail: true,  // lấy danh sách sản phẩm của đơn
@@ -516,8 +515,7 @@ app.get('/api/marketing/sample', async (req, res) => {
       headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${SANDBOX_TOKEN}` },
       body: JSON.stringify({
         idChiNhanh: SANDBOX_BRANCH, kieuNgay: 'NgayTao',
-        date: [`${since}T00:00:00.000+07:00`, `${until}T23:59:59.998+07:00`],
-        tuNgay: `${since}T00:00:00.000+07:00`, denNgay: `${until}T23:59:59.998+07:00`,
+        tuNgay: `${since}T00:00:00+07:00`, denNgay: `${until}T23:59:59+07:00`,
         pageInfo: { page: 1, pageSize: 100 }, sorts: [],
         isIncludeDetail: true, isHistories: true,
       }),
