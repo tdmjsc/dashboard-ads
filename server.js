@@ -509,13 +509,25 @@ app.get('/api/marketing/sample', async (req, res) => {
   const today = new Date().toISOString().slice(0, 10);
   const since = req.query.since || (today.slice(0, 8) + '01');
   const until = req.query.until || today;
+  // Thử các kiểu gửi ngày khác nhau để tìm đúng định dạng API chấp nhận:
+  //  ?fmt=iso (mặc định) | dateonly | notz | utc ;  ?kieu=NgayTao (mặc định) | số khác
+  const fmt = req.query.fmt || 'iso';
+  const kieuNgay = req.query.kieu || 'NgayTao';
+  const tuNgay = fmt === 'dateonly' ? since
+    : fmt === 'notz' ? `${since}T00:00:00`
+    : fmt === 'utc' ? `${since}T00:00:00.000Z`
+    : `${since}T00:00:00+07:00`;
+  const denNgay = fmt === 'dateonly' ? until
+    : fmt === 'notz' ? `${until}T23:59:59`
+    : fmt === 'utc' ? `${until}T23:59:59.999Z`
+    : `${until}T23:59:59+07:00`;
   try {
     const r = await fetch(`${SANDBOX_BASE}/DonHangLogistic/GetOrderByConditions`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${SANDBOX_TOKEN}` },
       body: JSON.stringify({
-        idChiNhanh: SANDBOX_BRANCH, kieuNgay: 'NgayTao',
-        tuNgay: `${since}T00:00:00+07:00`, denNgay: `${until}T23:59:59+07:00`,
+        idChiNhanh: SANDBOX_BRANCH, kieuNgay,
+        tuNgay, denNgay,
         pageInfo: { page: 1, pageSize: 100 }, sorts: [],
         isIncludeDetail: true, isHistories: true,
       }),
@@ -532,6 +544,7 @@ app.get('/api/marketing/sample', async (req, res) => {
     const outOfRange = createDates.filter(d => d && (d < since || d > until)).length;
     res.json({
       success: json.success, totalRecord: json.totalRecord, count: orders.length,
+      triedFmt: fmt, triedKieu: kieuNgay, sentTuNgay: tuNgay, sentDenNgay: denNgay,
       askedRange: [since, until],
       outOfRangeCount: outOfRange,                 // > 0 => bộ lọc ngày KHÔNG ăn
       distinctCreateDates: [...new Set(createDates)].sort(),
