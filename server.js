@@ -386,8 +386,8 @@ const SANDBOX_TOKEN = process.env.SANDBOX_TOKEN || '';
 //  SANDBOX_BRANCH = '<mã chi nhánh>' nếu sau này cần lọc riêng.
 const _branchEnv = process.env.SANDBOX_BRANCH;
 const SANDBOX_BRANCH = (_branchEnv && _branchEnv !== 'null') ? _branchEnv : null;
-const MKT_PAGE_DELAY_MS = 4000; // chờ 4s giữa các trang (API giới hạn ~3s/lần)
-const MKT_MAX_PAGES = 80;       // an toàn: tối đa 80 trang (~8000 đơn) mỗi lần
+const MKT_PAGE_DELAY_MS = 62 * 1000; // chờ 62s giữa các trang (API giới hạn ~60s/lần)
+const MKT_MAX_PAGES = 40;            // tối đa 40 trang/lần (mỗi trang ~60s)
 
 const sleep = ms => new Promise(r => setTimeout(r, ms));
 // Cộng 1 ngày (YYYY-MM-DD) -> dùng cho denNgay để lấy trọn ngày cuối
@@ -456,9 +456,11 @@ async function refreshMarketing(since, until) {
       const json = await res.json().catch(() => ({ success: false, message: 'Phản hồi không hợp lệ từ Sandbox' }));
       if (!json.success) {
         const msg = String(json.message || json.Message || '');
-        // Bị giới hạn tốc độ ("cần chờ 3s ...") -> đợi rồi thử lại CHÍNH trang này
+        // Bị giới hạn tốc độ ("cần chờ Ns ...") -> đợi đúng số giây báo rồi thử lại trang này
         if (/chờ|cần chờ|call api|giây|rate|quá nhanh/i.test(msg) && rateRetries < 8) {
-          rateRetries++; await sleep(MKT_PAGE_DELAY_MS); page--; continue;
+          const m = msg.match(/(\d+)\s*s/);
+          const waitMs = (m ? Number(m[1]) + 3 : 62) * 1000;
+          rateRetries++; await sleep(waitMs); page--; continue;
         }
         MKT.error = msg || 'API Sandbox báo lỗi (kiểm tra token).'; break;
       }
@@ -497,7 +499,7 @@ async function refreshMarketing(since, until) {
 
 app.get('/api/marketing', (req, res) => {
   res.json({
-    ver: 'mkt-2026-06-14-v5', // bản: phân trang 'page' + lọc ngày YYYY-MM-DD + chờ 4s + tự thử lại + chẩn đoán có errMsg
+    ver: 'mkt-2026-06-14-v6', // bản: phân trang 'page' + lọc ngày YYYY-MM-DD + chờ ~60s đúng giới hạn + tự thử lại
     fetching: MKT.fetching, lastUpdated: MKT.lastUpdated,
     since: MKT.since, until: MKT.until,
     rows: MKT.rows, totalRecord: MKT.totalRecord, loaded: MKT.loaded,
