@@ -466,12 +466,15 @@ async function refreshMarketing(since, until) {
       }
       rateRetries = 0;
       const orders = json.data || [];
-      // Chỉ tính ĐƠN MỚI (chưa thấy ở các trang trước) để không cộng trùng
+      // Lọc: chỉ đơn MỚI (chống trùng) VÀ đúng khoảng ngày theo createTime (chốt chặn phía mình)
+      let newSeen = 0;
       const fresh = [];
       for (const o of orders) {
         const id = String(o.orderId || o.orderNumber || o.orderCode || '');
         if (!id || seenOrders.has(id)) continue;
-        seenOrders.add(id);
+        seenOrders.add(id); newSeen++;
+        const d = (o.createTime || '').slice(0, 10);
+        if (d && (d < since || d > until)) continue; // ngoài khoảng ngày -> không tính
         fresh.push(o);
       }
       aggregateMarketing(fresh, acc);
@@ -485,9 +488,9 @@ async function refreshMarketing(since, until) {
           doanhthu: r.doanhthu, products: prods,
         };
       }).sort((a, b) => (b.chot - a.chot) || (b.doanhthu - a.doanhthu)); // điền dần để xem tiến độ
-      if (orders.length < 100) break;   // trang chưa đủ 100 -> đã hết dữ liệu
-      if (fresh.length === 0) break;    // không còn đơn mới -> API lặp lại trang cũ, dừng
-      await sleep(MKT_PAGE_DELAY_MS);    // tôn trọng giới hạn tốc độ API (~3s)
+      if (orders.length < 100) break;   // trang chưa đủ 100 -> server đã hết dữ liệu
+      if (newSeen === 0) break;         // không còn đơn mới -> dừng (tránh lặp vô tận)
+      await sleep(MKT_PAGE_DELAY_MS);    // tôn trọng giới hạn tốc độ API (~60s)
     }
     MKT.lastUpdated = new Date().toISOString();
   } catch (e) {
@@ -499,7 +502,7 @@ async function refreshMarketing(since, until) {
 
 app.get('/api/marketing', (req, res) => {
   res.json({
-    ver: 'mkt-2026-06-14-v6', // bản: phân trang 'page' + lọc ngày YYYY-MM-DD + chờ ~60s đúng giới hạn + tự thử lại
+    ver: 'mkt-2026-06-14-v7', // bản: lọc ngày YYYY-MM-DD + chốt chặn createTime + chờ 60s + tự thử lại
     fetching: MKT.fetching, lastUpdated: MKT.lastUpdated,
     since: MKT.since, until: MKT.until,
     rows: MKT.rows, totalRecord: MKT.totalRecord, loaded: MKT.loaded,
