@@ -139,7 +139,7 @@ function setStatus(d){
   if(!d.hasToken){ s.innerHTML = '<span class="warn">Chưa khai SANDBOX_TOKEN trên máy chủ — xem hướng dẫn để thêm token rồi khởi động lại app.</span>'; return; }
   if(d.fetching){
     const tot = d.totalRecord ? ('/'+d.totalRecord) : '';
-    s.innerHTML = '<span class="warn">Đang cập nhật ngầm… đã tải '+(d.loaded||0)+tot+' đơn. Bảng sẽ tự điền dần (mỗi trang cách nhau ~60 giây).</span>';
+    s.innerHTML = '<span class="warn">Đang cập nhật ngầm… đã tải '+(d.loaded||0)+tot+' đơn. Bảng tự điền dần (API giới hạn ~60 giây/trang, vui lòng đợi).</span>';
     return;
   }
   if(d.lastUpdated){
