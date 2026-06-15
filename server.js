@@ -497,7 +497,7 @@ async function refreshMarketing(since, until) {
 
 app.get('/api/marketing', (req, res) => {
   res.json({
-    ver: 'mkt-2026-06-14-v4', // bản: phân trang 'page' + lọc ngày YYYY-MM-DD + chờ 4s + tự thử lại
+    ver: 'mkt-2026-06-14-v5', // bản: phân trang 'page' + lọc ngày YYYY-MM-DD + chờ 4s + tự thử lại + chẩn đoán có errMsg
     fetching: MKT.fetching, lastUpdated: MKT.lastUpdated,
     since: MKT.since, until: MKT.until,
     rows: MKT.rows, totalRecord: MKT.totalRecord, loaded: MKT.loaded,
@@ -558,7 +558,8 @@ app.get('/api/marketing/sample', async (req, res) => {
     const createDates = orders.map(o => dOnly(o.createTime));
     const outOfRange = createDates.filter(d => d && (d < since || d > until)).length;
     res.json({
-      success: json.success, totalRecord: json.totalRecord, count: orders.length,
+      success: json.success, errMsg: json.message || json.Message || null,
+      totalRecord: json.totalRecord, count: orders.length,
       triedFmt: fmt, triedKieu: kieuNgay, sentTuNgay: tuNgay, sentDenNgay: denNgay,
       askedRange: [since, until],
       outOfRangeCount: outOfRange,                 // > 0 => bộ lọc ngày KHÔNG ăn
