@@ -6,6 +6,7 @@ import express from 'express';
 import session from 'express-session';
 import 'dotenv/config';
 import path from 'node:path';
+import fs from 'node:fs';
 import { fileURLToPath } from 'node:url';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -284,11 +285,29 @@ async function fetchAccount(acc, token, days, since, until) {
 
 /* ---------- Đăng nhập ---------- */
 app.set('trust proxy', 1);
+// Lưu phiên đăng nhập ra FILE để KHÔNG bị đăng xuất khi máy chủ khởi động lại
+const SESS_FILE = path.join(__dirname, 'sessions.json');
+class FileSessionStore extends session.Store {
+  constructor() {
+    super();
+    this.sessions = {};
+    try { this.sessions = JSON.parse(fs.readFileSync(SESS_FILE, 'utf8')); } catch { this.sessions = {}; }
+  }
+  _save() { try { fs.writeFileSync(SESS_FILE, JSON.stringify(this.sessions)); } catch {} }
+  get(sid, cb) { try { const s = this.sessions[sid]; cb(null, s ? JSON.parse(s) : null); } catch (e) { cb(e); } }
+  set(sid, sess, cb) { this.sessions[sid] = JSON.stringify(sess); this._save(); if (cb) cb(null); }
+  destroy(sid, cb) { delete this.sessions[sid]; this._save(); if (cb) cb(null); }
+  touch(sid, sess, cb) { this.sessions[sid] = JSON.stringify(sess); this._save(); if (cb) cb(null); }
+}
+
 app.use(session({
+  store: new FileSessionStore(),
   secret: process.env.SESSION_SECRET || 'doi-thanh-mot-chuoi-bi-mat-ngau-nhien',
   resave: false,
   saveUninitialized: false,
-  cookie: { httpOnly: true, sameSite: 'lax', maxAge: 1000 * 60 * 60 * 24 * 7 }, // 7 ngày
+  // KHÔNG đặt maxAge -> cookie phiên: chỉ đăng xuất khi ĐÓNG trình duyệt,
+  //  và vì phiên lưu ra file nên Redeploy/Restart không làm đăng xuất nữa.
+  cookie: { httpOnly: true, sameSite: 'lax' },
 }));
 app.use(express.urlencoded({ extended: false }));
 app.use(express.json());
@@ -502,7 +521,7 @@ async function refreshMarketing(since, until) {
 
 app.get('/api/marketing', (req, res) => {
   res.json({
-    ver: 'mkt-2026-06-14-v7', // bản: lọc ngày YYYY-MM-DD + chốt chặn createTime + chờ 60s + tự thử lại
+    ver: 'mkt-2026-06-14-v9', // chẩn đoán mốc ngày + lưu phiên ra file (không đăng xuất khi restart)
     fetching: MKT.fetching, lastUpdated: MKT.lastUpdated,
     since: MKT.since, until: MKT.until,
     rows: MKT.rows, totalRecord: MKT.totalRecord, loaded: MKT.loaded,
@@ -570,6 +589,10 @@ app.get('/api/marketing/sample', async (req, res) => {
       outOfRangeCount: outOfRange,                 // > 0 => bộ lọc ngày KHÔNG ăn
       distinctCreateDates: [...new Set(createDates)].sort(),
       createTimeSample: orders.slice(0, 20).map(o => o.createTime),
+      dateFieldsSample: orders.slice(0, 12).map(o => ({
+        create: o.createTime, recv: o.timeSaleReceivingData,
+        confirm: o.orderConfirmDate, submit: o.timeOrderSubmit, update: o.updateTime,
+      })),
       orderKeys: Object.keys(o0),
       statusFields,
       anyDetailsNonEmpty: orders.some(o => Array.isArray(o.details) && o.details.length),
