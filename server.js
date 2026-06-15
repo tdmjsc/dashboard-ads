@@ -386,10 +386,12 @@ const SANDBOX_TOKEN = process.env.SANDBOX_TOKEN || '';
 //  SANDBOX_BRANCH = '<mã chi nhánh>' nếu sau này cần lọc riêng.
 const _branchEnv = process.env.SANDBOX_BRANCH;
 const SANDBOX_BRANCH = (_branchEnv && _branchEnv !== 'null') ? _branchEnv : null;
-const MKT_PAGE_DELAY_MS = 61 * 1000; // chờ 61s giữa các trang (API giới hạn 60s/endpoint)
-const MKT_MAX_PAGES = 30;            // an toàn: tối đa 30 trang (~3000 đơn) mỗi lần
+const MKT_PAGE_DELAY_MS = 4000; // chờ 4s giữa các trang (API giới hạn ~3s/lần)
+const MKT_MAX_PAGES = 80;       // an toàn: tối đa 80 trang (~8000 đơn) mỗi lần
 
 const sleep = ms => new Promise(r => setTimeout(r, ms));
+// Cộng 1 ngày (YYYY-MM-DD) -> dùng cho denNgay để lấy trọn ngày cuối
+const addDay = s => { const d = new Date(s + 'T00:00:00Z'); d.setUTCDate(d.getUTCDate() + 1); return d.toISOString().slice(0, 10); };
 
 // Trạng thái + kết quả marketing (giữ trong RAM, không chặn request)
 const MKT = { fetching: false, lastUpdated: null, since: null, until: null,
@@ -434,6 +436,7 @@ async function refreshMarketing(since, until) {
   MKT.rows = []; MKT.loaded = 0; MKT.totalRecord = 0;
   const acc = {};
   const seenOrders = new Set(); // mã đơn đã tính -> chống đếm trùng khi API trả lại trang cũ
+  let rateRetries = 0;
   try {
     for (let page = 1; page <= MKT_MAX_PAGES; page++) {
       const res = await fetch(`${SANDBOX_BASE}/DonHangLogistic/GetOrderByConditions`, {
@@ -442,16 +445,24 @@ async function refreshMarketing(since, until) {
         body: JSON.stringify({
           idChiNhanh: SANDBOX_BRANCH,
           kieuNgay: 'NgayTao',
-          tuNgay: `${since}T00:00:00+07:00`,
-          denNgay: `${until}T23:59:59+07:00`,
-          pageInfo: { page, pageSize: 100 },
+          tuNgay: since,            // ngày-trơn YYYY-MM-DD (API chỉ lọc đúng với kiểu này)
+          denNgay: addDay(until),   // +1 ngày để lấy trọn ngày cuối
+          pageInfo: { pageIndex: page, pageSize: 100 },
           sorts: [],
           isIncludeDetail: true,  // lấy danh sách sản phẩm của đơn
           isHistories: false,
         }),
       });
-      const json = await res.json();
-      if (!json.success) { MKT.error = json.message || 'API Sandbox báo lỗi (kiểm tra token).'; break; }
+      const json = await res.json().catch(() => ({ success: false, message: 'Phản hồi không hợp lệ từ Sandbox' }));
+      if (!json.success) {
+        const msg = String(json.message || json.Message || '');
+        // Bị giới hạn tốc độ ("cần chờ 3s ...") -> đợi rồi thử lại CHÍNH trang này
+        if (/chờ|cần chờ|call api|giây|rate|quá nhanh/i.test(msg) && rateRetries < 8) {
+          rateRetries++; await sleep(MKT_PAGE_DELAY_MS); page--; continue;
+        }
+        MKT.error = msg || 'API Sandbox báo lỗi (kiểm tra token).'; break;
+      }
+      rateRetries = 0;
       const orders = json.data || [];
       // Chỉ tính ĐƠN MỚI (chưa thấy ở các trang trước) để không cộng trùng
       const fresh = [];
@@ -474,7 +485,7 @@ async function refreshMarketing(since, until) {
       }).sort((a, b) => (b.chot - a.chot) || (b.doanhthu - a.doanhthu)); // điền dần để xem tiến độ
       if (orders.length < 100) break;   // trang chưa đủ 100 -> đã hết dữ liệu
       if (fresh.length === 0) break;    // không còn đơn mới -> API lặp lại trang cũ, dừng
-      await sleep(MKT_PAGE_DELAY_MS);    // tôn trọng giới hạn 60s/endpoint
+      await sleep(MKT_PAGE_DELAY_MS);    // tôn trọng giới hạn tốc độ API (~3s)
     }
     MKT.lastUpdated = new Date().toISOString();
   } catch (e) {
@@ -486,6 +497,7 @@ async function refreshMarketing(since, until) {
 
 app.get('/api/marketing', (req, res) => {
   res.json({
+    ver: 'mkt-2026-06-14-v3', // bản: pageIndex đúng + lọc ngày YYYY-MM-DD + chờ 4s + tự thử lại
     fetching: MKT.fetching, lastUpdated: MKT.lastUpdated,
     since: MKT.since, until: MKT.until,
     rows: MKT.rows, totalRecord: MKT.totalRecord, loaded: MKT.loaded,
@@ -510,14 +522,17 @@ app.get('/api/marketing/sample', async (req, res) => {
   const since = req.query.since || (today.slice(0, 8) + '01');
   const until = req.query.until || today;
   // Thử các kiểu gửi ngày khác nhau để tìm đúng định dạng API chấp nhận:
-  //  ?fmt=iso (mặc định) | dateonly | notz | utc ;  ?kieu=NgayTao (mặc định) | số khác
+  //  ?fmt=iso (mặc định) | dateonly | dateplus | notz | utc ;  ?kieu=NgayTao (mặc định)
   const fmt = req.query.fmt || 'iso';
   const kieuNgay = req.query.kieu || 'NgayTao';
-  const tuNgay = fmt === 'dateonly' ? since
+  const pi = Number(req.query.pi) || 1;
+  const addDay = s => { const d = new Date(s + 'T00:00:00Z'); d.setUTCDate(d.getUTCDate() + 1); return d.toISOString().slice(0, 10); };
+  const tuNgay = (fmt === 'dateonly' || fmt === 'dateplus') ? since
     : fmt === 'notz' ? `${since}T00:00:00`
     : fmt === 'utc' ? `${since}T00:00:00.000Z`
     : `${since}T00:00:00+07:00`;
-  const denNgay = fmt === 'dateonly' ? until
+  const denNgay = fmt === 'dateplus' ? addDay(until)
+    : fmt === 'dateonly' ? until
     : fmt === 'notz' ? `${until}T23:59:59`
     : fmt === 'utc' ? `${until}T23:59:59.999Z`
     : `${until}T23:59:59+07:00`;
@@ -528,7 +543,7 @@ app.get('/api/marketing/sample', async (req, res) => {
       body: JSON.stringify({
         idChiNhanh: SANDBOX_BRANCH, kieuNgay,
         tuNgay, denNgay,
-        pageInfo: { page: 1, pageSize: 100 }, sorts: [],
+        pageInfo: { pageIndex: pi, pageSize: 100 }, sorts: [],
         isIncludeDetail: true, isHistories: true,
       }),
     });
