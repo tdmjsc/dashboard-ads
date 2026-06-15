@@ -447,7 +447,7 @@ async function refreshMarketing(since, until) {
           kieuNgay: 'NgayTao',
           tuNgay: since,            // ngày-trơn YYYY-MM-DD (API chỉ lọc đúng với kiểu này)
           denNgay: addDay(until),   // +1 ngày để lấy trọn ngày cuối
-          pageInfo: { pageIndex: page, pageSize: 100 },
+          pageInfo: { page, pageSize: 100 },
           sorts: [],
           isIncludeDetail: true,  // lấy danh sách sản phẩm của đơn
           isHistories: false,
@@ -497,7 +497,7 @@ async function refreshMarketing(since, until) {
 
 app.get('/api/marketing', (req, res) => {
   res.json({
-    ver: 'mkt-2026-06-14-v3', // bản: pageIndex đúng + lọc ngày YYYY-MM-DD + chờ 4s + tự thử lại
+    ver: 'mkt-2026-06-14-v4', // bản: phân trang 'page' + lọc ngày YYYY-MM-DD + chờ 4s + tự thử lại
     fetching: MKT.fetching, lastUpdated: MKT.lastUpdated,
     since: MKT.since, until: MKT.until,
     rows: MKT.rows, totalRecord: MKT.totalRecord, loaded: MKT.loaded,
@@ -543,7 +543,7 @@ app.get('/api/marketing/sample', async (req, res) => {
       body: JSON.stringify({
         idChiNhanh: SANDBOX_BRANCH, kieuNgay,
         tuNgay, denNgay,
-        pageInfo: { pageIndex: pi, pageSize: 100 }, sorts: [],
+        pageInfo: { page: pi, pageSize: 100 }, sorts: [],
         isIncludeDetail: true, isHistories: true,
       }),
     });
