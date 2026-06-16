@@ -7,6 +7,7 @@ import session from 'express-session';
 import 'dotenv/config';
 import path from 'node:path';
 import fs from 'node:fs';
+import crypto from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -438,29 +439,52 @@ const SANDBOX_AUTH_BASE = process.env.SANDBOX_AUTH_BASE || 'https://api.sandbox.
 const SANDBOX_REPORT_URL = process.env.SANDBOX_REPORT_URL
   || 'https://api.sandbox.com.vn/report/api/report/ReportLeadByNhanSuMktSearch';
 const SANDBOX_CHINHANH  = process.env.SANDBOX_CHINHANH || 'f13cc0dc-28f0-4d17-b7aa-4f190fe6c4ae';
+// Mã thiết bị (lấy từ cookie prodevice_id của trình duyệt bạn) — để server "giống" thiết bị quen.
+const SANDBOX_DEVICE_ID = process.env.SANDBOX_DEVICE_ID || '2bfd88c7-ea01-482e-8be8-4ad20373d911';
 
 let sandboxCookie = '';        // chuỗi Cookie sau khi đăng nhập web
 let sandboxLoginAt = null;
+
+// Mã hoá mật khẩu y hệt web Sandbox:
+//  1) sinh khoá 16 ký tự, 2) AES-128-ECB/Pkcs7 -> base64,
+//  3) chèn khoá ngay sau CHỮ SỐ ĐẦU TIÊN trong chuỗi base64 (server tự tách ra).
+function sandboxEncryptPassword(pw) {
+  const key = crypto.randomBytes(12).toString('base64').replace(/[+/=]/g, 'x').slice(0, 16).padEnd(16, 'x');
+  const cipher = crypto.createCipheriv('aes-128-ecb', Buffer.from(key, 'utf8'), null); // Pkcs7 mặc định
+  const b64 = cipher.update(pw, 'utf8', 'base64') + cipher.final('base64');
+  let f = -1;
+  for (let i = 0; i < b64.length; i++) { const c = b64[i]; if (c >= '0' && c <= '9') { f = i + 1; break; } }
+  if (f === -1) return key + b64; // không có chữ số -> theo đúng hành vi substring của web
+  return b64.slice(0, f) + key + b64.slice(f);
+}
 
 // Đăng nhập web -> lấy cookie phiên. KHÔNG log mật khẩu.
 async function sandboxLogin() {
   if (!SANDBOX_WEB_USER || !SANDBOX_WEB_PASS)
     throw new Error('Chưa khai SANDBOX_WEB_USER / SANDBOX_WEB_PASS trên máy chủ.');
-  const r = await fetch(SANDBOX_AUTH_BASE + 'api/Authen/login', {
+  const r = await fetch(SANDBOX_AUTH_BASE + 'api/Authen/login-encrypt', {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json', 'Accept': 'application/json, text/plain, */*' },
-    body: JSON.stringify({ username: SANDBOX_WEB_USER, password: SANDBOX_WEB_PASS }),
+    headers: {
+      'Content-Type': 'application/json', 'Accept': 'application/json, text/plain, */*',
+      'Cookie': `prodevice_id=${SANDBOX_DEVICE_ID}`,
+    },
+    body: JSON.stringify({
+      userName: SANDBOX_WEB_USER,
+      password: sandboxEncryptPassword(SANDBOX_WEB_PASS),
+      deviceId: SANDBOX_DEVICE_ID,
+      captcha: '',
+    }),
   });
   let setCookies = [];
   try { setCookies = r.headers.getSetCookie ? r.headers.getSetCookie() : []; } catch (e) {}
   if (!setCookies || !setCookies.length) { const sc = r.headers.get('set-cookie'); if (sc) setCookies = [sc]; }
-  const jar = {};
+  const jar = { prodevice_id: SANDBOX_DEVICE_ID };
   for (const c of setCookies) { const p = c.split(';')[0]; const i = p.indexOf('='); if (i > 0) jar[p.slice(0, i).trim()] = p.slice(i + 1).trim(); }
   sandboxCookie = Object.entries(jar).map(([k, v]) => `${k}=${v}`).join('; ');
   let body = null; try { body = await r.json(); } catch (e) {}
   sandboxLoginAt = new Date().toISOString();
   return {
-    httpStatus: r.status, coGanCookie: !!sandboxCookie, soCookie: Object.keys(jar).length,
+    httpStatus: r.status, coGanCookie: Object.keys(jar).length > 1, soCookie: Object.keys(jar).length - 1,
     success: body ? (body.success ?? body.Success) : undefined,
     message: body ? (body.message || body.Message) : undefined,
   };
