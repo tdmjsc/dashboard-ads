@@ -424,6 +424,89 @@ function isShippedOK(o) {
   return SHIP_OK_STATUS.includes(String(o.orderStatusId));
 }
 
+/* ============================ HƯỚNG A ============================
+   Đăng nhập web Sandbox bằng tài khoản (lưu ở biến môi trường) để gọi
+   API BÁO CÁO "lead theo nhân sự" — chính xác theo NGÀY TẠO, 1 lần gọi.
+   Cần khai trên máy chủ:
+     SANDBOX_WEB_USER = <tài khoản web>
+     SANDBOX_WEB_PASS = <mật khẩu web>
+   (Mã chi nhánh đã điền sẵn; đổi qua SANDBOX_CHINHANH nếu cần.)
+   ================================================================= */
+const SANDBOX_WEB_USER  = process.env.SANDBOX_WEB_USER || '';
+const SANDBOX_WEB_PASS  = process.env.SANDBOX_WEB_PASS || '';
+const SANDBOX_AUTH_BASE = process.env.SANDBOX_AUTH_BASE || 'https://api.sandbox.com.vn/auth/';
+const SANDBOX_REPORT_URL = process.env.SANDBOX_REPORT_URL
+  || 'https://api.sandbox.com.vn/report/api/report/ReportLeadByNhanSuMktSearch';
+const SANDBOX_CHINHANH  = process.env.SANDBOX_CHINHANH || 'f13cc0dc-28f0-4d17-b7aa-4f190fe6c4ae';
+
+let sandboxCookie = '';        // chuỗi Cookie sau khi đăng nhập web
+let sandboxLoginAt = null;
+
+// Đăng nhập web -> lấy cookie phiên. KHÔNG log mật khẩu.
+async function sandboxLogin() {
+  if (!SANDBOX_WEB_USER || !SANDBOX_WEB_PASS)
+    throw new Error('Chưa khai SANDBOX_WEB_USER / SANDBOX_WEB_PASS trên máy chủ.');
+  const r = await fetch(SANDBOX_AUTH_BASE + 'api/Authen/login', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', 'Accept': 'application/json, text/plain, */*' },
+    body: JSON.stringify({ username: SANDBOX_WEB_USER, password: SANDBOX_WEB_PASS }),
+  });
+  let setCookies = [];
+  try { setCookies = r.headers.getSetCookie ? r.headers.getSetCookie() : []; } catch (e) {}
+  if (!setCookies || !setCookies.length) { const sc = r.headers.get('set-cookie'); if (sc) setCookies = [sc]; }
+  const jar = {};
+  for (const c of setCookies) { const p = c.split(';')[0]; const i = p.indexOf('='); if (i > 0) jar[p.slice(0, i).trim()] = p.slice(i + 1).trim(); }
+  sandboxCookie = Object.entries(jar).map(([k, v]) => `${k}=${v}`).join('; ');
+  let body = null; try { body = await r.json(); } catch (e) {}
+  sandboxLoginAt = new Date().toISOString();
+  return {
+    httpStatus: r.status, coGanCookie: !!sandboxCookie, soCookie: Object.keys(jar).length,
+    success: body ? (body.success ?? body.Success) : undefined,
+    message: body ? (body.message || body.Message) : undefined,
+  };
+}
+
+// Gọi API báo cáo cho khoảng ngày [since, until] (YYYY-MM-DD). Tự đăng nhập lại nếu phiên hết hạn.
+async function sandboxReport(since, until) {
+  const tuNgay = `${since}T00:00:00.000+07:00`;
+  const denNgay = `${until}T23:59:59.998+07:00`;
+  const payload = {
+    pageInfo: { page: 1, pageSize: 1000 }, sorts: [],
+    kieuXem: 4, loaiNhanVien: 1, isChietKhau: true, isVat: true,
+    date: [tuNgay, denNgay], tuNgay, denNgay,
+    idChiNhanh: SANDBOX_CHINHANH, kieuNgay: 'NgayTao',
+    typeViewDetail: null, idPhongBanSale: null, idNhomNhanVienSale: null, idUserSale: null,
+    idPhongBanMkts: null, idNhomNhanVienMkts: null, idUserMkts: null,
+  };
+  const call = () => fetch(SANDBOX_REPORT_URL, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', 'Accept': 'application/json, text/plain, */*', 'Cookie': sandboxCookie },
+    body: JSON.stringify(payload),
+  });
+  if (!sandboxCookie) await sandboxLogin();
+  let r = await call();
+  if (r.status === 401 || r.status === 403) { await sandboxLogin(); r = await call(); }
+  const j = await r.json().catch(() => ({ success: false, message: 'Phản hồi không hợp lệ' }));
+  return { httpStatus: r.status, json: j };
+}
+
+// Chuyển dữ liệu báo cáo -> dạng bảng cho dashboard
+function mapReport(j) {
+  const d = (j && j.data) || {};
+  const rows = (d.reportLeadByNhanSuMktDtos || []).map(r => ({
+    name: (r.ten || '').trim(), contact: r.soContact, chot: r.soDonChot,
+    tyLe: r.tyLeChotDon, soSP: r.soLuongSanPham, doanhthu: r.doanhSo,
+    nganSach: r.nganSach, giaContact: r.giaContact,
+  }));
+  const t = d.reportLeadByNhanSuMktTotalDto || {};
+  const total = {
+    contact: t.tongSoContact, chot: t.tongSoDonHang, soSP: t.tongSanPham,
+    tyLe: t.tongTyLeChot, doanhthu: t.tongDoanhSo,
+    nganSach: t.tongNganSach, giaContact: t.giaContact,
+  };
+  return { rows, total };
+}
+
 function aggregateMarketing(orders, acc) {
   for (const o of orders) {
     const key = ((o.marketingDisplayName || o.marketingUserName || '').trim()) || '(không rõ)';
@@ -521,7 +604,7 @@ async function refreshMarketing(since, until) {
 
 app.get('/api/marketing', (req, res) => {
   res.json({
-    ver: 'mkt-2026-06-15-v10', // thêm tự dò kiểu ngày (kieu-test)
+    ver: 'mkt-2026-06-15-v11', // hướng A: đăng nhập web + API báo cáo
     fetching: MKT.fetching, lastUpdated: MKT.lastUpdated,
     since: MKT.since, until: MKT.until,
     rows: MKT.rows, totalRecord: MKT.totalRecord, loaded: MKT.loaded,
@@ -536,6 +619,43 @@ app.post('/api/marketing/refresh', (req, res) => {
   if (MKT.fetching) return res.json({ started: false, message: 'Đang cập nhật, vui lòng đợi.' });
   refreshMarketing(since, until); // chạy NGẦM, không await
   res.json({ started: true, since, until });
+});
+
+// (HƯỚNG A) Kiểm tra đăng nhập web + thử lấy báo cáo 1 ngày. KHÔNG lộ mật khẩu.
+//  Mở: /api/marketing/login-test?day=2026-06-12
+app.get('/api/marketing/login-test', async (req, res) => {
+  const day = req.query.day || new Date(Date.now() - 864e5).toISOString().slice(0, 10);
+  if (!SANDBOX_WEB_USER || !SANDBOX_WEB_PASS)
+    return res.json({ ok: false, buoc: 'cauHinh', message: 'Chưa khai SANDBOX_WEB_USER / SANDBOX_WEB_PASS trên máy chủ.' });
+  try {
+    const login = await sandboxLogin();
+    let report = null, total = null;
+    if (login.coGanCookie) {
+      const rp = await sandboxReport(day, day);
+      report = { httpStatus: rp.httpStatus, success: rp.json && (rp.json.success ?? rp.json.Success), message: rp.json && (rp.json.message || rp.json.Message) };
+      const m = mapReport(rp.json); total = m.total; report.soNhanVien = m.rows.length;
+    }
+    res.json({ ok: !!(login.coGanCookie && total && total.contact != null), day, dangNhap: login, baoCao: report, tong: total });
+  } catch (e) {
+    res.json({ ok: false, message: e.message });
+  }
+});
+
+// (HƯỚNG A) Lấy báo cáo lead theo nhân sự cho khoảng ngày (mặc định hôm qua).
+//  Mở: /api/marketing/report?since=2026-06-12&until=2026-06-12
+app.get('/api/marketing/report', async (req, res) => {
+  const today = new Date().toISOString().slice(0, 10);
+  const since = req.query.since || today;
+  const until = req.query.until || since;
+  try {
+    const rp = await sandboxReport(since, until);
+    if (!(rp.json && (rp.json.success ?? rp.json.Success)))
+      return res.json({ ok: false, since, until, httpStatus: rp.httpStatus, message: (rp.json && (rp.json.message || rp.json.Message)) || 'Lỗi gọi báo cáo' });
+    const m = mapReport(rp.json);
+    res.json({ ok: true, ver: 'mkt-2026-06-15-v11-A', since, until, rows: m.rows, total: m.total, lastUpdated: new Date().toISOString() });
+  } catch (e) {
+    res.json({ ok: false, since, until, message: e.message });
+  }
 });
 
 // (TẠM — để gỡ lỗi) Xem cấu trúc dữ liệu thật từ Sandbox: mở /api/marketing/sample
@@ -599,39 +719,6 @@ app.get('/api/marketing/sample', async (req, res) => {
       detailsSampleKeys: withDetails ? Object.keys(withDetails.details[0]) : null,
       detailsSample: withDetails ? withDetails.details.slice(0, 2) : [],
     });
-  } catch (e) { res.json({ error: e.message }); }
-});
-
-// (TẠM — để kiểm tra) Thử gọi API BÁO CÁO của Sandbox bằng token đối tác.
-//  Mở /api/marketing/report-test để xem token có quyền gọi báo cáo không.
-const SANDBOX_REPORT_URL = 'https://api.sandbox.com.vn/report/api/report/ReportLeadByNhanSuMktSearch';
-const SANDBOX_REPORT_BRANCH = process.env.SANDBOX_REPORT_BRANCH || 'f13cc0dc-28f0-4d17-b7aa-4f190fe6c4ae';
-app.get('/api/marketing/report-test', async (req, res) => {
-  if (!SANDBOX_TOKEN) return res.json({ error: 'Chưa khai SANDBOX_TOKEN' });
-  const today = new Date().toISOString().slice(0, 10);
-  const since = req.query.since || today;
-  const until = req.query.until || today;
-  const branch = req.query.branch || SANDBOX_REPORT_BRANCH;
-  const body = {
-    pageInfo: { page: 1, pageSize: 50 }, sorts: [],
-    kieuXem: 4, loaiNhanVien: 1, isChietKhau: true, isVat: true,
-    kieuNgay: 'NgayTao',
-    date: [`${since}T00:00:00.000+07:00`, `${until}T23:59:59.998+07:00`],
-    tuNgay: `${since}T00:00:00.000+07:00`,
-    denNgay: `${until}T23:59:59.998+07:00`,
-    idChiNhanh: branch === 'null' ? null : branch,
-    idNhomNhanVienMkts: null, idNhomNhanVienSale: null,
-    idPhongBanMkts: null, idPhongBanSale: null,
-    idUserMkts: null, idUserSale: null, typeViewDetail: null,
-  };
-  try {
-    const r = await fetch(SANDBOX_REPORT_URL, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${SANDBOX_TOKEN}` },
-      body: JSON.stringify(body),
-    });
-    const text = await r.text();
-    res.json({ status: r.status, ok: r.ok, bodyHead: text.slice(0, 2000) });
   } catch (e) { res.json({ error: e.message }); }
 });
 
