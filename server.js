@@ -521,7 +521,7 @@ async function refreshMarketing(since, until) {
 
 app.get('/api/marketing', (req, res) => {
   res.json({
-    ver: 'mkt-2026-06-14-v9', // chẩn đoán mốc ngày + lưu phiên ra file (không đăng xuất khi restart)
+    ver: 'mkt-2026-06-15-v10', // thêm tự dò kiểu ngày (kieu-test)
     fetching: MKT.fetching, lastUpdated: MKT.lastUpdated,
     since: MKT.since, until: MKT.until,
     rows: MKT.rows, totalRecord: MKT.totalRecord, loaded: MKT.loaded,
@@ -633,6 +633,81 @@ app.get('/api/marketing/report-test', async (req, res) => {
     const text = await r.text();
     res.json({ status: r.status, ok: r.ok, bodyHead: text.slice(0, 2000) });
   } catch (e) { res.json({ error: e.message }); }
+});
+
+// (TẠM — tự dò) Thử lần lượt các kiểu ngày để biết kiểu nào API lọc theo NGÀY TẠO.
+//  Mở /api/marketing/kieu-test?day=2026-06-12 để BẮT ĐẦU (chạy ngầm ~5-6 phút),
+//  rồi mở lại chính link đó mỗi ~1 phút để xem kết quả điền dần. Xoá sau khi xong.
+const KIEU_TEST = { running: false, day: null, startedAt: null, finishedAt: null, results: [], note: '' };
+const KIEU_LIST = ['NgayTao', 'SaleNgayNhanData', 'DonHangNgayChot', 'NgayDangDon', 'NgayCapNhat'];
+
+async function runKieuTest(day) {
+  KIEU_TEST.running = true; KIEU_TEST.day = day;
+  KIEU_TEST.startedAt = new Date().toISOString(); KIEU_TEST.finishedAt = null;
+  KIEU_TEST.results = []; KIEU_TEST.note = '';
+  const tuNgay = `${day}T00:00:00+07:00`;
+  const denNgay = `${day}T23:59:59+07:00`;
+  const dOnly = t => (t ? String(t).slice(0, 10) : null);
+  try {
+    for (const kieu of KIEU_LIST) {
+      let attempt = 0, done = false;
+      while (!done && attempt < 6) {
+        attempt++;
+        const r = await fetch(`${SANDBOX_BASE}/DonHangLogistic/GetOrderByConditions`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${SANDBOX_TOKEN}` },
+          body: JSON.stringify({
+            idChiNhanh: SANDBOX_BRANCH, kieuNgay: kieu,
+            tuNgay, denNgay, pageInfo: { page: 1, pageSize: 100 }, sorts: [],
+            isIncludeDetail: false, isHistories: false,
+          }),
+        });
+        const json = await r.json().catch(() => ({ success: false, message: 'Phản hồi không hợp lệ' }));
+        if (!json.success) {
+          const msg = String(json.message || json.Message || '');
+          if (/chờ|cần chờ|call api|giây|rate|quá nhanh/i.test(msg) && attempt < 6) {
+            const m = msg.match(/(\d+)\s*s/);
+            await sleep(((m ? Number(m[1]) : 60) + 3) * 1000); continue;
+          }
+          KIEU_TEST.results.push({ kieu, error: msg || 'lỗi', count: 0 });
+          done = true; break;
+        }
+        const orders = json.data || [];
+        const inRange = field => orders.filter(o => dOnly(o[field]) === day).length;
+        KIEU_TEST.results.push({
+          kieu, count: orders.length,
+          createOnDay: inRange('createTime'),       // ngày tạo = đúng ngày?
+          recvOnDay: inRange('timeSaleReceivingData'),
+          confirmOnDay: inRange('orderConfirmDate'),
+          submitOnDay: inRange('timeOrderSubmit'),
+          updateOnDay: inRange('updateTime'),
+          createSample: orders.slice(0, 3).map(o => o.createTime),
+        });
+        done = true;
+      }
+      await sleep(63 * 1000); // tôn trọng giới hạn ~60s/lần gọi
+    }
+  } catch (e) {
+    KIEU_TEST.note = 'Lỗi: ' + e.message;
+  } finally {
+    KIEU_TEST.running = false; KIEU_TEST.finishedAt = new Date().toISOString();
+  }
+}
+
+app.get('/api/marketing/kieu-test', (req, res) => {
+  if (!SANDBOX_TOKEN) return res.json({ error: 'Chưa khai SANDBOX_TOKEN' });
+  const day = req.query.day || '2026-06-12';
+  if (!KIEU_TEST.running && (req.query.restart === '1' || KIEU_TEST.results.length === 0 || KIEU_TEST.day !== day)) {
+    runKieuTest(day); // chạy ngầm, không await
+  }
+  res.json({
+    huongDan: 'Mỗi kiểu cách nhau ~63s. Mở lại link này mỗi ~1 phút để xem kết quả điền dần. '
+      + 'Kiểu nào có createOnDay gần bằng count chính là kiểu lọc theo NGÀY TẠO (đúng cái cần dùng).',
+    running: KIEU_TEST.running, day: KIEU_TEST.day,
+    startedAt: KIEU_TEST.startedAt, finishedAt: KIEU_TEST.finishedAt,
+    daThu: KIEU_TEST.results.length + '/' + KIEU_LIST.length,
+    results: KIEU_TEST.results, note: KIEU_TEST.note,
+  });
 });
 
 app.use(express.static(path.join(__dirname, 'public')));
