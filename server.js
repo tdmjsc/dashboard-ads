@@ -441,6 +441,8 @@ const SANDBOX_REPORT_URL = process.env.SANDBOX_REPORT_URL
 const SANDBOX_CHINHANH  = process.env.SANDBOX_CHINHANH || 'f13cc0dc-28f0-4d17-b7aa-4f190fe6c4ae';
 // Mã thiết bị (lấy từ cookie prodevice_id của trình duyệt bạn) — để server "giống" thiết bị quen.
 const SANDBOX_DEVICE_ID = process.env.SANDBOX_DEVICE_ID || '2bfd88c7-ea01-482e-8be8-4ad20373d911';
+// Tên miền của bạn — server gửi kèm để Sandbox biết bạn thuộc tổ chức nào (như ô "tên miền" lúc đăng nhập).
+const SANDBOX_ORIGIN = (process.env.SANDBOX_ORIGIN || 'https://tdmjsc.sandbox.com.vn').replace(/\/+$/, '');
 
 let sandboxCookie = '';        // chuỗi Cookie sau khi đăng nhập web
 let sandboxLoginAt = null;
@@ -466,6 +468,7 @@ async function sandboxLogin() {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json', 'Accept': 'application/json, text/plain, */*',
+      'Origin': SANDBOX_ORIGIN, 'Referer': SANDBOX_ORIGIN + '/',
       'Cookie': `prodevice_id=${SANDBOX_DEVICE_ID}`,
     },
     body: JSON.stringify({
@@ -504,7 +507,11 @@ async function sandboxReport(since, until) {
   };
   const call = () => fetch(SANDBOX_REPORT_URL, {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json', 'Accept': 'application/json, text/plain, */*', 'Cookie': sandboxCookie },
+    headers: {
+      'Content-Type': 'application/json', 'Accept': 'application/json, text/plain, */*',
+      'Origin': SANDBOX_ORIGIN, 'Referer': SANDBOX_ORIGIN + '/',
+      'Cookie': sandboxCookie,
+    },
     body: JSON.stringify(payload),
   });
   if (!sandboxCookie) await sandboxLogin();
