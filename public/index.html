@@ -307,6 +307,25 @@ const empOf=c=>c.employee||(c.name.split(/\s*-\s*/)[0]||'').trim()||'Chưa xác 
 const dayLbl=iso=>{const[,m,d]=iso.split("-");return parseInt(d)+"/"+parseInt(m);};
 const msg=document.getElementById('state-msg');
 
+/* ====== Số contact THẬT từ Marketing (Sandbox, theo ngày tạo) để tính CPA chuẩn ====== */
+let MKT={}, MKT_RANGE='', MKT_STATE='idle';   // map: tên nhân viên (chuẩn hoá) -> {contact,...}
+const normName=s=>String(s==null?'':s).trim().toLowerCase();
+async function loadMarketing(since,until){
+  const range=since+'_'+until; MKT_RANGE=range; MKT_STATE='loading'; MKT={};
+  if(state.view==='emp') renderEmp();      // hiện "…" trong lúc chờ
+  try{
+    const res=await fetch(`/api/marketing/report?since=${since}&until=${until}`);
+    if(res.status===401) return;
+    const d=await res.json();
+    if(range!==MKT_RANGE) return;          // đã đổi khoảng ngày -> bỏ kết quả cũ
+    if(d&&d.ok&&Array.isArray(d.rows)){
+      const m={}; d.rows.forEach(r=>{ const k=normName(r.name); if(k) m[k]={contact:+r.contact||0,chot:+r.chot||0,doanhthu:+r.doanhthu||0,nganSach:+r.nganSach||0,giaContact:+r.giaContact||0}; });
+      MKT=m; MKT_STATE='ok';
+    } else MKT_STATE='err';
+  }catch(e){ MKT_STATE='err'; }
+  if(state.view==='emp') renderEmp();      // vẽ lại thẻ nhân viên với contact thật
+}
+
 /* mặc định: 7 ngày gần nhất */
 (function(){
   const fmt=d=>d.toISOString().slice(0,10);
@@ -333,6 +352,7 @@ async function loadData(){
     buildAccountTabs(); buildEmpFilter();
     msg.style.display='none';
     render();
+    loadMarketing(since, until);   // tải số contact thật để tính CPA theo nhân viên (chạy song song)
   }catch(e){ msg.style.display='block'; msg.textContent='Không kết nối được backend. Kiểm tra server đang chạy. ('+e.message+')'; }
 }
 
@@ -485,8 +505,15 @@ function renderEmp(){
   if(!arr.length){grid.innerHTML=`<div class="empty"><b>Không có dữ liệu</b>Thử đổi bộ lọc hoặc khoảng ngày.</div>`;return;}
   grid.innerHTML=arr.map((e,idx)=>{
     const color=EMP_COLORS[idx%EMP_COLORS.length];
-    const cpr=e.results?Math.round(e.spent/e.results):0, avg=Math.round(e.spent/nDays), maxDay=Math.max(...e.daily,1);
-    const spentTax=withTax(e.spent), cprTax=e.results?Math.round(spentTax/e.results):0;
+    const avg=Math.round(e.spent/nDays), maxDay=Math.max(...e.daily,1);
+    const spentTax=withTax(e.spent);
+    // Số contact thật từ Marketing (khớp theo tên đầy đủ). CPA = chi tiêu / số contact.
+    const mk=MKT[normName(e.nv)];
+    const hasC=mk&&mk.contact>0;
+    const loadingC=(MKT_STATE==='loading');
+    const contactDisp=loadingC?'…':(mk?fmtVND(mk.contact):'—');
+    const cpaDisp=loadingC?'…':(hasC?fmtVND(Math.round(e.spent/mk.contact))+' ₫':'—');
+    const cpaTaxDisp=loadingC?'…':(hasC?fmtVND(Math.round(spentTax/mk.contact))+' ₫':'—');
     const bars=e.daily.map((v,d)=>`<div class="bcol"><div class="bar" style="height:${Math.max(3,Math.round(v/maxDay*48))}px;background:${color}" title="${dayLbl(DAYS[d])}: ${fmtVND(v)} ₫"></div><div class="bday">${dayLbl(DAYS[d])}</div></div>`).join('');
     const initials=e.nv.split(' ').map(w=>w[0]).slice(0,2).join('').toUpperCase();
     return `<div class="emp-card">
@@ -497,9 +524,9 @@ function renderEmp(){
       <div class="emp-spent num">${fmtVND(e.spent)} <span class="cur">₫</span></div>
       <div style="font-size:12.5px;color:#9A7B2E;font-weight:500;margin-top:3px">Sau thuế ${TAX*100}%: ${fmtVND(spentTax)} ₫</div>
       <div class="emp-stats" style="flex-wrap:wrap;gap:14px 18px">
-        <div class="emp-stat"><div class="v num">${fmtVND(e.results)}</div><div class="k">kết quả</div></div>
-        <div class="emp-stat"><div class="v num">${fmtVND(cpr)} ₫</div><div class="k">CP / kết quả</div></div>
-        <div class="emp-stat"><div class="v num" style="color:#9A7B2E">${fmtVND(cprTax)} ₫</div><div class="k">CP/KQ sau thuế</div></div>
+        <div class="emp-stat"><div class="v num">${contactDisp}</div><div class="k">contact (Sandbox)</div></div>
+        <div class="emp-stat"><div class="v num">${cpaDisp}</div><div class="k">CPA (CP/contact)</div></div>
+        <div class="emp-stat"><div class="v num" style="color:#9A7B2E">${cpaTaxDisp}</div><div class="k">CPA sau thuế</div></div>
         <div class="emp-stat"><div class="v num">${fmtVND(avg)} ₫</div><div class="k">TB / ngày</div></div></div>
       <div class="spark"><div class="spark-lbl">Chi tiêu theo từng ngày</div><div class="bars">${bars}</div></div>
     </div>`;}).join('');
