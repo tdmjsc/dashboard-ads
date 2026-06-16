@@ -447,13 +447,13 @@ const SANDBOX_ORIGIN = (process.env.SANDBOX_ORIGIN || 'https://tdmjsc.sandbox.co
 let sandboxCookie = '';        // chuỗi Cookie sau khi đăng nhập web
 let sandboxLoginAt = null;
 
-// Mã hoá mật khẩu y hệt web Sandbox:
+// Mã hoá một chuỗi (userName hoặc password) y hệt web Sandbox:
 //  1) sinh khoá 16 ký tự, 2) AES-128-ECB/Pkcs7 -> base64,
 //  3) chèn khoá ngay sau CHỮ SỐ ĐẦU TIÊN trong chuỗi base64 (server tự tách ra).
-function sandboxEncryptPassword(pw) {
+function sandboxEncrypt(text) {
   const key = crypto.randomBytes(12).toString('base64').replace(/[+/=]/g, 'x').slice(0, 16).padEnd(16, 'x');
   const cipher = crypto.createCipheriv('aes-128-ecb', Buffer.from(key, 'utf8'), null); // Pkcs7 mặc định
-  const b64 = cipher.update(pw, 'utf8', 'base64') + cipher.final('base64');
+  const b64 = cipher.update(text, 'utf8', 'base64') + cipher.final('base64');
   let f = -1;
   for (let i = 0; i < b64.length; i++) { const c = b64[i]; if (c >= '0' && c <= '9') { f = i + 1; break; } }
   if (f === -1) return key + b64; // không có chữ số -> theo đúng hành vi substring của web
@@ -472,8 +472,8 @@ async function sandboxLogin() {
       'Cookie': `prodevice_id=${SANDBOX_DEVICE_ID}`,
     },
     body: JSON.stringify({
-      userName: SANDBOX_WEB_USER,
-      password: sandboxEncryptPassword(SANDBOX_WEB_PASS),
+      userName: sandboxEncrypt(SANDBOX_WEB_USER),
+      password: sandboxEncrypt(SANDBOX_WEB_PASS),
       deviceId: SANDBOX_DEVICE_ID,
       captcha: '',
     }),
