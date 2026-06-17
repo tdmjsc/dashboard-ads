@@ -340,8 +340,8 @@ app.post('/login', (req, res) => {
   const { user, pass } = req.body;
   const u = USERS.find(x => x.user === user && x.pass === pass);
   if (!u) return res.redirect('/login?error=1');
-  req.session.user = { user: u.user, role: u.role, employees: u.employees || [] };
-  res.redirect('/');
+  req.session.user = { user: u.user, role: u.role, employees: u.employees || [], manager: u.manager || '' };
+  res.redirect(u.role === 'product' ? '/products.html' : '/');
 });
 app.get('/logout', (req, res) => req.session.destroy(() => res.redirect('/login')));
 
@@ -350,6 +350,27 @@ app.use((req, res, next) => {
   if (req.session && req.session.user) return next();
   if (req.path.startsWith('/api/')) return res.status(401).json({ error: 'Chưa đăng nhập' });
   res.redirect('/login');
+});
+
+// Cho trang biết người đang đăng nhập là ai (để ẩn/hiện menu, lọc theo người)
+app.get('/api/me', (req, res) => {
+  const u = req.session.user || {};
+  res.json({ user: u.user, role: u.role, manager: u.manager || '', employees: u.employees || [] });
+});
+
+// QUYỀN "product": chỉ được vào trang Sản phẩm + API sản phẩm của mình.
+// Chặn Dashboard, Marketing và mọi API khác.
+app.use((req, res, next) => {
+  const me = req.session.user;
+  if (me && me.role === 'product') {
+    const p = req.path;
+    const allowed = ['/products.html', '/logout', '/api/products/report', '/api/me'].includes(p) || p === '/favicon.ico';
+    if (!allowed) {
+      if (p.startsWith('/api/')) return res.status(403).json({ error: 'Không có quyền truy cập mục này.' });
+      return res.redirect('/products.html');
+    }
+  }
+  next();
 });
 
 // Bộ nhớ đệm tạm trong RAM: giữ kết quả theo từng khoảng ngày trong vài phút,
@@ -979,9 +1000,16 @@ app.get('/api/products/report', async (req, res) => {
     const rp = await sandboxProductReport(since, until);
     if (!(rp.json && (rp.json.success ?? rp.json.Success)))
       return res.json({ ok: false, since, until, httpStatus: rp.httpStatus, message: (rp.json && (rp.json.message || rp.json.Message)) || 'Lỗi gọi báo cáo sản phẩm. Kiểm tra SANDBOX_PRODUCT_REPORT_URL bằng /api/products/probe' });
-    const rows = mapProductReport(rp.json, owners);
-    const managers = [...new Set(Object.values(owners).map(o => o.manager))].sort();
-    res.json({ ok: true, ver: 'prod-2026-06-15-v1', since, until, rows, managers, ownersCount: Object.keys(owners).length, lastUpdated: new Date().toISOString() });
+    let rows = mapProductReport(rp.json, owners);
+    let managers = [...new Set(Object.values(owners).map(o => o.manager))].sort();
+    // Quyền "product": chỉ thấy sản phẩm do chính mình quản lý
+    const me = req.session.user || {};
+    if (me.role === 'product') {
+      const mine = normProd(me.manager || '');
+      rows = rows.filter(r => normProd(r.manager) === mine && mine);
+      managers = me.manager ? [me.manager] : [];
+    }
+    res.json({ ok: true, ver: 'prod-2026-06-15-v2', since, until, rows, managers, me: { role: me.role, manager: me.manager || '' }, ownersCount: Object.keys(owners).length, lastUpdated: new Date().toISOString() });
   } catch (e) { res.json({ ok: false, since, until, message: e.message }); }
 });
 
