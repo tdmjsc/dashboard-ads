@@ -836,7 +836,7 @@ app.get('/api/marketing/kieu-test', (req, res) => {
    ========================================================== */
 const SHEET_CSV_URL = process.env.SHEET_CSV_URL || '';
 const SANDBOX_PRODUCT_REPORT_URL = process.env.SANDBOX_PRODUCT_REPORT_URL
-  || 'https://api.sandbox.com.vn/report/api/report/ReportMktTheoSanPhamSearch';
+  || 'https://api.sandbox.com.vn/report/api/Report/BaoCaoMktTheoSanPham';
 
 const normProd = s => String(s == null ? '' : s).trim().toLowerCase().replace(/\s+/g, ' ');
 
@@ -883,16 +883,18 @@ async function loadOwners(force) {
   return OWNERS;
 }
 
-// Gọi báo cáo sản phẩm (dùng cookie web đã đăng nhập)
+// Gọi báo cáo sản phẩm (dùng phiên đăng nhập web của máy chủ)
 async function sandboxProductReport(since, until) {
-  const tuNgay = `${since}T00:00:00.000+07:00`, denNgay = `${until}T23:59:59.998+07:00`;
+  const tuNgay = `${since}T00:00:00+07:00`, denNgay = `${until}T23:59:59+07:00`;
   const payload = {
-    pageInfo: { page: 1, pageSize: 1000 }, sorts: [],
-    kieuXem: 4, loaiNhanVien: 1, isChietKhau: true, isVat: true,
-    date: [tuNgay, denNgay], tuNgay, denNgay,
-    idChiNhanh: SANDBOX_CHINHANH, kieuNgay: 'NgayTao',
-    typeViewDetail: null, idPhongBanSale: null, idNhomNhanVienSale: null, idUserSale: null,
+    strIdNguonDuLieu: null, kieuNgay: 'NgayTao', tuNgay, denNgay,
+    idNhomSanPham: null, idSanPhamCha: null, idSanPham: null, unitCode: null,
+    tiTrongChiaTinhTheo: 0, isChietKhau: true, isVat: true,
+    idChiNhanh: SANDBOX_CHINHANH, typeViewDetail: null,
+    idPhongBanSale: null, idNhomNhanVienSale: null, idUserSale: null,
     idPhongBanMkts: null, idNhomNhanVienMkts: null, idUserMkts: null,
+    date: [tuNgay, denNgay], khoId: null,
+    pageInfo: { page: 1, pageSize: 1000 }, sorts: [],
   };
   const call = url => fetch(url, {
     method: 'POST',
@@ -909,50 +911,37 @@ async function sandboxProductReport(since, until) {
 // Chuyển dữ liệu báo cáo sản phẩm -> bảng, ghép người quản lý từ Google Sheet
 function mapProductReport(j, owners) {
   const d = (j && j.data) || {};
-  let arr = null;
-  for (const k of Object.keys(d)) { if (Array.isArray(d[k]) && d[k].length) { arr = d[k]; break; } }
+  // báo cáo trả về nhiều lưới; lấy lưới theo sản phẩm
+  let arr = Array.isArray(d.productGridTable) ? d.productGridTable
+          : Array.isArray(d.mainGridTable) ? d.mainGridTable : null;
+  if (!Array.isArray(arr)) { for (const k of Object.keys(d)) { if (Array.isArray(d[k]) && d[k].length) { arr = d[k]; break; } } }
   arr = arr || [];
   const pick = (o, keys) => { for (const k of keys) if (o[k] != null) return o[k]; return null; };
   return arr.map(o => {
-    const name = pick(o, ['tenSanPham', 'itemName', 'tenSp', 'sanPham', 'productName', 'ten', 'name']) || '';
-    const contact = +pick(o, ['soContact', 'contact', 'tongSoContact']) || 0;
-    const chot = +pick(o, ['soDonChot', 'soDonHang', 'donChot', 'chot', 'soDon', 'tongSoDonHang']) || 0;
+    const name = pick(o, ['tenSanPham', 'tenSp', 'sanPham', 'itemName', 'productName', 'ten', 'name']) || '';
+    const contact = +pick(o, ['soContact', 'contact', 'tongSoContact', 'soLuongContact']) || 0;
+    const chot = +pick(o, ['soDonChot', 'soDonHang', 'donChot', 'soDon', 'chot', 'tongSoDonHang', 'soDonThanhCong']) || 0;
     const own = owners[normProd(name)];
     return { product: String(name).trim(), manager: own ? own.manager : '', contact, chot };
   });
 }
 
-// (TẠM — tự dò) tìm đúng endpoint báo cáo sản phẩm + tên các trường.
-//  Mở /api/products/probe?day=2026-06-12  (hoặc &name=TenEndpoint để thử riêng)
+// Soi cấu trúc báo cáo sản phẩm (từ máy chủ). Mở:
+//  /api/products/probe?since=2026-06-01&until=2026-06-17
+// Trả về tên các lưới + tên cột + 1 dòng mẫu để chốt cột contact/đơn chốt.
 app.get('/api/products/probe', async (req, res) => {
-  const day = req.query.day || new Date(Date.now() - 864e5).toISOString().slice(0, 10);
-  const base = 'https://api.sandbox.com.vn/report/api/report/';
-  const names = req.query.name ? [req.query.name] : [
-    'ReportMktTheoSanPhamSearch', 'ReportLeadBySanPhamMktSearch', 'ReportMktBySanPhamSearch',
-    'ReportLeadBySanPhamSearch', 'ReportSanPhamMktSearch', 'ReportMktSanPhamSearch',
-    'ReportLeadByProductMktSearch', 'ReportMktTheoSpSearch',
-  ];
-  const tuNgay = `${day}T00:00:00.000+07:00`, denNgay = `${day}T23:59:59.998+07:00`;
-  const payload = { pageInfo: { page: 1, pageSize: 50 }, sorts: [], kieuXem: 4, loaiNhanVien: 1, isChietKhau: true, isVat: true, date: [tuNgay, denNgay], tuNgay, denNgay, idChiNhanh: SANDBOX_CHINHANH, kieuNgay: 'NgayTao', typeViewDetail: null, idPhongBanSale: null, idNhomNhanVienSale: null, idUserSale: null, idPhongBanMkts: null, idNhomNhanVienMkts: null, idUserMkts: null };
+  const today = new Date().toISOString().slice(0, 10);
+  const since = req.query.since || today, until = req.query.until || since;
   try {
-    if (!sandboxCookie) await sandboxLogin();
-    const out = [];
-    for (const n of names) {
-      try {
-        const doCall = () => fetch(base + n, { method: 'POST', headers: { 'Content-Type': 'application/json', 'Accept': 'application/json, text/plain, */*', 'Origin': SANDBOX_ORIGIN, 'Referer': SANDBOX_ORIGIN + '/', 'Cookie': sandboxCookie }, body: JSON.stringify(payload) });
-        let r = await doCall();
-        if (r.status === 401) { await sandboxLogin(); r = await doCall(); }
-        const j = await r.json().catch(() => null);
-        const d = j && j.data;
-        let dataKeys = null, firstArrKey = null, firstRowKeys = null, firstRow = null;
-        if (d && typeof d === 'object') {
-          dataKeys = Object.keys(d);
-          for (const k of dataKeys) { if (Array.isArray(d[k]) && d[k].length) { firstArrKey = k; firstRowKeys = Object.keys(d[k][0]); firstRow = d[k][0]; break; } }
-        }
-        out.push({ name: n, httpStatus: r.status, success: j && (j.success ?? j.Success), message: j && (j.message || j.Message), dataKeys, firstArrKey, firstRowKeys, firstRow });
-      } catch (e) { out.push({ name: n, error: e.message }); }
+    const rp = await sandboxProductReport(since, until);
+    const d = (rp.json && rp.json.data) || {};
+    const grids = {};
+    for (const k of Object.keys(d)) {
+      const v = d[k];
+      if (Array.isArray(v)) grids[k] = { n: v.length, keys: v.length ? Object.keys(v[0]) : [], firstRow: v[0] || null };
+      else if (v && typeof v === 'object') grids[k] = { obj: true, keys: Object.keys(v), value: v };
     }
-    res.json({ day, ketQua: out });
+    res.json({ httpStatus: rp.httpStatus, success: rp.json && (rp.json.success ?? rp.json.Success), message: rp.json && (rp.json.message || rp.json.Message), dataKeys: Object.keys(d), grids });
   } catch (e) { res.json({ error: e.message }); }
 });
 
