@@ -828,6 +828,158 @@ app.get('/api/marketing/kieu-test', (req, res) => {
   });
 });
 
+/* ===================== TRANG SẢN PHẨM =====================
+   - Người quản lý sản phẩm: đồng bộ từ Google Sheet (publish ra CSV).
+       Khai SHEET_CSV_URL = link CSV của sheet.
+   - Số contact + số đơn chốt theo sản phẩm: từ báo cáo Sandbox "MKT theo SP".
+       (Dùng chung phiên đăng nhập web đã có. Nếu URL báo cáo khác, đặt SANDBOX_PRODUCT_REPORT_URL.)
+   ========================================================== */
+const SHEET_CSV_URL = process.env.SHEET_CSV_URL || '';
+const SANDBOX_PRODUCT_REPORT_URL = process.env.SANDBOX_PRODUCT_REPORT_URL
+  || 'https://api.sandbox.com.vn/report/api/report/ReportMktTheoSanPhamSearch';
+
+const normProd = s => String(s == null ? '' : s).trim().toLowerCase().replace(/\s+/g, ' ');
+
+// CSV parser nhỏ (hỗ trợ dấu phẩy trong ngoặc kép)
+function parseCSV(text) {
+  const rows = []; let row = [], cur = '', q = false;
+  for (let i = 0; i < text.length; i++) {
+    const c = text[i];
+    if (q) { if (c === '"') { if (text[i + 1] === '"') { cur += '"'; i++; } else q = false; } else cur += c; }
+    else if (c === '"') q = true;
+    else if (c === ',') { row.push(cur); cur = ''; }
+    else if (c === '\n') { row.push(cur); rows.push(row); row = []; cur = ''; }
+    else if (c === '\r') { /* bỏ */ }
+    else cur += c;
+  }
+  if (cur !== '' || row.length) { row.push(cur); rows.push(row); }
+  return rows;
+}
+
+let OWNERS = {}, OWNERS_AT = 0; const OWNERS_TTL = 5 * 60 * 1000;
+async function loadOwners(force) {
+  if (!SHEET_CSV_URL) return OWNERS;
+  if (!force && Object.keys(OWNERS).length && Date.now() - OWNERS_AT < OWNERS_TTL) return OWNERS;
+  try {
+    const r = await fetch(SHEET_CSV_URL, { redirect: 'follow' });
+    const text = await r.text();
+    const rows = parseCSV(text).filter(rw => rw.some(c => String(c).trim() !== ''));
+    if (!rows.length) return OWNERS;
+    let pCol = 0, mCol = 1, start = 0;
+    const hdr = rows[0].map(h => String(h).trim().toLowerCase());
+    const find = keys => hdr.findIndex(h => keys.some(k => h.includes(k)));
+    const pc = find(['sản phẩm', 'san pham', 'sanpham', 'product', 'tên sp', 'ten sp']);
+    const mc = find(['quản lý', 'quan ly', 'phụ trách', 'phu trach', 'nhân viên', 'nhan vien', 'người', 'nguoi']);
+    if (pc >= 0 && mc >= 0) { pCol = pc; mCol = mc; start = 1; }
+    const map = {};
+    for (let i = start; i < rows.length; i++) {
+      const praw = String(rows[i][pCol] || '').trim();
+      const m = String(rows[i][mCol] || '').trim();
+      const p = normProd(praw);
+      if (p && m) map[p] = { manager: m, productRaw: praw };
+    }
+    if (Object.keys(map).length) { OWNERS = map; OWNERS_AT = Date.now(); }
+  } catch (e) { /* giữ bản cũ nếu lỗi */ }
+  return OWNERS;
+}
+
+// Gọi báo cáo sản phẩm (dùng cookie web đã đăng nhập)
+async function sandboxProductReport(since, until) {
+  const tuNgay = `${since}T00:00:00.000+07:00`, denNgay = `${until}T23:59:59.998+07:00`;
+  const payload = {
+    pageInfo: { page: 1, pageSize: 1000 }, sorts: [],
+    kieuXem: 4, loaiNhanVien: 1, isChietKhau: true, isVat: true,
+    date: [tuNgay, denNgay], tuNgay, denNgay,
+    idChiNhanh: SANDBOX_CHINHANH, kieuNgay: 'NgayTao',
+    typeViewDetail: null, idPhongBanSale: null, idNhomNhanVienSale: null, idUserSale: null,
+    idPhongBanMkts: null, idNhomNhanVienMkts: null, idUserMkts: null,
+  };
+  const call = url => fetch(url, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', 'Accept': 'application/json, text/plain, */*', 'Origin': SANDBOX_ORIGIN, 'Referer': SANDBOX_ORIGIN + '/', 'Cookie': sandboxCookie },
+    body: JSON.stringify(payload),
+  });
+  if (!sandboxCookie) await sandboxLogin();
+  let r = await call(SANDBOX_PRODUCT_REPORT_URL);
+  if (r.status === 401 || r.status === 403) { await sandboxLogin(); r = await call(SANDBOX_PRODUCT_REPORT_URL); }
+  const j = await r.json().catch(() => ({ success: false, message: 'Phản hồi không hợp lệ' }));
+  return { httpStatus: r.status, json: j };
+}
+
+// Chuyển dữ liệu báo cáo sản phẩm -> bảng, ghép người quản lý từ Google Sheet
+function mapProductReport(j, owners) {
+  const d = (j && j.data) || {};
+  let arr = null;
+  for (const k of Object.keys(d)) { if (Array.isArray(d[k]) && d[k].length) { arr = d[k]; break; } }
+  arr = arr || [];
+  const pick = (o, keys) => { for (const k of keys) if (o[k] != null) return o[k]; return null; };
+  return arr.map(o => {
+    const name = pick(o, ['tenSanPham', 'itemName', 'tenSp', 'sanPham', 'productName', 'ten', 'name']) || '';
+    const contact = +pick(o, ['soContact', 'contact', 'tongSoContact']) || 0;
+    const chot = +pick(o, ['soDonChot', 'soDonHang', 'donChot', 'chot', 'soDon', 'tongSoDonHang']) || 0;
+    const own = owners[normProd(name)];
+    return { product: String(name).trim(), manager: own ? own.manager : '', contact, chot };
+  });
+}
+
+// (TẠM — tự dò) tìm đúng endpoint báo cáo sản phẩm + tên các trường.
+//  Mở /api/products/probe?day=2026-06-12  (hoặc &name=TenEndpoint để thử riêng)
+app.get('/api/products/probe', async (req, res) => {
+  const day = req.query.day || new Date(Date.now() - 864e5).toISOString().slice(0, 10);
+  const base = 'https://api.sandbox.com.vn/report/api/report/';
+  const names = req.query.name ? [req.query.name] : [
+    'ReportMktTheoSanPhamSearch', 'ReportLeadBySanPhamMktSearch', 'ReportMktBySanPhamSearch',
+    'ReportLeadBySanPhamSearch', 'ReportSanPhamMktSearch', 'ReportMktSanPhamSearch',
+    'ReportLeadByProductMktSearch', 'ReportMktTheoSpSearch',
+  ];
+  const tuNgay = `${day}T00:00:00.000+07:00`, denNgay = `${day}T23:59:59.998+07:00`;
+  const payload = { pageInfo: { page: 1, pageSize: 50 }, sorts: [], kieuXem: 4, loaiNhanVien: 1, isChietKhau: true, isVat: true, date: [tuNgay, denNgay], tuNgay, denNgay, idChiNhanh: SANDBOX_CHINHANH, kieuNgay: 'NgayTao', typeViewDetail: null, idPhongBanSale: null, idNhomNhanVienSale: null, idUserSale: null, idPhongBanMkts: null, idNhomNhanVienMkts: null, idUserMkts: null };
+  try {
+    if (!sandboxCookie) await sandboxLogin();
+    const out = [];
+    for (const n of names) {
+      try {
+        const doCall = () => fetch(base + n, { method: 'POST', headers: { 'Content-Type': 'application/json', 'Accept': 'application/json, text/plain, */*', 'Origin': SANDBOX_ORIGIN, 'Referer': SANDBOX_ORIGIN + '/', 'Cookie': sandboxCookie }, body: JSON.stringify(payload) });
+        let r = await doCall();
+        if (r.status === 401) { await sandboxLogin(); r = await doCall(); }
+        const j = await r.json().catch(() => null);
+        const d = j && j.data;
+        let dataKeys = null, firstArrKey = null, firstRowKeys = null, firstRow = null;
+        if (d && typeof d === 'object') {
+          dataKeys = Object.keys(d);
+          for (const k of dataKeys) { if (Array.isArray(d[k]) && d[k].length) { firstArrKey = k; firstRowKeys = Object.keys(d[k][0]); firstRow = d[k][0]; break; } }
+        }
+        out.push({ name: n, httpStatus: r.status, success: j && (j.success ?? j.Success), message: j && (j.message || j.Message), dataKeys, firstArrKey, firstRowKeys, firstRow });
+      } catch (e) { out.push({ name: n, error: e.message }); }
+    }
+    res.json({ day, ketQua: out });
+  } catch (e) { res.json({ error: e.message }); }
+});
+
+// Kiểm tra Google Sheet đọc được không. Mở /api/products/owners
+app.get('/api/products/owners', async (req, res) => {
+  if (!SHEET_CSV_URL) return res.json({ ok: false, message: 'Chưa khai SHEET_CSV_URL trên máy chủ.' });
+  const o = await loadOwners(true);
+  const sample = Object.values(o).slice(0, 8).map(x => ({ sanPham: x.productRaw, quanLy: x.manager }));
+  res.json({ ok: Object.keys(o).length > 0, soSanPham: Object.keys(o).length, sample });
+});
+
+// Báo cáo sản phẩm cho trang Sản phẩm
+app.get('/api/products/report', async (req, res) => {
+  const today = new Date().toISOString().slice(0, 10);
+  const since = req.query.since || today;
+  const until = req.query.until || since;
+  try {
+    const owners = await loadOwners(false);
+    const rp = await sandboxProductReport(since, until);
+    if (!(rp.json && (rp.json.success ?? rp.json.Success)))
+      return res.json({ ok: false, since, until, httpStatus: rp.httpStatus, message: (rp.json && (rp.json.message || rp.json.Message)) || 'Lỗi gọi báo cáo sản phẩm. Kiểm tra SANDBOX_PRODUCT_REPORT_URL bằng /api/products/probe' });
+    const rows = mapProductReport(rp.json, owners);
+    const managers = [...new Set(Object.values(owners).map(o => o.manager))].sort();
+    res.json({ ok: true, ver: 'prod-2026-06-15-v1', since, until, rows, managers, ownersCount: Object.keys(owners).length, lastUpdated: new Date().toISOString() });
+  } catch (e) { res.json({ ok: false, since, until, message: e.message }); }
+});
+
 app.use(express.static(path.join(__dirname, 'public')));
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => console.log(`Đang chạy: http://localhost:${PORT}`));
