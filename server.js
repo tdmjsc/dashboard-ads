@@ -840,14 +840,19 @@ const SANDBOX_PRODUCT_REPORT_URL = process.env.SANDBOX_PRODUCT_REPORT_URL
 
 const normProd = s => String(s == null ? '' : s).trim().toLowerCase().replace(/\s+/g, ' ');
 
-// CSV parser nhỏ (hỗ trợ dấu phẩy trong ngoặc kép)
+// CSV/TSV parser nhỏ — tự nhận dấu phân tách (phẩy, tab, hoặc chấm phẩy)
 function parseCSV(text) {
+  const firstLine = (text.split(/\r?\n/)[0] || '');
+  const n = ch => (firstLine.split(ch).length - 1);
+  let delim = ',';
+  if (n('\t') > n(delim)) delim = '\t';
+  if (n(';') > n(delim)) delim = ';';
   const rows = []; let row = [], cur = '', q = false;
   for (let i = 0; i < text.length; i++) {
     const c = text[i];
     if (q) { if (c === '"') { if (text[i + 1] === '"') { cur += '"'; i++; } else q = false; } else cur += c; }
     else if (c === '"') q = true;
-    else if (c === ',') { row.push(cur); cur = ''; }
+    else if (c === delim) { row.push(cur); cur = ''; }
     else if (c === '\n') { row.push(cur); rows.push(row); row = []; cur = ''; }
     else if (c === '\r') { /* bỏ */ }
     else cur += c;
@@ -919,8 +924,8 @@ function mapProductReport(j, owners) {
   const pick = (o, keys) => { for (const k of keys) if (o[k] != null) return o[k]; return null; };
   return arr.map(o => {
     const name = pick(o, ['tenSanPham', 'tenSp', 'sanPham', 'itemName', 'productName', 'ten', 'name']) || '';
-    const contact = +pick(o, ['soContact', 'contact', 'tongSoContact', 'soLuongContact']) || 0;
-    const chot = +pick(o, ['soDonChot', 'soDonHang', 'donChot', 'soDon', 'chot', 'tongSoDonHang', 'soDonThanhCong']) || 0;
+    const contact = +pick(o, ['soLuongContact', 'soLuongContactThucTe', 'soContact', 'contact', 'tongSoContact', 'soLuongContactPercent']) || 0;
+    const chot = +pick(o, ['soLuongChotDon', 'soLuongChotDonThucTe', 'soDonChot', 'soDonHang', 'donChot', 'soDon', 'chot', 'tongSoDonHang']) || 0;
     const own = owners[normProd(name)];
     return { product: String(name).trim(), manager: own ? own.manager : '', contact, chot };
   });
@@ -948,9 +953,20 @@ app.get('/api/products/probe', async (req, res) => {
 // Kiểm tra Google Sheet đọc được không. Mở /api/products/owners
 app.get('/api/products/owners', async (req, res) => {
   if (!SHEET_CSV_URL) return res.json({ ok: false, message: 'Chưa khai SHEET_CSV_URL trên máy chủ.' });
-  const o = await loadOwners(true);
-  const sample = Object.values(o).slice(0, 8).map(x => ({ sanPham: x.productRaw, quanLy: x.manager }));
-  res.json({ ok: Object.keys(o).length > 0, soSanPham: Object.keys(o).length, sample });
+  try {
+    const r = await fetch(SHEET_CSV_URL, { redirect: 'follow' });
+    const text = await r.text();
+    const rows = parseCSV(text).filter(rw => rw.some(c => String(c).trim() !== ''));
+    const o = await loadOwners(true);
+    const sample = Object.values(o).slice(0, 8).map(x => ({ sanPham: x.productRaw, quanLy: x.manager }));
+    res.json({
+      ok: Object.keys(o).length > 0,
+      soSanPham: Object.keys(o).length,
+      tieuDe: rows[0] || [],
+      soCot: (rows[0] || []).length,
+      sample,
+    });
+  } catch (e) { res.json({ ok: false, message: e.message }); }
 });
 
 // Báo cáo sản phẩm cho trang Sản phẩm
