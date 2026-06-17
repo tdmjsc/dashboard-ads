@@ -27,6 +27,10 @@ export const USERS = [
   // ----- Nhân viên (chỉ xem chính mình) — ví dụ -----
   { user: 'mkt.truong', pass: 'Truong@1234', role: 'viewer',
     employees: ['Tạ Quang Trường', 'Nguyễn Thị Trà My', 'Dương Văn Minh', 'Lê Thị Ánh'] },
+  // ----- Nhân viên PHÁT TRIỂN SẢN PHẨM (chỉ vào trang Sản phẩm, chỉ thấy SP của mình) -----
+  //  "manager" phải KHỚP tên ở cột "Quản Lý" trong Google Sheet.
+  { user: 'kien',  pass: 'Kien@1122', role: 'product', manager: 'Đào Trung Kiên' },
+  { user: 'trang', pass: 'Trang@8899', role: 'product', manager: 'Nguyễn Huyền Trang' },
 
   // Thêm các tài khoản khác ở đây, ví dụ:
   // { user: 'truong', pass: '...', role: 'viewer', employees: ['Tạ Quang Trường'] },
