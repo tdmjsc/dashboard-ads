@@ -61,8 +61,8 @@
       <label>Đến</label><input type="date" id="to">
     </div>
     <button class="btn" id="refreshBtn">Xem</button>
-    <a href="/" class="link">← Dashboard</a>
-    <a href="/marketing.html" class="link">Marketing</a>
+    <a href="/" class="link navfull">← Dashboard</a>
+    <a href="/marketing.html" class="link navfull">Marketing</a>
     <a href="/logout" class="link">Đăng xuất</a>
   </div>
 </header>
@@ -179,6 +179,20 @@ $('sort').addEventListener('change',e=>{st.sort=e.target.value;render();});
 $('hidezero').addEventListener('change',e=>{st.hidezero=e.target.checked;render();});
 document.querySelectorAll('th[data-sort]').forEach(th=>th.addEventListener('click',()=>{st.sort=th.dataset.sort;$('sort').value=st.sort;render();}));
 
+// Ẩn menu Dashboard/Marketing và ô lọc nhân viên nếu là tài khoản "product"
+async function applyMe(){
+  try{
+    const r=await fetch('/api/me'); if(!r.ok) return;
+    const me=await r.json();
+    if(me && me.role==='product'){
+      document.querySelectorAll('.navfull').forEach(el=>el.style.display='none');
+      const m=$('mgr'); if(m) m.style.display='none';
+      const sub=document.querySelector('.sub');
+      if(sub) sub.textContent='Sản phẩm của: '+(me.manager||me.user);
+    }
+  }catch(e){}
+}
+applyMe();
 load();
 </script>
 </body>
