@@ -378,6 +378,14 @@ app.use((req, res, next) => {
       return res.redirect('/');
     }
   }
+  // Trang Lương: chỉ admin
+  if (me && me.role !== 'admin') {
+    const p = req.path;
+    if (p === '/salary.html' || p.startsWith('/api/salary')) {
+      if (p.startsWith('/api/')) return res.status(403).json({ error: 'Chỉ quản trị viên xem được mục Lương.' });
+      return res.redirect('/');
+    }
+  }
   next();
 });
 
@@ -923,13 +931,17 @@ async function loadOwners(force) {
     const find = keys => hdr.findIndex(h => keys.some(k => h.includes(k)));
     const pc = find(['sản phẩm', 'san pham', 'sanpham', 'product', 'tên sp', 'ten sp']);
     const mc = find(['quản lý', 'quan ly', 'phụ trách', 'phu trach', 'nhân viên', 'nhan vien', 'người', 'nguoi']);
+    let gc = find(['giá nhập', 'gia nhap', 'gianhap', 'giá vốn', 'gia von']);
     if (pc >= 0 && mc >= 0) { pCol = pc; mCol = mc; start = 1; }
+    if (gc < 0 && start === 1) gc = 3; // mặc định cột D = giá nhập nếu có tiêu đề khác
+    const toNum = v => { const n = parseInt(String(v == null ? '' : v).replace(/[^\d]/g, ''), 10); return isNaN(n) ? 0 : n; };
     const map = {};
     for (let i = start; i < rows.length; i++) {
       const praw = String(rows[i][pCol] || '').trim();
       const m = String(rows[i][mCol] || '').trim();
+      const giaNhap = gc >= 0 ? toNum(rows[i][gc]) : 0;
       const p = normProd(praw);
-      if (p && m) map[p] = { manager: m, productRaw: praw };
+      if (p && (m || giaNhap)) map[p] = { manager: m, productRaw: praw, giaNhap };
     }
     if (Object.keys(map).length) { OWNERS = map; OWNERS_AT = Date.now(); }
   } catch (e) { /* giữ bản cũ nếu lỗi */ }
@@ -1037,6 +1049,136 @@ app.get('/api/products/report', async (req, res) => {
       managers = me.manager ? [me.manager] : [];
     }
     res.json({ ok: true, ver: 'prod-2026-06-15-v2', since, until, rows, managers, me: { role: me.role, manager: me.manager || '' }, ownersCount: Object.keys(owners).length, lastUpdated: new Date().toISOString() });
+  } catch (e) { res.json({ ok: false, since, until, message: e.message }); }
+});
+
+/* ===================== TÍNH LƯƠNG MARKETING =====================
+   Lương = (Doanh thu − Chi phí QC − Giá vốn − Phí ship) × 2%
+   - Doanh thu = doanh số (Đã giao hàng) + doanh số (Đã thanh toán)
+   - Chi phí QC = chi tiêu Meta theo từng nhân viên
+   - Giá vốn   = Σ(số lượng SP × giá nhập — cột D Google Sheet)
+   - Phí ship  = (số đơn đã giao + đã thanh toán) × 30.000
+   Tham số trạng thái của báo cáo tìm bằng /api/salary/probe, rồi khai:
+     SALARY_STATUS_PARAM (mặc định loaiDoanhSo), SALARY_VAL_GIAO, SALARY_VAL_TT
+   ================================================================ */
+const LUONG_TY_LE = Number(process.env.LUONG_TY_LE || 0.02);
+const PHI_SHIP_DON = Number(process.env.PHI_SHIP_DON || 30000);
+const SALARY_STATUS_PARAM = process.env.SALARY_STATUS_PARAM || 'loaiDoanhSo';
+const SALARY_VAL_GIAO = process.env.SALARY_VAL_GIAO || '';
+const SALARY_VAL_TT = process.env.SALARY_VAL_TT || '';
+const castVal = v => (v !== '' && !isNaN(+v)) ? +v : v;
+
+// Báo cáo lead theo nhân sự + tham số lọc thêm (vd trạng thái giao/thanh toán)
+async function sandboxReportEx(since, until, extra) {
+  const tuNgay = `${since}T00:00:00.000+07:00`, denNgay = `${until}T23:59:59.998+07:00`;
+  const payload = {
+    pageInfo: { page: 1, pageSize: 1000 }, sorts: [],
+    kieuXem: 4, loaiNhanVien: 1, isChietKhau: true, isVat: true,
+    date: [tuNgay, denNgay], tuNgay, denNgay,
+    idChiNhanh: SANDBOX_CHINHANH, kieuNgay: 'NgayTao',
+    typeViewDetail: null, idPhongBanSale: null, idNhomNhanVienSale: null, idUserSale: null,
+    idPhongBanMkts: null, idNhomNhanVienMkts: null, idUserMkts: null, ...(extra || {}),
+  };
+  const call = () => fetch(SANDBOX_REPORT_URL, { method: 'POST', headers: { 'Content-Type': 'application/json', 'Accept': 'application/json, text/plain, */*', 'Origin': SANDBOX_ORIGIN, 'Referer': SANDBOX_ORIGIN + '/', 'Cookie': sandboxCookie }, body: JSON.stringify(payload) });
+  if (!sandboxCookie) await sandboxLogin();
+  let r = await call();
+  if (r.status === 401 || r.status === 403) { await sandboxLogin(); r = await call(); }
+  return r.json().catch(() => ({ success: false }));
+}
+function reportRowsEx(j) {
+  const d = (j && j.data) || {};
+  return (d.reportLeadByNhanSuMktDtos || []).map(r => ({
+    name: (r.ten || '').trim(), id: r.marketingUserId,
+    doanhthu: +r.doanhSo || 0,
+    soDon: +(r.soDonHang ?? r.soDonChot ?? 0) || 0,
+    soSP: +r.soLuongSanPham || 0,
+  }));
+}
+
+// Số lượng từng SP theo 1 nhân viên marketing (để tính giá vốn)
+async function productQtyByUser(since, until, marketingUserId) {
+  const tuNgay = `${since}T00:00:00+07:00`, denNgay = `${until}T23:59:59+07:00`;
+  const payload = { strIdNguonDuLieu: null, kieuNgay: 'NgayTao', tuNgay, denNgay, idNhomSanPham: null, idSanPhamCha: null, idSanPham: null, unitCode: null, tiTrongChiaTinhTheo: 0, isChietKhau: true, isVat: true, idChiNhanh: SANDBOX_CHINHANH, typeViewDetail: null, idPhongBanSale: null, idNhomNhanVienSale: null, idUserSale: null, idPhongBanMkts: null, idNhomNhanVienMkts: null, idUserMkts: marketingUserId ? [marketingUserId] : null, date: [tuNgay, denNgay], khoId: null, pageInfo: { page: 1, pageSize: 1000 }, sorts: [] };
+  const r = await fetch(SANDBOX_PRODUCT_REPORT_URL, { method: 'POST', headers: { 'Content-Type': 'application/json', 'Accept': 'application/json, text/plain, */*', 'Origin': SANDBOX_ORIGIN, 'Referer': SANDBOX_ORIGIN + '/', 'Cookie': sandboxCookie }, body: JSON.stringify(payload) });
+  const j = await r.json().catch(() => ({}));
+  const d = (j && j.data) || {};
+  const arr = Array.isArray(d.productGridTable) ? d.productGridTable : [];
+  return arr.map(o => ({ ten: (o.tenSanPham || '').trim(), soLuong: +o.soLuongSanPham || 0 }));
+}
+
+// Chi tiêu Meta theo từng nhân viên (dùng chung đệm với /api/data)
+async function metaSpendByEmployee(since, until) {
+  const days = listDays(since, until);
+  const key = since + '|' + until;
+  let campaigns;
+  const cached = DATA_CACHE.get(key);
+  if (cached && Date.now() - cached.at < CACHE_MS) campaigns = cached.campaigns;
+  else {
+    const tasks = [];
+    for (const src of SOURCES) for (const acc of src.accounts) tasks.push(fetchAccount(acc, src.token, days, since, until));
+    const results = await Promise.allSettled(tasks);
+    campaigns = [];
+    for (const r of results) if (r.status === 'fulfilled') campaigns.push(...r.value);
+    DATA_CACHE.set(key, { at: Date.now(), campaigns });
+  }
+  const spend = {};
+  for (const c of campaigns) {
+    const k = normProd(c.employee || '');
+    spend[k] = (spend[k] || 0) + (c.daily || []).reduce((a, d) => a + (d && d.spent ? +d.spent : 0), 0);
+  }
+  return spend;
+}
+
+// Tìm tham số trạng thái: /api/salary/probe?param=loaiDoanhSo&vals=1,2,3,4
+app.get('/api/salary/probe', async (req, res) => {
+  const since = req.query.since || '2026-05-01', until = req.query.until || '2026-05-31';
+  const param = req.query.param || 'loaiDoanhSo';
+  const vals = String(req.query.vals || '1,2,3,4').split(',').map(s => s.trim()).filter(Boolean);
+  try {
+    if (!sandboxCookie) await sandboxLogin();
+    const out = [];
+    for (const v of vals) {
+      const rows = reportRowsEx(await sandboxReportEx(since, until, { [param]: castVal(v) }));
+      out.push({ value: v, tongDoanhThu: rows.reduce((s, r) => s + r.doanhthu, 0), soNhanVien: rows.length });
+    }
+    res.json({ since, until, param, ketqua: out, goiY: 'Tìm value cho tổng = 653897000 (đã giao) và 730168200 (đã thanh toán)' });
+  } catch (e) { res.json({ error: e.message }); }
+});
+
+// Bảng lương: /api/salary/report?since=2026-05-01&until=2026-05-31
+app.get('/api/salary/report', async (req, res) => {
+  const today = new Date().toISOString().slice(0, 10);
+  const since = req.query.since || today, until = req.query.until || since;
+  if (!SALARY_VAL_GIAO || !SALARY_VAL_TT)
+    return res.json({ ok: false, since, until, message: 'Chưa cấu hình trạng thái doanh thu. Mở /api/salary/probe để tìm 2 giá trị cho "đã giao" và "đã thanh toán", rồi khai SALARY_VAL_GIAO, SALARY_VAL_TT (và SALARY_STATUS_PARAM nếu khác loaiDoanhSo).' });
+  try {
+    if (!sandboxCookie) await sandboxLogin();   // đăng nhập 1 lần trước khi gọi song song
+    const p = SALARY_STATUS_PARAM;
+    const [giaoJ, ttJ, meta] = await Promise.all([
+      sandboxReportEx(since, until, { [p]: castVal(SALARY_VAL_GIAO) }),
+      sandboxReportEx(since, until, { [p]: castVal(SALARY_VAL_TT) }),
+      metaSpendByEmployee(since, until),
+    ]);
+    const owners = await loadOwners(false);
+    const priceOf = ten => { const o = owners[normProd(ten)]; return o ? (o.giaNhap || 0) : 0; };
+    const map = {};
+    const add = arr => { for (const r of arr) { if (!r.name) continue; const k = normProd(r.name); if (!map[k]) map[k] = { name: r.name, id: r.id, doanhthu: 0, soDon: 0, soSP: 0 }; map[k].doanhthu += r.doanhthu; map[k].soDon += r.soDon; map[k].soSP += r.soSP; if (r.id) map[k].id = r.id; } };
+    add(reportRowsEx(giaoJ)); add(reportRowsEx(ttJ));
+    const emps = Object.values(map);
+    // Giá vốn: gọi song song báo cáo SP theo từng nhân viên
+    const prodLists = await Promise.all(emps.map(e => (e.id && e.soSP > 0) ? productQtyByUser(since, until, e.id) : Promise.resolve([])));
+    const rows = emps.map((e, i) => {
+      let cost = 0, qty = 0;
+      for (const pr of prodLists[i]) { cost += pr.soLuong * priceOf(pr.ten); qty += pr.soLuong; }
+      const unit = qty ? cost / qty : 0;
+      const giaVon = Math.round(unit * e.soSP);   // giá vốn/đơn vị (theo cơ cấu SP) × tổng SP (giao+thanh toán)
+      const chiPhiQC = Math.round(meta[normProd(e.name)] || 0);
+      const phiShip = e.soDon * PHI_SHIP_DON;
+      const luong = Math.round((e.doanhthu - chiPhiQC - giaVon - phiShip) * LUONG_TY_LE);
+      return { name: e.name, doanhthu: e.doanhthu, chiPhiQC, giaVon, phiShip, soDon: e.soDon, soSP: e.soSP, luong };
+    });
+    rows.sort((a, b) => b.luong - a.luong);
+    res.json({ ok: true, since, until, tyLe: LUONG_TY_LE, phiShipDon: PHI_SHIP_DON, rows, lastUpdated: new Date().toISOString() });
   } catch (e) { res.json({ ok: false, since, until, message: e.message }); }
 });
 
