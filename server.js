@@ -370,6 +370,14 @@ app.use((req, res, next) => {
       return res.redirect('/products.html');
     }
   }
+  // Marketing (viewer): chỉ Dashboard + Marketing, KHÔNG vào trang Sản phẩm
+  if (me && me.role === 'viewer') {
+    const p = req.path;
+    if (p === '/products.html' || p.startsWith('/api/products')) {
+      if (p.startsWith('/api/')) return res.status(403).json({ error: 'Không có quyền truy cập mục này.' });
+      return res.redirect('/');
+    }
+  }
   next();
 });
 
