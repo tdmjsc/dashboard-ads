@@ -56,7 +56,7 @@
     </div>
     <button class="btn" id="refreshBtn">Xem</button>
     <a href="/" class="link">← Dashboard</a>
-    <a href="/products.html" class="link">Sản phẩm</a>
+    <a href="/products.html" class="link" id="navProducts">Sản phẩm</a>
     <a href="/logout" class="link">Đăng xuất</a>
   </div>
 </header>
@@ -154,6 +154,10 @@ document.querySelectorAll('.quick button').forEach(b=>{
 });
 $('refreshBtn').addEventListener('click', load);
 
+// Ẩn link "Sản phẩm" nếu không phải admin
+fetch('/api/me').then(r=>r.ok?r.json():null).then(me=>{
+  if(me && me.role!=='admin'){ const np=document.getElementById('navProducts'); if(np) np.style.display='none'; }
+}).catch(()=>{});
 load();
 </script>
 </body>
