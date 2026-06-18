@@ -1,0 +1,141 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Lương Marketing — Check ADS TDMJSC</title>
+<style>
+  *{box-sizing:border-box;}
+  body{margin:0;font-family:'Inter',system-ui,sans-serif;background:#0B1322;color:#E7EEF8;}
+  header{background:#10192B;border-bottom:1px solid rgba(255,255,255,.07);padding:14px 18px;}
+  .top{display:flex;align-items:center;gap:12px;flex-wrap:wrap;}
+  h1{font-size:17px;margin:0;}
+  .sub{color:#9FB0C8;font-size:12px;margin:2px 0 0;font-weight:400;}
+  .ctrl{display:flex;align-items:center;gap:8px;background:rgba(255,255,255,.06);border:1px solid rgba(255,255,255,.10);padding:7px 11px;border-radius:9px;}
+  .ctrl label{font-size:11px;color:#9FB0C8;}
+  .ctrl input{font-family:'Inter';font-size:13px;color:#fff;background:transparent;border:none;outline:none;color-scheme:dark;}
+  .btn{font-family:'Inter';font-size:13px;font-weight:600;color:#fff;background:#3D5AFE;border:none;padding:8px 16px;border-radius:9px;cursor:pointer;white-space:nowrap;}
+  .btn:hover{background:#2f49d6;} .btn:disabled{opacity:.5;cursor:not-allowed;}
+  .link{color:#C4D0E2;font-size:13px;text-decoration:none;border:1px solid rgba(255,255,255,.14);padding:7px 12px;border-radius:9px;white-space:nowrap;}
+  .link:hover{background:rgba(255,255,255,.08);color:#fff;}
+  main{padding:18px;max-width:1040px;margin:0 auto;}
+  .status{font-size:13px;color:#9FB0C8;margin:4px 0 16px;min-height:18px;}
+  .status .warn{color:#ffc56b;} .status .err{color:#ff9b8a;}
+  table{width:100%;border-collapse:collapse;background:#101B2E;border-radius:12px;overflow:hidden;}
+  th,td{padding:12px 14px;text-align:right;font-size:13.5px;border-bottom:1px solid rgba(255,255,255,.05);white-space:nowrap;}
+  th:first-child,td:first-child{text-align:left;}
+  th{background:#16233A;color:#9FB0C8;font-weight:600;font-size:12px;text-transform:uppercase;letter-spacing:.03em;}
+  td.num{font-variant-numeric:tabular-nums;}
+  tr:last-child td{border-bottom:none;}
+  tr.total td{background:#16233A;font-weight:700;color:#fff;}
+  .luong{color:#7BE3B5;font-weight:700;}
+  .neg{color:#ff9b8a;}
+  .small{font-size:11px;color:#6B7C97;}
+  .empty{padding:30px;text-align:center;color:#6B7C97;font-size:14px;}
+  .note{font-size:12px;color:#7C8CA6;margin-top:12px;line-height:1.5;}
+  @media(max-width:680px){ h1{font-size:15px;} th,td{padding:9px 8px;font-size:12px;} }
+</style>
+</head>
+<body>
+<header>
+  <div class="top">
+    <div style="flex:1;min-width:200px;">
+      <h1>Lương Marketing</h1>
+      <p class="sub">Lương = (Doanh thu − Chi phí QC − Giá vốn − Phí ship) × 2%</p>
+    </div>
+    <div class="ctrl">
+      <label>Tháng</label><input type="month" id="month" value="2026-05">
+    </div>
+    <button class="btn" id="refreshBtn">Xem</button>
+    <a href="/" class="link">← Dashboard</a>
+    <a href="/logout" class="link">Đăng xuất</a>
+  </div>
+</header>
+
+<main>
+  <div class="status" id="status">Đang tải…</div>
+  <table id="tbl">
+    <thead>
+      <tr>
+        <th>Nhân viên</th>
+        <th>Doanh thu</th>
+        <th>Chi phí QC</th>
+        <th>Giá vốn</th>
+        <th>Phí ship</th>
+        <th>Lương (2%)</th>
+      </tr>
+    </thead>
+    <tbody id="rows"></tbody>
+  </table>
+  <div class="note" id="note"></div>
+</main>
+
+<script>
+const vnd=n=>(Math.round(Number(n)||0)).toLocaleString('vi-VN');
+const $=id=>document.getElementById(id);
+const esc=s=>String(s==null?'':s).replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+const moneyCls=n=>Number(n)<0?'num neg':'num';
+
+function monthRange(m){ // m = "YYYY-MM"
+  const [y,mo]=m.split('-').map(Number);
+  const since=`${y}-${String(mo).padStart(2,'0')}-01`;
+  const last=new Date(y,mo,0).getDate();
+  const until=`${y}-${String(mo).padStart(2,'0')}-${String(last).padStart(2,'0')}`;
+  return {since,until};
+}
+
+async function load(){
+  const {since,until}=monthRange($('month').value);
+  $('refreshBtn').disabled=true;
+  $('status').innerHTML='<span class="warn">Đang tính lương (lấy doanh thu, chi tiêu Meta, giá vốn)… có thể mất ~10–20 giây.</span>';
+  $('rows').innerHTML=''; $('note').textContent='';
+  try{
+    const res=await fetch('/api/salary/report?since='+since+'&until='+until);
+    if(res.status===401){ location.href='/login'; return; }
+    if(res.status===403){ $('status').innerHTML='<span class="err">Chỉ quản trị viên xem được mục Lương.</span>'; return; }
+    const d=await res.json();
+    if(!d.ok){ $('status').innerHTML='<span class="err">'+esc(d.message||'Không lấy được dữ liệu')+'</span>'; return; }
+    render(d, since, until);
+  }catch(e){ $('status').innerHTML='<span class="err">Không kết nối được máy chủ: '+esc(e.message)+'</span>'; }
+  finally{ $('refreshBtn').disabled=false; }
+}
+
+function render(d, since, until){
+  const rows=d.rows||[];
+  const tb=$('rows');
+  if(!rows.length){ tb.innerHTML='<tr><td colspan="6" class="empty">Không có dữ liệu trong tháng này.</td></tr>'; }
+  else{
+    let T={dt:0,qc:0,gv:0,ship:0,luong:0,don:0};
+    let html=rows.map(r=>{
+      T.dt+=r.doanhthu||0; T.qc+=r.chiPhiQC||0; T.gv+=r.giaVon||0; T.ship+=r.phiShip||0; T.luong+=r.luong||0; T.don+=r.soDon||0;
+      return `<tr>
+        <td>${esc(r.name)}</td>
+        <td class="num">${vnd(r.doanhthu)}</td>
+        <td class="num">${vnd(r.chiPhiQC)}</td>
+        <td class="num">${vnd(r.giaVon)}</td>
+        <td class="num">${vnd(r.phiShip)}<div class="small">${vnd(r.soDon)} đơn</div></td>
+        <td class="${Number(r.luong)<0?'luong neg':'luong'}">${vnd(r.luong)} ₫</td>
+      </tr>`;
+    }).join('');
+    html+=`<tr class="total">
+      <td>Tổng (${rows.length} người)</td>
+      <td class="num">${vnd(T.dt)}</td>
+      <td class="num">${vnd(T.qc)}</td>
+      <td class="num">${vnd(T.gv)}</td>
+      <td class="num">${vnd(T.ship)}<div class="small">${vnd(T.don)} đơn</div></td>
+      <td class="luong">${vnd(T.luong)} ₫</td>
+    </tr>`;
+    tb.innerHTML=html;
+  }
+  const t=new Date(d.lastUpdated||Date.now());
+  $('status').textContent='Cập nhật '+t.toLocaleString('vi-VN')+'  ·  tháng '+since.slice(0,7)+'  ·  tỷ lệ '+((d.tyLe||0.02)*100)+'%, phí ship '+vnd(d.phiShipDon||30000)+'₫/đơn';
+  $('note').innerHTML='Doanh thu = doanh số (đã giao) + doanh số (đã thanh toán). Chi phí QC = chi tiêu Meta. '
+    +'Giá vốn = số lượng SP × giá nhập (cột D Google Sheet). Phí ship = số đơn × '+vnd(d.phiShipDon||30000)+'₫.';
+}
+
+$('refreshBtn').addEventListener('click',load);
+$('month').addEventListener('change',load);
+load();
+</script>
+</body>
+</html>
