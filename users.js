@@ -19,6 +19,7 @@ export const USERS = [
 
   // ----- Chủ hệ thống (xem tất cả) -----
   { user: 'tdmjsc', pass: 'Tdmjsc@0611', role: 'admin' },
+  { user: 'ketoan', pass: 'Tdmjsc@1234', role: 'admin' },
 
   // ----- Trưởng phòng (xem nhiều nhân viên) — ví dụ, sửa lại theo thực tế -----
   { user: 'mkt.phuong', pass: 'Phuong@45678', role: 'viewer',
