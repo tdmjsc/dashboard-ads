@@ -712,7 +712,26 @@ app.get('/api/marketing/report', async (req, res) => {
     if (!(rp.json && (rp.json.success ?? rp.json.Success)))
       return res.json({ ok: false, since, until, httpStatus: rp.httpStatus, message: (rp.json && (rp.json.message || rp.json.Message)) || 'Lỗi gọi báo cáo' });
     const m = mapReport(rp.json);
-    res.json({ ok: true, ver: 'mkt-2026-06-15-v11-A', since, until, rows: m.rows, total: m.total, lastUpdated: new Date().toISOString() });
+    // Lọc theo quyền: không phải admin thì chỉ thấy nhân viên được phép (giống Dashboard)
+    const me = req.session.user || {};
+    let rows = m.rows, total = m.total;
+    if (me.role !== 'admin') {
+      const norm = s => String(s == null ? '' : s).trim().toLowerCase().replace(/\s+/g, ' ');
+      const allow = new Set((me.employees || []).map(norm));
+      rows = rows.filter(r => allow.has(norm(r.name)));
+      // tính lại Tổng từ các dòng đã lọc
+      const s = rows.reduce((a, r) => ({
+        contact: a.contact + (+r.contact || 0), chot: a.chot + (+r.chot || 0),
+        soSP: a.soSP + (+r.soSP || 0), doanhthu: a.doanhthu + (+r.doanhthu || 0),
+        nganSach: a.nganSach + (+r.nganSach || 0),
+      }), { contact: 0, chot: 0, soSP: 0, doanhthu: 0, nganSach: 0 });
+      total = {
+        contact: s.contact, chot: s.chot, soSP: s.soSP, doanhthu: s.doanhthu, nganSach: s.nganSach,
+        tyLe: s.contact ? (s.chot / s.contact * 100) : 0,
+        giaContact: s.contact ? (s.nganSach / s.contact) : 0,
+      };
+    }
+    res.json({ ok: true, ver: 'mkt-2026-06-15-v12-A', since, until, rows, total, lastUpdated: new Date().toISOString() });
   } catch (e) {
     res.json({ ok: false, since, until, message: e.message });
   }
