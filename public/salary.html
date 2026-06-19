@@ -128,7 +128,8 @@ function render(d, since, until){
     tb.innerHTML=html;
   }
   const t=new Date(d.lastUpdated||Date.now());
-  $('status').textContent='Cập nhật '+t.toLocaleString('vi-VN')+'  ·  tháng '+since.slice(0,7)+'  ·  tỷ lệ '+((d.tyLe||0.02)*100)+'%, phí ship '+vnd(d.phiShipDon||30000)+'₫/đơn';
+  const ngn=d.nguon==='mau-t5'?'  ·  doanh thu: số liệu mẫu tháng 5 (khớp báo cáo)':'';
+  $('status').textContent='Cập nhật '+t.toLocaleString('vi-VN')+'  ·  tháng '+since.slice(0,7)+'  ·  tỷ lệ '+((d.tyLe||0.02)*100)+'%, phí ship '+vnd(d.phiShipDon||30000)+'₫/đơn'+ngn;
   $('note').innerHTML='Doanh thu = doanh số (đã giao) + doanh số (đã thanh toán). Chi phí QC = chi tiêu Meta. '
     +'Giá vốn = số lượng SP × giá nhập (cột D Google Sheet). Phí ship = số đơn × '+vnd(d.phiShipDon||30000)+'₫.';
 }
