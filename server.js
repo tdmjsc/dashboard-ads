@@ -1106,6 +1106,20 @@ async function productQtyByUser(since, until, marketingUserId) {
   return arr.map(o => ({ ten: (o.tenSanPham || '').trim(), soLuong: +o.soLuongSanPham || 0 }));
 }
 
+// Gọi báo cáo sản phẩm + tham số lọc thêm; trả tổng doanh số & số lượng
+async function productReportEx(since, until, extra) {
+  const tuNgay = `${since}T00:00:00+07:00`, denNgay = `${until}T23:59:59+07:00`;
+  const payload = { strIdNguonDuLieu: null, kieuNgay: 'NgayTao', tuNgay, denNgay, idNhomSanPham: null, idSanPhamCha: null, idSanPham: null, unitCode: null, tiTrongChiaTinhTheo: 0, isChietKhau: true, isVat: true, idChiNhanh: SANDBOX_CHINHANH, typeViewDetail: null, idPhongBanSale: null, idNhomNhanVienSale: null, idUserSale: null, idPhongBanMkts: null, idNhomNhanVienMkts: null, idUserMkts: null, date: [tuNgay, denNgay], khoId: null, pageInfo: { page: 1, pageSize: 1000 }, sorts: [], ...(extra || {}) };
+  const call = () => fetch(SANDBOX_PRODUCT_REPORT_URL, { method: 'POST', headers: { 'Content-Type': 'application/json', 'Accept': 'application/json, text/plain, */*', 'Origin': SANDBOX_ORIGIN, 'Referer': SANDBOX_ORIGIN + '/', 'Cookie': sandboxCookie }, body: JSON.stringify(payload) });
+  if (!sandboxCookie) await sandboxLogin();
+  let r = await call();
+  if (r.status === 401 || r.status === 403) { await sandboxLogin(); r = await call(); }
+  const j = await r.json().catch(() => ({}));
+  const d = (j && j.data) || {};
+  const arr = Array.isArray(d.productGridTable) ? d.productGridTable : [];
+  return { doanhSo: arr.reduce((s, o) => s + (+o.doanhSo || 0), 0), qty: arr.reduce((s, o) => s + (+o.soLuongSanPham || 0), 0), soDong: arr.length };
+}
+
 // Chi tiêu Meta theo từng nhân viên (dùng chung đệm với /api/data)
 async function metaSpendByEmployee(since, until) {
   const days = listDays(since, until);
@@ -1145,25 +1159,83 @@ app.get('/api/salary/probe', async (req, res) => {
   } catch (e) { res.json({ error: e.message }); }
 });
 
+// Dò trạng thái trên BÁO CÁO SẢN PHẨM:
+//   /api/products/probe-status?names=trangThaiGiaoHang,trangThai&vals=31,32,1,2,3&arr=1
+// arr=1 -> gửi giá trị dạng mảng [v]; báo cáo SP có lọc trạng thái nên 1 trong số này
+// sẽ cho tongDoanhSo ≈ 653.897.000 (đã giao) hoặc 730.168.200 (đã thanh toán).
+app.get('/api/products/probe-status', async (req, res) => {
+  const since = req.query.since || '2026-05-01', until = req.query.until || '2026-05-31';
+  const names = String(req.query.names || 'trangThaiGiaoHang,trangThaiDonHang,trangThai,idTrangThai,loaiTrangThai').split(',').map(s => s.trim()).filter(Boolean);
+  const vals = String(req.query.vals || '31').split(',').map(s => s.trim()).filter(Boolean);
+  const arr = req.query.arr === '1';
+  try {
+    if (!sandboxCookie) await sandboxLogin();
+    const base = await productReportEx(since, until, {});
+    const out = [];
+    for (const nm of names) {
+      for (const v of vals) {
+        const val = castVal(v);
+        const t = await productReportEx(since, until, { [nm]: arr ? [val] : val });
+        out.push({ param: nm, value: v, tongDoanhSo: t.doanhSo, khacBase: t.doanhSo !== base.doanhSo });
+      }
+    }
+    res.json({ since, until, dangMang: arr, base: base.doanhSo, ketqua: out, goiY: 'param/value nào có tongDoanhSo ≈ 653897000 (đã giao) / 730168200 (đã thanh toán) là đúng' });
+  } catch (e) { res.json({ error: e.message }); }
+});
+
+// Dữ liệu MẪU tháng 5/2026 — lấy từ báo cáo "lead theo nhân sự" lọc Đã giao + Đã
+// thanh toán (đã gộp 2 trạng thái). Dùng khi chưa cấu hình SALARY_VAL_GIAO/TT, để
+// xem ngay bảng lương tháng 5. doanhthu = doanh số gộp; soDon, soSP = gộp 2 trạng thái.
+const SALARY_SAMPLE = {
+  '2026-05': {
+    'Trịnh Đức Phương':  { doanhthu: 554333000, soDon: 937, soSP: 1734 },
+    'Nguyễn Thị Trà My': { doanhthu: 151416000, soDon: 243, soSP: 465 },
+    'Tạ Quang Trường':   { doanhthu: 147853000, soDon: 299, soSP: 846 },
+    'Vũ Hà Giang':       { doanhthu: 127568200, soDon: 211, soSP: 766 },
+    'Lê Thị Ánh':        { doanhthu: 105231000, soDon: 232, soSP: 320 },
+    'Đoàn Việt Hà':      { doanhthu: 98935000,  soDon: 206, soSP: 269 },
+    'Nguyễn Duy Huân':   { doanhthu: 72695000,  soDon: 137, soSP: 273 },
+    'Nguyễn Trung Hiếu': { doanhthu: 65165000,  soDon: 137, soSP: 381 },
+    'Dương Văn Minh':    { doanhthu: 55029000,  soDon: 79,  soSP: 139 },
+  },
+};
+
 // Bảng lương: /api/salary/report?since=2026-05-01&until=2026-05-31
 app.get('/api/salary/report', async (req, res) => {
   const today = new Date().toISOString().slice(0, 10);
   const since = req.query.since || today, until = req.query.until || since;
-  if (!SALARY_VAL_GIAO || !SALARY_VAL_TT)
-    return res.json({ ok: false, since, until, message: 'Chưa cấu hình trạng thái doanh thu. Mở /api/salary/probe để tìm 2 giá trị cho "đã giao" và "đã thanh toán", rồi khai SALARY_VAL_GIAO, SALARY_VAL_TT (và SALARY_STATUS_PARAM nếu khác loaiDoanhSo).' });
+  const useConfig = !!(SALARY_VAL_GIAO && SALARY_VAL_TT);
+  const sample = SALARY_SAMPLE[since.slice(0, 7)];
+  if (!useConfig && !sample)
+    return res.json({ ok: false, since, until, message: 'Hiện chỉ có sẵn dữ liệu mẫu tháng 5/2026. Để xem tự động các tháng khác: lấy 2 giá trị trạng thái qua /api/salary/probe rồi khai SALARY_VAL_GIAO, SALARY_VAL_TT trên máy chủ.' });
   try {
     if (!sandboxCookie) await sandboxLogin();   // đăng nhập 1 lần trước khi gọi song song
     const p = SALARY_STATUS_PARAM;
-    const [giaoJ, ttJ, meta] = await Promise.all([
-      sandboxReportEx(since, until, { [p]: castVal(SALARY_VAL_GIAO) }),
-      sandboxReportEx(since, until, { [p]: castVal(SALARY_VAL_TT) }),
-      metaSpendByEmployee(since, until),
-    ]);
-    const owners = await loadOwners(false);
-    const priceOf = ten => { const o = owners[normProd(ten)]; return o ? (o.giaNhap || 0) : 0; };
     const map = {};
     const add = arr => { for (const r of arr) { if (!r.name) continue; const k = normProd(r.name); if (!map[k]) map[k] = { name: r.name, id: r.id, doanhthu: 0, soDon: 0, soSP: 0 }; map[k].doanhthu += r.doanhthu; map[k].soDon += r.soDon; map[k].soSP += r.soSP; if (r.id) map[k].id = r.id; } };
-    add(reportRowsEx(giaoJ)); add(reportRowsEx(ttJ));
+
+    let meta;
+    if (useConfig) {
+      // Lấy doanh thu thật theo 2 trạng thái (đã giao + đã thanh toán)
+      const [giaoJ, ttJ, m] = await Promise.all([
+        sandboxReportEx(since, until, { [p]: castVal(SALARY_VAL_GIAO) }),
+        sandboxReportEx(since, until, { [p]: castVal(SALARY_VAL_TT) }),
+        metaSpendByEmployee(since, until),
+      ]);
+      meta = m; add(reportRowsEx(giaoJ)); add(reportRowsEx(ttJ));
+    } else {
+      // Dùng dữ liệu mẫu; lấy marketingUserId từ báo cáo mặc định (để tính giá vốn)
+      const [baseJ, m] = await Promise.all([
+        sandboxReportEx(since, until, {}),
+        metaSpendByEmployee(since, until),
+      ]);
+      meta = m;
+      const idByName = {}; for (const r of reportRowsEx(baseJ)) idByName[normProd(r.name)] = r.id;
+      for (const name in sample) { const s = sample[name], k = normProd(name); map[k] = { name, id: idByName[k] || null, doanhthu: s.doanhthu, soDon: s.soDon, soSP: s.soSP }; }
+    }
+
+    const owners = await loadOwners(false);
+    const priceOf = ten => { const o = owners[normProd(ten)]; return o ? (o.giaNhap || 0) : 0; };
     const emps = Object.values(map);
     // Giá vốn: gọi song song báo cáo SP theo từng nhân viên
     const prodLists = await Promise.all(emps.map(e => (e.id && e.soSP > 0) ? productQtyByUser(since, until, e.id) : Promise.resolve([])));
@@ -1178,7 +1250,7 @@ app.get('/api/salary/report', async (req, res) => {
       return { name: e.name, doanhthu: e.doanhthu, chiPhiQC, giaVon, phiShip, soDon: e.soDon, soSP: e.soSP, luong };
     });
     rows.sort((a, b) => b.luong - a.luong);
-    res.json({ ok: true, since, until, tyLe: LUONG_TY_LE, phiShipDon: PHI_SHIP_DON, rows, lastUpdated: new Date().toISOString() });
+    res.json({ ok: true, since, until, nguon: useConfig ? 'live' : 'mau-t5', tyLe: LUONG_TY_LE, phiShipDon: PHI_SHIP_DON, rows, lastUpdated: new Date().toISOString() });
   } catch (e) { res.json({ ok: false, since, until, message: e.message }); }
 });
 
