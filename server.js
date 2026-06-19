@@ -394,27 +394,40 @@ app.use((req, res, next) => {
 const DATA_CACHE = new Map();
 const CACHE_MS = 3 * 60 * 1000; // 3 phút
 
+// Nạp 1 tài khoản, tự thử lại nếu lỗi (token nặng/timeout thỉnh thoảng rớt)
+async function fetchAccountRetry(acc, token, days, since, until, tries = 3) {
+  let lastErr;
+  for (let i = 0; i < tries; i++) {
+    try { return await fetchAccount(acc, token, days, since, until); }
+    catch (e) { lastErr = e; await sleep(800); }
+  }
+  throw lastErr;
+}
+// Nạp toàn bộ campaign (mọi tài khoản). CHỈ lưu đệm khi nạp ĐỦ tất cả tài khoản,
+// để tránh lưu nhầm dữ liệu thiếu (gây dashboard/lương về 0).
+async function getCampaigns(since, until) {
+  const days = listDays(since, until);
+  const key = since + '|' + until;
+  const cached = DATA_CACHE.get(key);
+  if (cached && cached.complete && Date.now() - cached.at < CACHE_MS) return cached.campaigns;
+  const tasks = [];
+  for (const src of SOURCES)
+    for (const acc of src.accounts)
+      tasks.push(fetchAccountRetry(acc, src.token, days, since, until));
+  const results = await Promise.allSettled(tasks);
+  const campaigns = [];
+  let failed = 0;
+  for (const r of results) { if (r.status === 'fulfilled') campaigns.push(...r.value); else failed++; }
+  if (failed === 0) DATA_CACHE.set(key, { at: Date.now(), campaigns, complete: true });
+  return campaigns; // nếu thiếu tài khoản -> trả tạm nhưng KHÔNG lưu đệm, lần sau nạp lại
+}
+
 app.get('/api/data', async (req, res) => {
   try {
     const since = req.query.since || '2026-06-01';
     const until = req.query.until || '2026-06-09';
     const days = listDays(since, until);
-    const key = since + '|' + until;
-
-    let campaigns;
-    const cached = DATA_CACHE.get(key);
-    if (cached && Date.now() - cached.at < CACHE_MS) {
-      campaigns = cached.campaigns;                 // lấy từ đệm -> gần như tức thì
-    } else {
-      const tasks = [];
-      for (const src of SOURCES)
-        for (const acc of src.accounts)
-          tasks.push(fetchAccount(acc, src.token, days, since, until)); // gọi SONG SONG
-      const results = await Promise.allSettled(tasks);
-      campaigns = [];
-      for (const r of results) if (r.status === 'fulfilled') campaigns.push(...r.value);
-      DATA_CACHE.set(key, { at: Date.now(), campaigns });
-    }
+    const campaigns = await getCampaigns(since, until);
 
     // Lọc theo quyền: viewer chỉ thấy nhân viên được phép
     const me = req.session.user;
@@ -1121,21 +1134,9 @@ async function productReportEx(since, until, extra) {
   return { doanhSo: arr.reduce((s, o) => s + (+o.doanhSo || 0), 0), qty: arr.reduce((s, o) => s + (+o.soLuongSanPham || 0), 0), soDong: arr.length };
 }
 
-// Chi tiêu Meta theo từng nhân viên (dùng chung đệm với /api/data)
+// Chi tiêu Meta theo từng nhân viên (dùng chung getCampaigns: có thử lại + đệm an toàn)
 async function metaSpendByEmployee(since, until) {
-  const days = listDays(since, until);
-  const key = since + '|' + until;
-  let campaigns;
-  const cached = DATA_CACHE.get(key);
-  if (cached && Date.now() - cached.at < CACHE_MS) campaigns = cached.campaigns;
-  else {
-    const tasks = [];
-    for (const src of SOURCES) for (const acc of src.accounts) tasks.push(fetchAccount(acc, src.token, days, since, until));
-    const results = await Promise.allSettled(tasks);
-    campaigns = [];
-    for (const r of results) if (r.status === 'fulfilled') campaigns.push(...r.value);
-    DATA_CACHE.set(key, { at: Date.now(), campaigns });
-  }
+  const campaigns = await getCampaigns(since, until);
   const spend = {};
   for (const c of campaigns) {
     const k = normProd(c.employee || '');
