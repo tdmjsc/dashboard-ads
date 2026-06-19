@@ -1063,6 +1063,7 @@ app.get('/api/products/report', async (req, res) => {
    ================================================================ */
 const LUONG_TY_LE = Number(process.env.LUONG_TY_LE || 0.02);
 const PHI_SHIP_DON = Number(process.env.PHI_SHIP_DON || 30000);
+const QC_TAX = Number(process.env.QC_TAX || 0.11);   // 11% thuế VAT cộng vào chi phí quảng cáo
 const SALARY_STATUS_PARAM = process.env.SALARY_STATUS_PARAM || 'giaoHangTrangThaiMa';
 const SALARY_VAL_GIAO = process.env.SALARY_VAL_GIAO || '31';  // 31 = Đã giao hàng
 const SALARY_VAL_TT = process.env.SALARY_VAL_TT || '32';      // 32 = Đã thanh toán
@@ -1250,7 +1251,7 @@ app.get('/api/salary/report', async (req, res) => {
       for (const pr of lists[i * 2]) giaVon += pr.soLuong * priceOf(pr.ten);
       for (const pr of lists[i * 2 + 1]) giaVon += pr.soLuong * priceOf(pr.ten);
       giaVon = Math.round(giaVon);
-      const chiPhiQC = Math.round(meta[normProd(e.name)] || 0);
+      const chiPhiQC = Math.round((meta[normProd(e.name)] || 0) * (1 + QC_TAX));
       const phiShip = e.soDon * PHI_SHIP_DON;
       const luong = Math.round((e.doanhthu - chiPhiQC - giaVon - phiShip) * LUONG_TY_LE);
       return { name: e.name, doanhthu: e.doanhthu, chiPhiQC, giaVon, phiShip, soDon: e.soDon, soSP: e.soSP, luong };
