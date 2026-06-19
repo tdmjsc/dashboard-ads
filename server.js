@@ -1063,9 +1063,9 @@ app.get('/api/products/report', async (req, res) => {
    ================================================================ */
 const LUONG_TY_LE = Number(process.env.LUONG_TY_LE || 0.02);
 const PHI_SHIP_DON = Number(process.env.PHI_SHIP_DON || 30000);
-const SALARY_STATUS_PARAM = process.env.SALARY_STATUS_PARAM || 'loaiDoanhSo';
-const SALARY_VAL_GIAO = process.env.SALARY_VAL_GIAO || '';
-const SALARY_VAL_TT = process.env.SALARY_VAL_TT || '';
+const SALARY_STATUS_PARAM = process.env.SALARY_STATUS_PARAM || 'giaoHangTrangThaiMa';
+const SALARY_VAL_GIAO = process.env.SALARY_VAL_GIAO || '31';  // 31 = Đã giao hàng
+const SALARY_VAL_TT = process.env.SALARY_VAL_TT || '32';      // 32 = Đã thanh toán
 const castVal = v => (v !== '' && !isNaN(+v)) ? +v : v;
 
 // Báo cáo lead theo nhân sự + tham số lọc thêm (vd trạng thái giao/thanh toán)
@@ -1095,10 +1095,10 @@ function reportRowsEx(j) {
   }));
 }
 
-// Số lượng từng SP theo 1 nhân viên marketing (để tính giá vốn)
-async function productQtyByUser(since, until, marketingUserId) {
+// Số lượng từng SP theo 1 nhân viên marketing (có thể kèm lọc trạng thái) — để tính giá vốn
+async function productQtyByUser(since, until, marketingUserId, extra) {
   const tuNgay = `${since}T00:00:00+07:00`, denNgay = `${until}T23:59:59+07:00`;
-  const payload = { strIdNguonDuLieu: null, kieuNgay: 'NgayTao', tuNgay, denNgay, idNhomSanPham: null, idSanPhamCha: null, idSanPham: null, unitCode: null, tiTrongChiaTinhTheo: 0, isChietKhau: true, isVat: true, idChiNhanh: SANDBOX_CHINHANH, typeViewDetail: null, idPhongBanSale: null, idNhomNhanVienSale: null, idUserSale: null, idPhongBanMkts: null, idNhomNhanVienMkts: null, idUserMkts: marketingUserId ? [marketingUserId] : null, date: [tuNgay, denNgay], khoId: null, pageInfo: { page: 1, pageSize: 1000 }, sorts: [] };
+  const payload = { strIdNguonDuLieu: null, kieuNgay: 'NgayTao', tuNgay, denNgay, idNhomSanPham: null, idSanPhamCha: null, idSanPham: null, unitCode: null, tiTrongChiaTinhTheo: 0, isChietKhau: true, isVat: true, idChiNhanh: SANDBOX_CHINHANH, typeViewDetail: null, idPhongBanSale: null, idNhomNhanVienSale: null, idUserSale: null, idPhongBanMkts: null, idNhomNhanVienMkts: null, idUserMkts: marketingUserId ? [marketingUserId] : null, date: [tuNgay, denNgay], khoId: null, pageInfo: { page: 1, pageSize: 1000 }, sorts: [], ...(extra || {}) };
   const r = await fetch(SANDBOX_PRODUCT_REPORT_URL, { method: 'POST', headers: { 'Content-Type': 'application/json', 'Accept': 'application/json, text/plain, */*', 'Origin': SANDBOX_ORIGIN, 'Referer': SANDBOX_ORIGIN + '/', 'Cookie': sandboxCookie }, body: JSON.stringify(payload) });
   const j = await r.json().catch(() => ({}));
   const d = (j && j.data) || {};
@@ -1237,13 +1237,19 @@ app.get('/api/salary/report', async (req, res) => {
     const owners = await loadOwners(false);
     const priceOf = ten => { const o = owners[normProd(ten)]; return o ? (o.giaNhap || 0) : 0; };
     const emps = Object.values(map);
-    // Giá vốn: gọi song song báo cáo SP theo từng nhân viên
-    const prodLists = await Promise.all(emps.map(e => (e.id && e.soSP > 0) ? productQtyByUser(since, until, e.id) : Promise.resolve([])));
+    // Giá vốn CHÍNH XÁC: số lượng từng SP theo đúng trạng thái (giao + thanh toán) × giá nhập
+    const giaoVal = castVal(SALARY_VAL_GIAO), ttVal = castVal(SALARY_VAL_TT);
+    const tasks = [];
+    for (const e of emps) {
+      tasks.push(e.id ? productQtyByUser(since, until, e.id, { [p]: giaoVal }) : Promise.resolve([]));
+      tasks.push(e.id ? productQtyByUser(since, until, e.id, { [p]: ttVal }) : Promise.resolve([]));
+    }
+    const lists = await Promise.all(tasks);
     const rows = emps.map((e, i) => {
-      let cost = 0, qty = 0;
-      for (const pr of prodLists[i]) { cost += pr.soLuong * priceOf(pr.ten); qty += pr.soLuong; }
-      const unit = qty ? cost / qty : 0;
-      const giaVon = Math.round(unit * e.soSP);   // giá vốn/đơn vị (theo cơ cấu SP) × tổng SP (giao+thanh toán)
+      let giaVon = 0;
+      for (const pr of lists[i * 2]) giaVon += pr.soLuong * priceOf(pr.ten);
+      for (const pr of lists[i * 2 + 1]) giaVon += pr.soLuong * priceOf(pr.ten);
+      giaVon = Math.round(giaVon);
       const chiPhiQC = Math.round(meta[normProd(e.name)] || 0);
       const phiShip = e.soDon * PHI_SHIP_DON;
       const luong = Math.round((e.doanhthu - chiPhiQC - giaVon - phiShip) * LUONG_TY_LE);
