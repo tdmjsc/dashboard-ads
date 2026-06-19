@@ -1261,6 +1261,29 @@ app.get('/api/salary/report', async (req, res) => {
   } catch (e) { res.json({ ok: false, since, until, message: e.message }); }
 });
 
+// Chẩn đoán chi phí QC: /api/salary/debug?since=2026-05-01&until=2026-05-31
+// Cho biết từng tài khoản Meta còn chạy không, chi tiêu bao nhiêu, tên nhân viên ra sao,
+// và tên trong báo cáo Sandbox -> để soi vì sao Chi phí QC = 0.
+app.get('/api/salary/debug', async (req, res) => {
+  const since = req.query.since || '2026-05-01', until = req.query.until || '2026-05-31';
+  const days = listDays(since, until);
+  const taiKhoan = [];
+  for (const src of SOURCES) {
+    for (const acc of src.accounts) {
+      try {
+        const camps = await fetchAccount(acc, src.token, days, since, until);
+        const spendOf = c => (c.daily || []).reduce((a, d) => a + (+d.spent || 0), 0);
+        const emp = {};
+        for (const c of camps) { const e = c.employee || '(không nhận ra)'; emp[e] = Math.round((emp[e] || 0) + spendOf(c)); }
+        taiKhoan.push({ acc, ok: true, soCampaign: camps.length, tongChiTieu: Math.round(camps.reduce((t, c) => t + spendOf(c), 0)), theoNhanVien: emp });
+      } catch (e) { taiKhoan.push({ acc, ok: false, loi: e.message }); }
+    }
+  }
+  let tenTrongBaoCao = [];
+  try { if (!sandboxCookie) await sandboxLogin(); tenTrongBaoCao = reportRowsEx(await sandboxReportEx(since, until, { [SALARY_STATUS_PARAM]: castVal(SALARY_VAL_GIAO) })).map(r => r.name); } catch (e) {}
+  res.json({ since, until, soNguonToken: SOURCES.length, taiKhoan, tenTrongBaoCao });
+});
+
 app.use(express.static(path.join(__dirname, 'public')));
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => console.log(`Đang chạy: http://localhost:${PORT}`));
