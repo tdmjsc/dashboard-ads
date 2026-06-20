@@ -22,26 +22,39 @@
   .status{font-size:13px;color:#9FB0C8;margin:4px 0 14px;min-height:18px;}
   .status .warn{color:#ffc56b;} .status .err{color:#ff9b8a;} .status .ok{color:#7BE3B5;}
   .tblwrap{overflow-x:auto;border-radius:12px;border:1px solid rgba(255,255,255,.06);}
-  table{width:100%;border-collapse:collapse;background:#101B2E;min-width:1100px;}
+  table{width:100%;border-collapse:collapse;background:#101B2E;min-width:1120px;}
   th,td{padding:10px 12px;text-align:right;font-size:13px;border-bottom:1px solid rgba(255,255,255,.05);white-space:nowrap;vertical-align:top;}
   th:first-child,td:first-child{text-align:left;}
-  th{background:#16233A;color:#9FB0C8;font-weight:600;font-size:11px;text-transform:uppercase;letter-spacing:.02em;position:sticky;top:0;}
-  td.nm,th:first-child{position:sticky;left:0;background:#101B2E;z-index:2;}
+  th{background:#16233A;color:#9FB0C8;font-weight:600;font-size:11px;text-transform:uppercase;letter-spacing:.02em;position:sticky;top:0;z-index:2;}
+  td.nm,th:first-child{position:sticky;left:0;background:#101B2E;z-index:1;min-width:160px;}
   th:first-child{background:#16233A;z-index:3;}
   td.num{font-variant-numeric:tabular-nums;}
   .tot{font-weight:600;font-variant-numeric:tabular-nums;}
-  .auto{font-size:10px;color:#67788F;margin:1px 0 4px;}
-  tr.total td{background:#16233A;font-weight:700;color:#fff;position:sticky;bottom:0;}
+  .auto{font-size:10px;color:#67788F;margin-top:2px;}
+  tr.total td{background:#16233A;font-weight:700;color:#fff;}
   tr.total td.nm{background:#16233A;}
   .luong{color:#9FE3C4;font-weight:600;font-variant-numeric:tabular-nums;}
   .thucnhan{color:#FFD479;font-weight:800;font-variant-numeric:tabular-nums;}
   .neg{color:#ff9b8a;}
-  input.cell{width:96px;font-family:inherit;font-size:12.5px;color:#fff;background:rgba(255,255,255,.05);border:1px solid rgba(255,255,255,.12);border-radius:6px;padding:4px 6px;text-align:right;outline:none;font-variant-numeric:tabular-nums;}
+  input.cell{width:104px;font-family:inherit;font-size:12.5px;color:#fff;background:rgba(255,255,255,.05);border:1px solid rgba(255,255,255,.12);border-radius:6px;padding:4px 6px;text-align:right;outline:none;font-variant-numeric:tabular-nums;}
   input.cell:focus{border-color:#3D5AFE;background:rgba(61,90,254,.14);}
   input.cell::placeholder{color:#54657F;}
+  button.exp{font-family:inherit;font-size:13px;line-height:1;color:#fff;background:rgba(61,90,254,.25);border:1px solid rgba(61,90,254,.5);width:22px;height:22px;border-radius:6px;cursor:pointer;margin-right:7px;vertical-align:middle;}
+  button.exp:hover{background:rgba(61,90,254,.45);}
+  .nmtop{display:flex;align-items:center;}
+  .chip{display:inline-block;font-size:10px;background:rgba(61,90,254,.16);color:#A9B8FF;border:1px solid rgba(61,90,254,.4);padding:1px 6px;border-radius:8px;margin:4px 4px 0 0;}
+  .panel{display:flex;flex-wrap:wrap;gap:10px;padding:10px 2px 4px;}
+  .chcard{background:#0E1726;border:1px solid rgba(255,255,255,.09);border-radius:10px;padding:10px 12px;min-width:215px;flex:1;}
+  .chcard.has{border-color:#3D5AFE;box-shadow:0 0 0 1px rgba(61,90,254,.3) inset;}
+  .chcard.ro{opacity:.9;background:#0c1320;}
+  .chhead{font-weight:600;font-size:12.5px;margin-bottom:8px;display:flex;justify-content:space-between;align-items:center;color:#E7EEF8;}
+  .badge{font-size:10px;background:#3D5AFE;color:#fff;padding:1px 7px;border-radius:8px;}
+  .frow{display:flex;justify-content:space-between;align-items:center;gap:8px;margin:5px 0;font-size:12px;color:#9FB0C8;}
+  .frow b{color:#E7EEF8;font-variant-numeric:tabular-nums;}
+  .frow input.cell{width:118px;}
   .empty{padding:30px;text-align:center;color:#6B7C97;font-size:14px;}
   .note{font-size:12px;color:#7C8CA6;margin-top:12px;line-height:1.6;}
-  @media(max-width:680px){ h1{font-size:15px;} th,td{padding:8px 8px;font-size:12px;} input.cell{width:82px;} }
+  @media(max-width:680px){ h1{font-size:15px;} th,td{padding:8px 8px;font-size:12px;} input.cell{width:88px;} td.nm,th:first-child{min-width:135px;} }
 </style>
 </head>
 <body>
@@ -49,11 +62,9 @@
   <div class="top">
     <div style="flex:1;min-width:200px;">
       <h1>Bảng lương</h1>
-      <p class="sub">Thực nhận = Lương 2% + Lương cứng + Thưởng − Phạt − BHXH · các ô có viền là nhập tay, tự lưu</p>
+      <p class="sub">Thực nhận = Lương 2% + Lương cứng + Thưởng − Phạt − BHXH · bấm ＋ để thêm doanh thu các kênh khác</p>
     </div>
-    <div class="ctrl">
-      <label>Tháng</label><input type="month" id="month" value="2026-05">
-    </div>
+    <div class="ctrl"><label>Tháng</label><input type="month" id="month" value="2026-05"></div>
     <button class="btn" id="refreshBtn">Xem</button>
     <a href="/" class="link">← Dashboard</a>
     <a href="/logout" class="link">Đăng xuất</a>
@@ -64,21 +75,10 @@
   <div class="status" id="status">Đang tải…</div>
   <div class="tblwrap">
     <table>
-      <thead>
-        <tr>
-          <th>Nhân viên</th>
-          <th>Doanh thu</th>
-          <th>Chi phí QC</th>
-          <th>Giá vốn</th>
-          <th>Phí ship</th>
-          <th>Lương 2%</th>
-          <th>Lương cứng</th>
-          <th>Thưởng</th>
-          <th>Phạt</th>
-          <th>BHXH</th>
-          <th>Thực nhận</th>
-        </tr>
-      </thead>
+      <thead><tr>
+        <th>Nhân viên</th><th>Doanh thu</th><th>Chi phí QC</th><th>Giá vốn</th><th>Phí ship</th>
+        <th>Lương 2%</th><th>Lương cứng</th><th>Thưởng</th><th>Phạt</th><th>BHXH</th><th>Thực nhận</th>
+      </tr></thead>
       <tbody id="rows"></tbody>
     </table>
   </div>
@@ -92,113 +92,148 @@ const esc=s=>String(s==null?'':s).replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;',
 const normKey=s=>String(s==null?'':s).trim().toLowerCase().replace(/\s+/g,' ');
 const num=v=>{const n=parseInt(String(v==null?'':v).replace(/[^\d-]/g,''),10);return isFinite(n)?n:0;};
 
-let TYLE=0.02, AUTO=[], MAN={}, META={};
+const CH=[{id:'thailan',label:'Thái Lan'},{id:'pushsale',label:'Pushsale'},{id:'san',label:'Sàn TMĐT'}];
+const MET=[{id:'dt',label:'Doanh thu'},{id:'qc',label:'Chi phí QC'},{id:'gv',label:'Giá vốn'},{id:'ship',label:'Phí ship'}];
+const AUTOFIELD={dt:'doanhthu',qc:'chiPhiQC',gv:'giaVon',ship:'phiShip'};
+let TYLE=0.02, AUTO=[], MAN={}, ROSTER=[], LIST=[];
 
-function monthRange(m){
-  const [y,mo]=m.split('-').map(Number);
-  const since=`${y}-${String(mo).padStart(2,'0')}-01`;
-  const last=new Date(y,mo,0).getDate();
-  const until=`${y}-${String(mo).padStart(2,'0')}-${String(last).padStart(2,'0')}`;
-  return {since,until};
-}
+function monthRange(m){const [y,mo]=m.split('-').map(Number);const since=`${y}-${String(mo).padStart(2,'0')}-01`;const last=new Date(y,mo,0).getDate();return {since,until:`${y}-${String(mo).padStart(2,'0')}-${String(last).padStart(2,'0')}`};}
+function blankCh(){return {dt:0,qc:0,gv:0,ship:0};}
 function manOf(name){
-  const k=normKey(name);
-  const d={name,dt:0,qc:0,gv:0,ship:0,luongCung:0,thuong:0,phat:0,bhxh:0};
-  MAN[k]={...d,...(MAN[k]||{})};
-  return MAN[k];
+  const k=normKey(name); let o=MAN[k]||{};
+  o={name:o.name||name, channels:o.channels||{}, luongCung:+o.luongCung||0, thuong:+o.thuong||0, phat:+o.phat||0, bhxh:+o.bhxh||0};
+  CH.forEach(c=>{o.channels[c.id]={...blankCh(),...(o.channels[c.id]||{})};});
+  MAN[k]=o; return o;
 }
+const chSum=(m,metric)=>CH.reduce((s,c)=>s+(+m.channels[c.id][metric]||0),0);
+const chHasData=(m,cid)=>MET.some(mt=>(+m.channels[cid][mt.id]||0)!==0);
 
 async function load(){
-  const m=$('month').value;
-  const {since,until}=monthRange(m);
+  const mo=$('month').value, {since,until}=monthRange(mo);
   $('refreshBtn').disabled=true;
-  $('status').innerHTML='<span class="warn">Đang tính lương (doanh thu, chi tiêu Meta, giá vốn)… có thể mất ~15–25 giây.</span>';
+  $('status').innerHTML='<span class="warn">Đang tính lương (doanh thu, chi tiêu Meta, giá vốn)… ~15–25 giây.</span>';
   $('rows').innerHTML='';
   try{
     const [rRep,rMan]=await Promise.all([
       fetch('/api/salary/report?since='+since+'&until='+until),
-      fetch('/api/salary/manual?month='+m)
+      fetch('/api/salary/manual?month='+mo)
     ]);
-    if(rRep.status===401){ location.href='/login'; return; }
-    if(rRep.status===403){ $('status').innerHTML='<span class="err">Chỉ quản trị viên xem được mục Lương.</span>'; return; }
+    if(rRep.status===401){location.href='/login';return;}
+    if(rRep.status===403){$('status').innerHTML='<span class="err">Chỉ quản trị viên xem được mục Lương.</span>';return;}
     const d=await rRep.json();
-    if(!d.ok){ $('status').innerHTML='<span class="err">'+esc(d.message||'Không lấy được dữ liệu')+'</span>'; return; }
+    if(!d.ok){$('status').innerHTML='<span class="err">'+esc(d.message||'Không lấy được dữ liệu')+'</span>';return;}
     const mj=await rMan.json().catch(()=>({data:{}}));
-    AUTO=d.rows||[]; MAN=mj.data||{}; TYLE=d.tyLe||0.02; META=d;
-    renderTable();
+    AUTO=d.rows||[]; MAN=mj.data||{}; ROSTER=d.roster||[]; TYLE=d.tyLe||0.02;
+    buildList(); buildTable(); recomputeAll();
     const t=new Date(d.lastUpdated||Date.now());
-    $('status').innerHTML='Cập nhật '+t.toLocaleString('vi-VN')+'  ·  tháng '+m+'  ·  tỷ lệ '+(TYLE*100)+'%';
-    $('note').innerHTML='4 cột đầu: số <b>tự động (TĐ)</b> từ Sandbox/Meta, ô có viền là <b>cộng thêm tay</b> (kênh khác). '
-      +'Lương 2% = (Doanh thu − Chi phí QC − Giá vốn − Phí ship) × 2%. '
-      +'<b>Thực nhận = Lương 2% + Lương cứng + Thưởng − Phạt − BHXH.</b> Nhập xong bấm ra ngoài ô là tự lưu.';
-  }catch(e){ $('status').innerHTML='<span class="err">Không kết nối được máy chủ: '+esc(e.message)+'</span>'; }
-  finally{ $('refreshBtn').disabled=false; }
+    $('status').innerHTML='Cập nhật '+t.toLocaleString('vi-VN')+'  ·  tháng '+mo+'  ·  tỷ lệ '+(TYLE*100)+'%';
+    $('note').innerHTML='4 cột đầu = số <b>tự động (TĐ)</b> từ Sandbox/Meta <b>＋ các kênh khác</b> bạn nhập tay (Thái Lan, Pushsale, Sàn TMĐT). '
+      +'Bấm nút <b>＋</b> ở mỗi nhân viên để mở ô nhập theo từng kênh; kênh có dữ liệu sẽ hiện nhãn. '
+      +'Lương 2% = (Doanh thu − Chi phí QC − Giá vốn − Phí ship) × 2%. <b>Thực nhận = Lương 2% + Lương cứng + Thưởng − Phạt − BHXH.</b> Nhập xong bấm ra ngoài ô là tự lưu.';
+  }catch(e){$('status').innerHTML='<span class="err">Không kết nối được máy chủ: '+esc(e.message)+'</span>';}
+  finally{$('refreshBtn').disabled=false;}
 }
 
-function inp(name,field,val){
-  return '<input class="cell" inputmode="numeric" data-n="'+esc(name)+'" data-f="'+field+'" value="'+(val?vnd(val):'')+'" placeholder="0">';
-}
-function autoCell(total,autoV,name,field){
-  return '<td class="num"><div class="tot">'+vnd(total)+'</div><div class="auto">TĐ '+vnd(autoV)+'</div>'+inp(name,field,manOf(name)[field])+'</td>';
+function buildList(){
+  const autoBy={}; AUTO.forEach(r=>autoBy[normKey(r.name)]=r);
+  const allowed=new Set([...ROSTER.map(normKey),...AUTO.map(r=>normKey(r.name))]);
+  const seen=new Set(); LIST=[];
+  const push=name=>{const k=normKey(name);if(seen.has(k))return;seen.add(k);LIST.push({name,key:k,a:autoBy[k]||{doanhthu:0,chiPhiQC:0,giaVon:0,phiShip:0,soDon:0}});};
+  ROSTER.forEach(push);
+  AUTO.forEach(r=>push(r.name));
+  Object.keys(MAN).forEach(k=>{if(allowed.has(k))push((MAN[k]&&MAN[k].name)||k);});
 }
 
-function renderTable(){
+function pInp(i,f,val){return '<input class="cell" inputmode="numeric" data-i="'+i+'" data-f="'+f+'" value="'+(val?vnd(val):'')+'" placeholder="0">';}
+function cInp(i,ch,mt,val){return '<input class="cell" inputmode="numeric" data-i="'+i+'" data-ch="'+ch+'" data-m="'+mt+'" value="'+(val?vnd(val):'')+'" placeholder="0">';}
+function autoVal(a,id){return a[AUTOFIELD[id]]||0;}
+
+function detailHTML(i,emp){
+  const m=manOf(emp.key);
+  let cards='<div class="chcard ro"><div class="chhead">Sandbox (tự động)</div>'
+    +MET.map(mt=>'<div class="frow"><span>'+mt.label+'</span><b>'+vnd(autoVal(emp.a,mt.id))+'</b></div>').join('')+'</div>';
+  cards+=CH.map(c=>'<div class="chcard" id="card-'+i+'-'+c.id+'"><div class="chhead">'+c.label
+    +' <span class="badge" id="bd-'+i+'-'+c.id+'" style="display:none">có DL</span></div>'
+    +MET.map(mt=>'<div class="frow"><span>'+mt.label+'</span>'+cInp(i,c.id,mt.id,m.channels[c.id][mt.id])+'</div>').join('')
+    +'</div>').join('');
+  return '<tr class="drow" id="det-'+i+'" style="display:none"><td colspan="11"><div class="panel">'+cards+'</div></td></tr>';
+}
+
+function buildTable(){
   const tb=$('rows');
-  const seen=new Set(), list=[];
-  AUTO.forEach(r=>{const k=normKey(r.name);seen.add(k);list.push({name:r.name,a:r});});
-  Object.keys(MAN).forEach(k=>{ if(!seen.has(k)) list.push({name:(MAN[k]&&MAN[k].name)||k,a:{doanhthu:0,chiPhiQC:0,giaVon:0,phiShip:0,soDon:0}}); });
-  if(!list.length){ tb.innerHTML='<tr><td colspan="11" class="empty">Không có dữ liệu trong tháng này.</td></tr>'; return; }
-  const T={dt:0,qc:0,gv:0,ship:0,l2:0,lc:0,th:0,ph:0,bh:0,tn:0};
-  const html=list.map(it=>{
-    const a=it.a, m=manOf(it.name);
-    const DT=(a.doanhthu||0)+m.dt, QC=(a.chiPhiQC||0)+m.qc, GV=(a.giaVon||0)+m.gv, SHIP=(a.phiShip||0)+m.ship;
-    const l2=Math.round((DT-QC-GV-SHIP)*TYLE);
-    const tn=l2+m.luongCung+m.thuong-m.phat-m.bhxh;
-    T.dt+=DT;T.qc+=QC;T.gv+=GV;T.ship+=SHIP;T.l2+=l2;T.lc+=m.luongCung;T.th+=m.thuong;T.ph+=m.phat;T.bh+=m.bhxh;T.tn+=tn;
-    return '<tr>'
-      +'<td class="nm">'+esc(it.name)+'</td>'
-      +autoCell(DT,a.doanhthu||0,it.name,'dt')
-      +autoCell(QC,a.chiPhiQC||0,it.name,'qc')
-      +autoCell(GV,a.giaVon||0,it.name,'gv')
-      +autoCell(SHIP,a.phiShip||0,it.name,'ship')
-      +'<td class="'+(l2<0?'luong neg':'luong')+'">'+vnd(l2)+'</td>'
-      +'<td>'+inp(it.name,'luongCung',m.luongCung)+'</td>'
-      +'<td>'+inp(it.name,'thuong',m.thuong)+'</td>'
-      +'<td>'+inp(it.name,'phat',m.phat)+'</td>'
-      +'<td>'+inp(it.name,'bhxh',m.bhxh)+'</td>'
-      +'<td class="'+(tn<0?'thucnhan neg':'thucnhan')+'">'+vnd(tn)+' ₫</td>'
-      +'</tr>';
-  }).join('');
-  const totalRow='<tr class="total">'
-    +'<td class="nm">Tổng ('+list.length+')</td>'
-    +'<td class="num">'+vnd(T.dt)+'</td><td class="num">'+vnd(T.qc)+'</td><td class="num">'+vnd(T.gv)+'</td><td class="num">'+vnd(T.ship)+'</td>'
-    +'<td class="luong">'+vnd(T.l2)+'</td>'
-    +'<td class="num">'+vnd(T.lc)+'</td><td class="num">'+vnd(T.th)+'</td><td class="num">'+vnd(T.ph)+'</td><td class="num">'+vnd(T.bh)+'</td>'
-    +'<td class="thucnhan">'+vnd(T.tn)+' ₫</td>'
-    +'</tr>';
-  tb.innerHTML=html+totalRow;
-  document.querySelectorAll('input.cell').forEach(el=>el.addEventListener('change',onEdit));
+  if(!LIST.length){tb.innerHTML='<tr><td colspan="11" class="empty">Không có dữ liệu trong tháng này.</td></tr>';return;}
+  let html='';
+  LIST.forEach((emp,i)=>{
+    const m=manOf(emp.key);
+    html+='<tr class="mrow">'
+      +'<td class="nm"><div class="nmtop"><button class="exp" data-exp="'+i+'">＋</button>'+esc(emp.name)+'</div><div class="bdg" id="bdg-'+i+'"></div></td>'
+      +'<td class="num" id="dt-'+i+'"></td><td class="num" id="qc-'+i+'"></td><td class="num" id="gv-'+i+'"></td><td class="num" id="ship-'+i+'"></td>'
+      +'<td class="luong" id="l2-'+i+'"></td>'
+      +'<td>'+pInp(i,'luongCung',m.luongCung)+'</td><td>'+pInp(i,'thuong',m.thuong)+'</td>'
+      +'<td>'+pInp(i,'phat',m.phat)+'</td><td>'+pInp(i,'bhxh',m.bhxh)+'</td>'
+      +'<td class="thucnhan" id="tn-'+i+'"></td></tr>';
+    html+=detailHTML(i,emp);
+  });
+  html+='<tr class="total"><td class="nm">Tổng ('+LIST.length+')</td>'
+    +'<td class="num" id="t-dt"></td><td class="num" id="t-qc"></td><td class="num" id="t-gv"></td><td class="num" id="t-ship"></td>'
+    +'<td class="luong" id="t-l2"></td><td class="num" id="t-lc"></td><td class="num" id="t-th"></td><td class="num" id="t-ph"></td><td class="num" id="t-bh"></td>'
+    +'<td class="thucnhan" id="t-tn"></td></tr>';
+  tb.innerHTML=html;
+  tb.querySelectorAll('button.exp').forEach(b=>b.addEventListener('click',()=>toggle(+b.getAttribute('data-exp'),b)));
+  tb.querySelectorAll('input.cell').forEach(el=>el.addEventListener('change',onEdit));
 }
+function toggle(i,btn){const r=$('det-'+i);const open=r.style.display==='none';r.style.display=open?'':'none';btn.textContent=open?'−':'＋';}
+
+function srcCell(id,i,total,auto,manual){
+  $(id+'-'+i).innerHTML='<div class="tot">'+vnd(total)+'</div><div class="auto">TĐ '+vnd(auto)+(manual?' · kênh '+vnd(manual):'')+'</div>';
+}
+function recompute(i){
+  const emp=LIST[i], m=manOf(emp.key), a=emp.a;
+  const mDt=chSum(m,'dt'),mQc=chSum(m,'qc'),mGv=chSum(m,'gv'),mSh=chSum(m,'ship');
+  const DT=autoVal(a,'dt')+mDt, QC=autoVal(a,'qc')+mQc, GV=autoVal(a,'gv')+mGv, SHIP=autoVal(a,'ship')+mSh;
+  const l2=Math.round((DT-QC-GV-SHIP)*TYLE);
+  const tn=l2+m.luongCung+m.thuong-m.phat-m.bhxh;
+  srcCell('dt',i,DT,autoVal(a,'dt'),mDt); srcCell('qc',i,QC,autoVal(a,'qc'),mQc);
+  srcCell('gv',i,GV,autoVal(a,'gv'),mGv); srcCell('ship',i,SHIP,autoVal(a,'ship'),mSh);
+  const l2e=$('l2-'+i); l2e.textContent=vnd(l2); l2e.className=l2<0?'luong neg':'luong';
+  const tne=$('tn-'+i); tne.textContent=vnd(tn)+' ₫'; tne.className=tn<0?'thucnhan neg':'thucnhan';
+  // nhãn kênh có dữ liệu + viền thẻ
+  let chips='';
+  CH.forEach(c=>{const has=chHasData(m,c.id);
+    const card=$('card-'+i+'-'+c.id), bd=$('bd-'+i+'-'+c.id);
+    if(card)card.className='chcard'+(has?' has':''); if(bd)bd.style.display=has?'':'none';
+    if(has)chips+='<span class="chip">'+c.label+'</span>';});
+  $('bdg-'+i).innerHTML=chips;
+  emp._c={DT,QC,GV,SHIP,l2,lc:m.luongCung,th:m.thuong,ph:m.phat,bh:m.bhxh,tn};
+}
+function updateTotals(){
+  const T={DT:0,QC:0,GV:0,SHIP:0,l2:0,lc:0,th:0,ph:0,bh:0,tn:0};
+  LIST.forEach(e=>{const c=e._c||{};for(const k in T)T[k]+=c[k]||0;});
+  $('t-dt').textContent=vnd(T.DT);$('t-qc').textContent=vnd(T.QC);$('t-gv').textContent=vnd(T.GV);$('t-ship').textContent=vnd(T.SHIP);
+  $('t-l2').textContent=vnd(T.l2);$('t-lc').textContent=vnd(T.lc);$('t-th').textContent=vnd(T.th);$('t-ph').textContent=vnd(T.ph);$('t-bh').textContent=vnd(T.bh);
+  $('t-tn').textContent=vnd(T.tn)+' ₫';
+}
+function recomputeAll(){LIST.forEach((_,i)=>recompute(i));updateTotals();}
 
 let saveTimer=null;
 async function onEdit(e){
-  const el=e.target, name=el.getAttribute('data-n'), field=el.getAttribute('data-f');
-  manOf(name)[field]=num(el.value);
-  renderTable();
+  const el=e.target, i=+el.getAttribute('data-i'), emp=LIST[i], m=manOf(emp.key), v=num(el.value);
+  if(el.hasAttribute('data-f')) m[el.getAttribute('data-f')]=v;
+  else m.channels[el.getAttribute('data-ch')][el.getAttribute('data-m')]=v;
+  el.value=v?vnd(v):'';
+  recompute(i); updateTotals(); save(emp);
+}
+async function save(emp){
   try{
     const r=await fetch('/api/salary/manual',{method:'POST',headers:{'Content-Type':'application/json'},
-      body:JSON.stringify({month:$('month').value,name,values:manOf(name)})});
-    if(r.ok){ flash('Đã lưu ✓'); }
-  }catch(err){ flash('Lưu lỗi, thử lại',true); }
+      body:JSON.stringify({month:$('month').value,name:emp.name,values:manOf(emp.key)})});
+    flash(r.ok?'Đã lưu ✓':'Lưu lỗi',!r.ok);
+  }catch(err){flash('Lưu lỗi, thử lại',true);}
 }
-function flash(msg,bad){
-  const s=$('status'); const old=s.innerHTML;
-  s.innerHTML='<span class="'+(bad?'err':'ok')+'">'+esc(msg)+'</span>';
-  clearTimeout(saveTimer); saveTimer=setTimeout(()=>{ s.innerHTML=old; },1500);
-}
+function flash(msg,bad){const s=$('status'),old=s.getAttribute('data-base')||s.innerHTML;s.setAttribute('data-base',old);s.innerHTML='<span class="'+(bad?'err':'ok')+'">'+esc(msg)+'</span>';clearTimeout(saveTimer);saveTimer=setTimeout(()=>{s.innerHTML=s.getAttribute('data-base');},1400);}
 
-$('refreshBtn').addEventListener('click',load);
-$('month').addEventListener('change',load);
+$('refreshBtn').addEventListener('click',()=>{$('status').removeAttribute('data-base');load();});
+$('month').addEventListener('change',()=>{$('status').removeAttribute('data-base');load();});
 load();
 </script>
 </body>
