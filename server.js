@@ -1260,7 +1260,8 @@ app.get('/api/salary/report', async (req, res) => {
       return { name: e.name, doanhthu: e.doanhthu, chiPhiQC, giaVon, phiShip, soDon: e.soDon, soSP: e.soSP, luong };
     });
     rows.sort((a, b) => b.luong - a.luong);
-    res.json({ ok: true, since, until, nguon: useConfig ? 'live' : 'mau-t5', tyLe: LUONG_TY_LE, phiShipDon: PHI_SHIP_DON, rows, lastUpdated: new Date().toISOString() });
+    const roster = EMPLOYEES.filter(e => e.code).map(e => e.full).concat('Admin');
+    res.json({ ok: true, since, until, nguon: useConfig ? 'live' : 'mau-t5', tyLe: LUONG_TY_LE, phiShipDon: PHI_SHIP_DON, roster, rows, lastUpdated: new Date().toISOString() });
   } catch (e) { res.json({ ok: false, since, until, message: e.message }); }
 });
 
@@ -1288,27 +1289,34 @@ app.get('/api/salary/debug', async (req, res) => {
 });
 
 // ===== Dữ liệu NHẬP TAY cho bảng lương (lưu theo tháng + nhân viên) =====
+// Cấu trúc: { name, channels:{ thailan:{dt,qc,gv,ship}, pushsale:{...}, san:{...} },
+//            luongCung, thuong, phat, bhxh }
 const MANUAL_FILE = path.join(__dirname, 'salary-manual.json');
 let SALARY_MANUAL = {};
 try { SALARY_MANUAL = JSON.parse(fs.readFileSync(MANUAL_FILE, 'utf8')); } catch { SALARY_MANUAL = {}; }
 function saveManual() { try { fs.writeFileSync(MANUAL_FILE, JSON.stringify(SALARY_MANUAL)); } catch (e) {} }
-const MANUAL_FIELDS = ['dt', 'qc', 'gv', 'ship', 'luongCung', 'thuong', 'phat', 'bhxh'];
+const SALARY_CHANNELS = ['thailan', 'pushsale', 'san'];
+const CH_METRICS = ['dt', 'qc', 'gv', 'ship'];
+const numClean = v => { const n = Math.round(Number(String(v == null ? 0 : v).replace(/[^\d-]/g, '')) || 0); return isFinite(n) ? n : 0; };
 
 // Lấy dữ liệu tay theo tháng: /api/salary/manual?month=YYYY-MM
 app.get('/api/salary/manual', (req, res) => {
   const month = req.query.month || '';
-  res.json({ month, data: SALARY_MANUAL[month] || {} });
+  res.json({ month, channels: SALARY_CHANNELS, data: SALARY_MANUAL[month] || {} });
 });
-// Lưu 1 nhân viên: body { month, name, values:{dt,qc,gv,ship,luongCung,thuong,phat,bhxh} }
+// Lưu 1 nhân viên
 app.post('/api/salary/manual', (req, res) => {
   const { month, name, values } = req.body || {};
   if (!month || !name) return res.status(400).json({ ok: false, message: 'Thiếu tháng/tên' });
   const k = normProd(name);
   if (!SALARY_MANUAL[month]) SALARY_MANUAL[month] = {};
-  const cur = SALARY_MANUAL[month][k] || {};
-  const num = v => { const n = Math.round(Number(String(v == null ? 0 : v).toString().replace(/[^\d-]/g, '')) || 0); return isFinite(n) ? n : 0; };
-  const out = { name };
-  for (const f of MANUAL_FIELDS) out[f] = (values && f in values) ? num(values[f]) : num(cur[f]);
+  const v = values || {};
+  const out = { name, channels: {}, luongCung: numClean(v.luongCung), thuong: numClean(v.thuong), phat: numClean(v.phat), bhxh: numClean(v.bhxh) };
+  for (const ch of SALARY_CHANNELS) {
+    out.channels[ch] = {};
+    const src = (v.channels && v.channels[ch]) || {};
+    for (const m of CH_METRICS) out.channels[ch][m] = numClean(src[m]);
+  }
   SALARY_MANUAL[month][k] = out;
   saveManual();
   res.json({ ok: true });
