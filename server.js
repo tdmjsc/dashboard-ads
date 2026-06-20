@@ -1077,6 +1077,8 @@ app.get('/api/products/report', async (req, res) => {
 const LUONG_TY_LE = Number(process.env.LUONG_TY_LE || 0.02);
 const PHI_SHIP_DON = Number(process.env.PHI_SHIP_DON || 30000);
 const QC_TAX = Number(process.env.QC_TAX || 0.11);   // 11% thuế VAT cộng vào chi phí quảng cáo
+// Chỉ hiện nhân viên trong danh sách EMPLOYEES + "Admin"; tên khác (vd khách lẻ) bị ẩn.
+const SALARY_ALLOW = new Set([...EMPLOYEES.map(e => normProd(e.full)), normProd('Admin')]);
 const SALARY_STATUS_PARAM = process.env.SALARY_STATUS_PARAM || 'giaoHangTrangThaiMa';
 const SALARY_VAL_GIAO = process.env.SALARY_VAL_GIAO || '31';  // 31 = Đã giao hàng
 const SALARY_VAL_TT = process.env.SALARY_VAL_TT || '32';      // 32 = Đã thanh toán
@@ -1238,7 +1240,7 @@ app.get('/api/salary/report', async (req, res) => {
 
     const owners = await loadOwners(false);
     const priceOf = ten => { const o = owners[normProd(ten)]; return o ? (o.giaNhap || 0) : 0; };
-    const emps = Object.values(map);
+    const emps = Object.values(map).filter(e => SALARY_ALLOW.has(normProd(e.name)));
     // Giá vốn CHÍNH XÁC: số lượng từng SP theo đúng trạng thái (giao + thanh toán) × giá nhập
     const giaoVal = castVal(SALARY_VAL_GIAO), ttVal = castVal(SALARY_VAL_TT);
     const tasks = [];
@@ -1283,6 +1285,33 @@ app.get('/api/salary/debug', async (req, res) => {
   let tenTrongBaoCao = [];
   try { if (!sandboxCookie) await sandboxLogin(); tenTrongBaoCao = reportRowsEx(await sandboxReportEx(since, until, { [SALARY_STATUS_PARAM]: castVal(SALARY_VAL_GIAO) })).map(r => r.name); } catch (e) {}
   res.json({ since, until, soNguonToken: SOURCES.length, taiKhoan, tenTrongBaoCao });
+});
+
+// ===== Dữ liệu NHẬP TAY cho bảng lương (lưu theo tháng + nhân viên) =====
+const MANUAL_FILE = path.join(__dirname, 'salary-manual.json');
+let SALARY_MANUAL = {};
+try { SALARY_MANUAL = JSON.parse(fs.readFileSync(MANUAL_FILE, 'utf8')); } catch { SALARY_MANUAL = {}; }
+function saveManual() { try { fs.writeFileSync(MANUAL_FILE, JSON.stringify(SALARY_MANUAL)); } catch (e) {} }
+const MANUAL_FIELDS = ['dt', 'qc', 'gv', 'ship', 'luongCung', 'thuong', 'phat', 'bhxh'];
+
+// Lấy dữ liệu tay theo tháng: /api/salary/manual?month=YYYY-MM
+app.get('/api/salary/manual', (req, res) => {
+  const month = req.query.month || '';
+  res.json({ month, data: SALARY_MANUAL[month] || {} });
+});
+// Lưu 1 nhân viên: body { month, name, values:{dt,qc,gv,ship,luongCung,thuong,phat,bhxh} }
+app.post('/api/salary/manual', (req, res) => {
+  const { month, name, values } = req.body || {};
+  if (!month || !name) return res.status(400).json({ ok: false, message: 'Thiếu tháng/tên' });
+  const k = normProd(name);
+  if (!SALARY_MANUAL[month]) SALARY_MANUAL[month] = {};
+  const cur = SALARY_MANUAL[month][k] || {};
+  const num = v => { const n = Math.round(Number(String(v == null ? 0 : v).toString().replace(/[^\d-]/g, '')) || 0); return isFinite(n) ? n : 0; };
+  const out = { name };
+  for (const f of MANUAL_FIELDS) out[f] = (values && f in values) ? num(values[f]) : num(cur[f]);
+  SALARY_MANUAL[month][k] = out;
+  saveManual();
+  res.json({ ok: true });
 });
 
 app.use(express.static(path.join(__dirname, 'public')));
