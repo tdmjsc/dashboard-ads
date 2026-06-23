@@ -723,36 +723,76 @@ app.get('/api/marketing/login-test', async (req, res) => {
 });
 
 // (HƯỚNG A) Lấy báo cáo lead theo nhân sự cho khoảng ngày (mặc định hôm qua).
+//  Gộp chi tiêu thực từ Meta API vào cột "chiTieu" và tính lại "giaContact".
 //  Mở: /api/marketing/report?since=2026-06-12&until=2026-06-12
 app.get('/api/marketing/report', async (req, res) => {
   const today = new Date().toISOString().slice(0, 10);
   const since = req.query.since || today;
   const until = req.query.until || since;
   try {
-    const rp = await sandboxReport(since, until);
+    // Chạy song song: Sandbox report + Meta spend
+    const [rp, metaSpend] = await Promise.all([
+      sandboxReport(since, until),
+      (async () => {
+        try {
+          // Tổng hợp chi tiêu Meta theo nhân viên (dùng lại getCampaigns đã có)
+          const campaigns = await getCampaigns(since, until);
+          const norm = s => String(s == null ? '' : s).trim().toLowerCase().replace(/\s+/g, ' ');
+          const spend = {};
+          for (const c of campaigns) {
+            const emp = norm(c.employee || '');
+            if (!emp || emp === 'chưa xác định') continue;
+            const s = (c.daily || []).reduce((t, d) => t + (Number(d.spent) || 0), 0);
+            spend[emp] = (spend[emp] || 0) + s;
+          }
+          return spend;
+        } catch (e) {
+          return {}; // nếu Meta lỗi vẫn trả Sandbox bình thường
+        }
+      })(),
+    ]);
+
     if (!(rp.json && (rp.json.success ?? rp.json.Success)))
       return res.json({ ok: false, since, until, httpStatus: rp.httpStatus, message: (rp.json && (rp.json.message || rp.json.Message)) || 'Lỗi gọi báo cáo' });
+
     const m = mapReport(rp.json);
-    // Lọc theo quyền: không phải admin thì chỉ thấy nhân viên được phép (giống Dashboard)
+    const norm = s => String(s == null ? '' : s).trim().toLowerCase().replace(/\s+/g, ' ');
+
+    // Gắn chi tiêu Meta vào từng dòng, tính lại giaContact
+    let rows = m.rows.map(r => {
+      const chiTieu = Math.round(metaSpend[norm(r.name)] || 0);
+      const giaContact = (chiTieu > 0 && r.contact > 0) ? Math.round(chiTieu / r.contact) : 0;
+      return { ...r, chiTieu, giaContact };
+    });
+
+    // Lọc theo quyền
     const me = req.session.user || {};
-    let rows = m.rows, total = m.total;
     if (me.role !== 'admin') {
-      const norm = s => String(s == null ? '' : s).trim().toLowerCase().replace(/\s+/g, ' ');
       const allow = new Set((me.employees || []).map(norm));
       rows = rows.filter(r => allow.has(norm(r.name)));
-      // tính lại Tổng từ các dòng đã lọc
-      const s = rows.reduce((a, r) => ({
-        contact: a.contact + (+r.contact || 0), chot: a.chot + (+r.chot || 0),
-        soSP: a.soSP + (+r.soSP || 0), doanhthu: a.doanhthu + (+r.doanhthu || 0),
-        nganSach: a.nganSach + (+r.nganSach || 0),
-      }), { contact: 0, chot: 0, soSP: 0, doanhthu: 0, nganSach: 0 });
-      total = {
-        contact: s.contact, chot: s.chot, soSP: s.soSP, doanhthu: s.doanhthu, nganSach: s.nganSach,
-        tyLe: s.contact ? (s.chot / s.contact * 100) : 0,
-        giaContact: s.contact ? (s.nganSach / s.contact) : 0,
-      };
     }
-    res.json({ ok: true, ver: 'mkt-2026-06-15-v12-A', since, until, rows, total, lastUpdated: new Date().toISOString() });
+
+    // Tính lại Tổng
+    const s = rows.reduce((a, r) => ({
+      contact:  a.contact  + (+r.contact  || 0),
+      chot:     a.chot     + (+r.chot     || 0),
+      soSP:     a.soSP     + (+r.soSP     || 0),
+      doanhthu: a.doanhthu + (+r.doanhthu || 0),
+      chiTieu:  a.chiTieu  + (+r.chiTieu  || 0),
+    }), { contact: 0, chot: 0, soSP: 0, doanhthu: 0, chiTieu: 0 });
+
+    const total = {
+      contact:    s.contact,
+      chot:       s.chot,
+      soSP:       s.soSP,
+      doanhthu:   s.doanhthu,
+      chiTieu:    s.chiTieu,
+      tyLe:       s.contact ? (s.chot / s.contact * 100) : 0,
+      giaContact: s.contact ? Math.round(s.chiTieu / s.contact) : 0,
+    };
+
+    rows.sort((a, b) => (b.doanhthu || 0) - (a.doanhthu || 0));
+    res.json({ ok: true, ver: 'mkt-2026-06-23-v13', since, until, rows, total, lastUpdated: new Date().toISOString() });
   } catch (e) {
     res.json({ ok: false, since, until, message: e.message });
   }
