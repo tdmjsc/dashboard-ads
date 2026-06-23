@@ -760,7 +760,9 @@ app.get('/api/marketing/report', async (req, res) => {
 
     // Gắn chi tiêu Meta vào từng dòng, tính lại giaContact
     let rows = m.rows.map(r => {
-      const chiTieu = Math.round(metaSpend[norm(r.name)] || 0);
+      // Dùng chung QC_TAX với module lương (mặc định 11%, cấu hình qua .env)
+      const TAX = 1 + QC_TAX;
+      const chiTieu = Math.round((metaSpend[norm(r.name)] || 0) * TAX);
       const giaContact = (chiTieu > 0 && r.contact > 0) ? Math.round(chiTieu / r.contact) : 0;
       return { ...r, chiTieu, giaContact };
     });
