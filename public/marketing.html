@@ -72,7 +72,7 @@
         <th class="num">Đơn chốt</th>
         <th class="num">Tỷ lệ chốt</th>
         <th class="num">Số SP</th>
-        <th class="num">Ngân sách</th>
+        <th class="num">Chi tiêu Meta</th>
         <th class="num">Doanh số (VND)</th>
       </tr>
     </thead>
@@ -109,7 +109,7 @@ function render(d){
       <td class="num">${vnd(r.chot)}</td>
       <td class="num">${pctf(r.tyLe)}</td>
       <td class="num">${vnd(r.soSP)}</td>
-      <td class="num">${vnd(r.nganSach)}</td>
+      <td class="num">${vnd(r.chiTieu)}</td>
       <td class="num rev">${vnd(r.doanhthu)}</td>
     </tr>`;
   });
@@ -121,7 +121,7 @@ function render(d){
     <td class="num">${vnd(t.chot)}</td>
     <td class="num">${pctf(t.tyLe)}</td>
     <td class="num">${vnd(t.soSP)}</td>
-    <td class="num">${vnd(t.nganSach)}</td>
+    <td class="num">${vnd(t.chiTieu)}</td>
     <td class="num rev">${vnd(t.doanhthu)}</td>
   </tr>`;
   tb.innerHTML = html;
