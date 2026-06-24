@@ -38,16 +38,16 @@ import('./users.js')
    ========================================================================= */
 const EMPLOYEES = [
   // { code: mã đứng đầu tên chiến dịch, short: tên ngắn (chiến dịch cũ), full: tên hiển thị (giống Sandbox) }
-  { code: 'TD1',  short: 'Trường',  full: 'Tạ Quang Trường' },
-  { code: 'TD2',  short: 'Phương',  full: 'Trịnh Đức Phương' },
-  { code: 'TD3',  short: 'Hiếu',    full: 'Nguyễn Trung Hiếu' },
-  { code: 'TD4',  short: 'My',      full: 'Nguyễn Thị Trà My' },
-  { code: 'TD5',  short: 'Ánh',     full: 'Lê Thị Ánh' },
-  { code: 'TD6',  short: 'Huân',    full: 'Nguyễn Duy Huân' },
-  { code: 'TD7',  short: 'Minh',    full: 'Dương Văn Minh' },
-  { code: 'TD8',  short: 'Giang',   full: 'Vũ Hà Giang' },
-  { code: 'TD9',  short: 'Việt Hà', full: 'Đoàn Việt Hà' },
-  { code: 'TD10', short: 'Thuý An', full: 'Vũ Thuý An', aliases: ['Thúy An'] },
+  { code: 'TD1', short: 'Trường', full: 'Tạ Quang Trường', bhxh: 598_500 },
+  { code: 'TD2', short: 'Phương', full: 'Trịnh Đức Phương', bhxh: 598_500 },
+  { code: 'TD3',  short: 'Hiếu',    full: 'Nguyễn Trung Hiếu' bhxh: 577_500 },
+  { code: 'TD4',  short: 'My',      full: 'Nguyễn Thị Trà My' bhxh: 577_500 },
+  { code: 'TD5',  short: 'Ánh',     full: 'Lê Thị Ánh' bhxh: 577_500  },
+  { code: 'TD6',  short: 'Huân',    full: 'Nguyễn Duy Huân' bhxh: 0 },
+  { code: 'TD7',  short: 'Minh',    full: 'Dương Văn Minh' bhxh: 577_500 },
+  { code: 'TD8',  short: 'Giang',   full: 'Vũ Hà Giang' bhxh: 577_500 },
+  { code: 'TD9',  short: 'Việt Hà', full: 'Đoàn Việt Hà' bhxh: 577_500 },
+  { code: 'TD10', short: 'Thuý An', full: 'Vũ Thuý An', aliases: ['Thúy An'], bhxh: 0 },
   // Nhân viên cũ (chiến dịch cũ chưa có mã) — giữ để vẫn nhận ra, xóa nếu không cần:
   { code: '',     short: 'Thắng',   full: 'Thắng' },
 ];
