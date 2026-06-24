@@ -36,6 +36,20 @@
   .luong{color:#9FE3C4;font-weight:600;font-variant-numeric:tabular-nums;}
   .thucnhan{color:#FFD479;font-weight:800;font-variant-numeric:tabular-nums;}
   .neg{color:#ff9b8a;}
+  /* Popup thưởng chi tiết */
+  .thuong-wrap{position:relative;display:inline-block;}
+  .thuong-btn{font-family:inherit;font-size:12.5px;color:#fff;background:rgba(255,255,255,.05);border:1px solid rgba(255,255,255,.12);border-radius:6px;padding:4px 8px;cursor:pointer;min-width:104px;text-align:right;font-variant-numeric:tabular-nums;width:100%;}
+  .thuong-btn:hover{border-color:#3D5AFE;background:rgba(61,90,254,.14);}
+  .thuong-btn.has-data{border-color:rgba(255,196,107,.4);color:#ffc56b;}
+  .thuong-popup{display:none;position:absolute;right:0;top:110%;z-index:100;background:#16233A;border:1px solid rgba(61,90,254,.5);border-radius:10px;padding:12px;min-width:220px;box-shadow:0 8px 24px rgba(0,0,0,.5);}
+  .thuong-popup.open{display:block;}
+  .thuong-popup .tp-title{font-size:11px;font-weight:700;color:#9FB0C8;text-transform:uppercase;letter-spacing:.04em;margin-bottom:10px;}
+  .thuong-popup .tp-row{display:flex;align-items:center;justify-content:space-between;gap:8px;margin-bottom:8px;}
+  .thuong-popup .tp-row:last-child{margin-bottom:0;}
+  .thuong-popup .tp-label{font-size:12px;color:#C4D0E2;white-space:nowrap;}
+  .thuong-popup input.tp-inp{font-family:inherit;font-size:12.5px;color:#fff;background:rgba(255,255,255,.06);border:1px solid rgba(255,255,255,.12);border-radius:6px;padding:4px 6px;text-align:right;outline:none;width:110px;font-variant-numeric:tabular-nums;}
+  .thuong-popup input.tp-inp:focus{border-color:#ffc56b;background:rgba(255,196,107,.08);}
+  .thuong-popup .tp-total{font-size:12px;color:#ffc56b;font-weight:700;text-align:right;margin-top:8px;border-top:1px solid rgba(255,255,255,.07);padding-top:8px;}
   .leader{color:#C4A8FF;font-weight:700;font-variant-numeric:tabular-nums;}
   input.cell{width:104px;font-family:inherit;font-size:12.5px;color:#fff;background:rgba(255,255,255,.05);border:1px solid rgba(255,255,255,.12);border-radius:6px;padding:4px 6px;text-align:right;outline:none;font-variant-numeric:tabular-nums;}
   input.cell:focus{border-color:#3D5AFE;background:rgba(61,90,254,.14);}
@@ -97,12 +111,17 @@ const CH=[{id:'thailan',label:'Thái Lan'},{id:'pushsale',label:'Pushsale'},{id:
 const MET=[{id:'dt',label:'Doanh thu'},{id:'qc',label:'Chi phí QC'},{id:'gv',label:'Giá vốn'},{id:'ship',label:'Phí ship'}];
 const AUTOFIELD={dt:'doanhthu',qc:'chiPhiQC',gv:'giaVon',ship:'phiShip'};
 let TYLE=0.02, AUTO=[], MAN={}, ROSTER=[], LIST=[], HHLEAD={};
+const THUONG_TYPES=[
+  {id:'thuongDTT',   label:'Thưởng DTT'},
+  {id:'thuongNgayTuan', label:'Thưởng Ngày+Tuần'},
+  {id:'thuongTop1',  label:'Thưởng Top 1'},
+];
 
 function monthRange(m){const [y,mo]=m.split('-').map(Number);const since=`${y}-${String(mo).padStart(2,'0')}-01`;const last=new Date(y,mo,0).getDate();return {since,until:`${y}-${String(mo).padStart(2,'0')}-${String(last).padStart(2,'0')}`};}
 function blankCh(){return {dt:0,qc:0,gv:0,ship:0};}
 function manOf(name){
   const k=normKey(name); let o=MAN[k]||{};
-  o={name:o.name||name, channels:o.channels||{}, luongCung:+o.luongCung||0, thuong:+o.thuong||0, phat:+o.phat||0, bhxh:+o.bhxh||0};
+  o={name:o.name||name, channels:o.channels||{}, luongCung:+o.luongCung||0, thuong:+o.thuong||0, thuongDTT:+o.thuongDTT||0, thuongNgayTuan:+o.thuongNgayTuan||0, thuongTop1:+o.thuongTop1||0, phat:+o.phat||0, bhxh:+o.bhxh||0};
   CH.forEach(c=>{o.channels[c.id]={...blankCh(),...(o.channels[c.id]||{})};});
   MAN[k]=o; return o;
 }
@@ -125,8 +144,10 @@ async function load(){
     if(!d.ok){$('status').innerHTML='<span class="err">'+esc(d.message||'Không lấy được dữ liệu')+'</span>';return;}
     const mj=await rMan.json().catch(()=>({data:{}}));
     AUTO=d.rows||[]; MAN=mj.data||{}; ROSTER=d.roster||[]; TYLE=d.tyLe||0.02;
+    // Đồng bộ tổng thưởng từ 3 loại khi load
+    Object.values(MAN).forEach(m=>{ if(m.thuongDTT||m.thuongNgayTuan||m.thuongTop1){ m.thuong=(+m.thuongDTT||0)+(+m.thuongNgayTuan||0)+(+m.thuongTop1||0); } });
     HHLEAD={}; (d.rows||[]).forEach(r=>{ if(r.hoaHongLeader) HHLEAD[normKey(r.name)]=r.hoaHongLeader; });
-    buildList(); buildTable(); recomputeAll();
+    buildList(); buildTable(); recomputeAll(); LIST.forEach((_,i)=>updateThuongPopup(i));
     const t=new Date(d.lastUpdated||Date.now());
     $('status').innerHTML='Cập nhật '+t.toLocaleString('vi-VN')+'  ·  tháng '+mo+'  ·  tỷ lệ '+(TYLE*100)+'%';
     $('note').innerHTML='4 cột đầu = số <b>tự động (TĐ)</b> từ Sandbox/Meta <b>＋ các kênh khác</b> bạn nhập tay (Thái Lan, Pushsale, Sàn TMĐT). '
@@ -184,6 +205,7 @@ function buildTable(){
   tb.innerHTML=html;
   tb.querySelectorAll('button.exp').forEach(b=>b.addEventListener('click',()=>toggle(+b.getAttribute('data-exp'),b)));
   tb.querySelectorAll('input.cell').forEach(el=>el.addEventListener('change',onEdit));
+  tb.querySelectorAll('input.tp-inp').forEach(el=>el.addEventListener('change',onEdit));
 }
 function toggle(i,btn){const r=$('det-'+i);const open=r.style.display==='none';r.style.display=open?'':'none';btn.textContent=open?'−':'＋';}
 
@@ -224,7 +246,8 @@ function recomputeAll(){LIST.forEach((_,i)=>recompute(i));updateTotals();}
 let saveTimer=null;
 async function onEdit(e){
   const el=e.target, i=+el.getAttribute('data-i'), emp=LIST[i], m=manOf(emp.key), v=num(el.value);
-  if(el.hasAttribute('data-f')) m[el.getAttribute('data-f')]=v;
+  if(el.hasAttribute('data-tf')){ m[el.getAttribute('data-tf')]=v; m.thuong=THUONG_TYPES.reduce((s,t)=>s+(+m[t.id]||0),0); updateThuongPopup(i); }
+  else if(el.hasAttribute('data-f')) m[el.getAttribute('data-f')]=v;
   else m.channels[el.getAttribute('data-ch')][el.getAttribute('data-m')]=v;
   el.value=v?vnd(v):'';
   recompute(i); updateTotals(); save(emp);
@@ -238,6 +261,35 @@ async function save(emp){
 }
 function flash(msg,bad){const s=$('status'),old=s.getAttribute('data-base')||s.innerHTML;s.setAttribute('data-base',old);s.innerHTML='<span class="'+(bad?'err':'ok')+'">'+esc(msg)+'</span>';clearTimeout(saveTimer);saveTimer=setTimeout(()=>{s.innerHTML=s.getAttribute('data-base');},1400);}
 
+
+function toggleThuong(i){
+  document.querySelectorAll('.thuong-popup.open').forEach(p=>{if(p.id!=='tp-'+i)p.classList.remove('open');});
+  const p=$('tp-'+i); p.classList.toggle('open');
+  if(p.classList.contains('open')){
+    // Load giá trị hiện tại vào inputs
+    const emp=LIST[i], m=manOf(emp.key);
+    THUONG_TYPES.forEach(t=>{
+      const inp=p.querySelector('[data-tf="'+t.id+'"]');
+      if(inp) inp.value=m[t.id]?vnd(m[t.id]):'';
+    });
+    updateThuongPopup(i);
+  }
+}
+function updateThuongPopup(i){
+  const emp=LIST[i], m=manOf(emp.key);
+  const total=THUONG_TYPES.reduce((s,t)=>s+(+m[t.id]||0),0);
+  const tpt=$('tpt-'+i); if(tpt) tpt.textContent='Tổng: '+vnd(total)+' ₫';
+  const tb=$('tb-'+i);
+  if(tb){
+    tb.textContent=total>0?vnd(total)+' ₫':'–';
+    tb.className='thuong-btn'+(total>0?' has-data':'');
+  }
+}
+document.addEventListener('click',e=>{
+  if(!e.target.closest('.thuong-wrap')){
+    document.querySelectorAll('.thuong-popup.open').forEach(p=>p.classList.remove('open'));
+  }
+});
 $('refreshBtn').addEventListener('click',()=>{$('status').removeAttribute('data-base');load();});
 $('month').addEventListener('change',()=>{$('status').removeAttribute('data-base');load();});
 load();
