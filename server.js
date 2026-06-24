@@ -1408,7 +1408,22 @@ const numClean = v => { const n = Math.round(Number(String(v == null ? 0 : v).re
 // Lấy dữ liệu tay theo tháng: /api/salary/manual?month=YYYY-MM
 app.get('/api/salary/manual', (req, res) => {
   const month = req.query.month || '';
-  res.json({ month, channels: SALARY_CHANNELS, data: SALARY_MANUAL[month] || {} });
+  const raw = SALARY_MANUAL[month] || {};
+  // Điền BHXH mặc định từ EMPLOYEES cho từng nhân viên chưa có hoặc = 0
+  const data = {};
+  for (const [k, v] of Object.entries(raw)) {
+    const empDef = EMPLOYEES.find(e => normProd(e.full) === k);
+    const bhxhDefault = empDef ? (empDef.bhxh || 0) : 0;
+    data[k] = { ...v, bhxh: (v.bhxh != null && v.bhxh !== 0) ? v.bhxh : bhxhDefault };
+  }
+  // Thêm BHXH mặc định cho nhân viên chưa có record trong tháng này
+  for (const emp of EMPLOYEES) {
+    if (!emp.bhxh) continue;
+    const k = normProd(emp.full);
+    if (!data[k]) data[k] = { name: emp.full, channels: {}, luongCung: 0, thuong: 0, phat: 0, bhxh: emp.bhxh };
+    else if (!data[k].bhxh) data[k].bhxh = emp.bhxh;
+  }
+  res.json({ month, channels: SALARY_CHANNELS, data });
 });
 // Lưu 1 nhân viên
 app.post('/api/salary/manual', (req, res) => {
