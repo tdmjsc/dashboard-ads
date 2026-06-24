@@ -1322,6 +1322,48 @@ app.get('/api/salary/report', async (req, res) => {
       row.hoaHongLeader = Math.round(tongLuong / 2);
     }
 
+    // ── Thưởng DTT (tự động theo bảng bậc thang) ────────────────────
+    // DTT = Doanh thu - Giá vốn - Phí ship (KHÔNG trừ chi phí QC)
+    // Bậc thang: mỗi 90tr từ 150tr → +1tr lương cứng, sau 690tr mỗi 90tr thêm +1tr
+    const DTT_BRACKETS = [
+      { min: 150e6, max: 240e6, bonus: 1e6 },
+      { min: 240e6, max: 330e6, bonus: 2e6 },
+      { min: 330e6, max: 420e6, bonus: 3e6 },
+      { min: 420e6, max: 510e6, bonus: 4e6 },
+      { min: 510e6, max: 600e6, bonus: 5e6 },
+      { min: 600e6, max: 690e6, bonus: 6e6 },
+    ];
+    const DTT_BASE = 690e6, DTT_STEP = 90e6, DTT_BONUS_STEP = 1e6, DTT_START_BONUS = 6e6;
+
+    function tinhThuongDTT(dtt) {
+      if (dtt < 150e6) return 0;
+      for (const b of DTT_BRACKETS) {
+        if (dtt >= b.min && dtt <= b.max) return b.bonus;
+      }
+      if (dtt > DTT_BASE) {
+        const extra = Math.floor((dtt - DTT_BASE) / DTT_STEP);
+        return DTT_START_BONUS + (extra + 1) * DTT_BONUS_STEP;
+      }
+      return 0;
+    }
+
+    for (const row of rows) {
+      const dtt = row.doanhthu - row.giaVon - row.phiShip;
+      row.dtt = Math.round(dtt);
+      row.thuongDTT = tinhThuongDTT(dtt);
+    }
+
+    // ── Thưởng Top 1 (tự động — người có lương 2% cao nhất) ──────────
+    // Chỉ 1 người, thưởng = ½ × lương 2% của chính họ (chỉ khi lương > 0)
+    const posRows = rows.filter(r => r.luong > 0);
+    if (posRows.length > 0) {
+      posRows.sort((a, b) => b.luong - a.luong);
+      const top1 = posRows[0];
+      // Kiểm tra không có người nào bằng điểm (nếu bằng thì không ai được)
+      const isUnique = posRows.length === 1 || posRows[0].luong !== posRows[1].luong;
+      if (isUnique) top1.thuongTop1 = Math.round(top1.luong / 2);
+    }
+
     rows.sort((a, b) => b.luong - a.luong);
     const roster = EMPLOYEES.filter(e => e.code).map(e => e.full).concat('Admin');
     res.json({ ok: true, since, until, nguon: useConfig ? 'live' : 'mau-t5', tyLe: LUONG_TY_LE, phiShipDon: PHI_SHIP_DON, roster, rows, lastUpdated: new Date().toISOString() });
