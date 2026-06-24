@@ -18,6 +18,22 @@ jobs:
           password: ${{ secrets.SSH_PASSWORD }}
           script: |
             cd /home/u422036594/domains/ads.tdmjsc.com/nodejs
+
+            # Backup các file dữ liệu TRƯỚC khi pull
+            cp salary-manual.json /tmp/salary-manual.bak.json 2>/dev/null || echo "{}" > /tmp/salary-manual.bak.json
+            cp sessions.json /tmp/sessions.bak.json 2>/dev/null || true
+            cp .env /tmp/env.bak 2>/dev/null || true
+
+            # Pull code mới
             git pull origin main
+
+            # Restore các file dữ liệu SAU khi pull
+            cp /tmp/salary-manual.bak.json salary-manual.json
+            cp /tmp/sessions.bak.json sessions.json 2>/dev/null || true
+            cp /tmp/env.bak .env 2>/dev/null || true
+
+            # Restart Node.js
             touch tmp/restart.txt
+
             echo "✅ Deploy thành công lúc $(date)"
+            echo "📦 salary-manual.json đã được bảo vệ"
