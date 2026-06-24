@@ -200,7 +200,20 @@ function buildTable(){
       +'<td class="luong" id="l2-'+i+'"></td>'
       +'<td class="leader" id="hl-'+i+'">–</td>'
       +'<td>'+pInp(i,'luongCung',m.luongCung)+'</td>'
-      +'<td><div class="thuong-wrap" id="tw-'+i+'"><button class="thuong-btn" id="tb-'+i+'" onclick="toggleThuong('+i+')">–</button><div class="thuong-popup" id="tp-'+i+'"><div class="tp-title">Chi tiết thưởng</div>'+THUONG_TYPES.map(t=>'<div class="tp-row"><span class="tp-label">'+t.label+'</span><input class="tp-inp" inputmode="numeric" data-i="'+i+'" data-tf="'+t.id+'" placeholder="0"></div>').join('')+'<div class="tp-total" id="tpt-'+i+'">Tổng: 0 ₫</div></div></div></td>'
+      +'<td><div class="thuong-wrap" id="tw-'+i+'">'
+      +'<button class="thuong-btn" id="tb-'+i+'" onclick="toggleThuong('+i+')">–</button>'
+      +'<div class="thuong-popup" id="tp-'+i+'">'
+      +'<div class="tp-title">Chi tiết thưởng</div>'
+      +'<div style="font-size:11px;color:#9FB0C8;margin-bottom:8px;" id="dtt-hint-'+i+'"></div>'
+      +THUONG_TYPES.map(t=>
+        t.auto
+          ? '<div class="tp-row"><span class="tp-label">'+t.label+' <span style="font-size:10px;color:#7BE3B5">(tự động)</span></span>'
+            +'<b class="tp-auto" id="ta-'+i+'-'+t.id+'" style="color:#ffc56b;font-size:13px;">–</b></div>'
+          : '<div class="tp-row"><span class="tp-label">'+t.label+'</span>'
+            +'<input class="tp-inp" inputmode="numeric" data-i="'+i+'" data-tf="'+t.id+'" placeholder="0"></div>'
+      ).join('')
+      +'<div class="tp-total" id="tpt-'+i+'">Tổng: 0 ₫</div>'
+      +'</div></div></td>'
       +'<td>'+pInp(i,'phat',m.phat)+'</td><td>'+pInp(i,'bhxh',m.bhxh)+'</td>'
       +'<td class="thucnhan" id="tn-'+i+'"></td></tr>';
     html+=detailHTML(i,emp);
@@ -277,15 +290,16 @@ function toggleThuong(i){
   document.querySelectorAll('.thuong-popup.open').forEach(p=>{if(p.id!=='tp-'+i)p.classList.remove('open');});
   const p=$('tp-'+i); p.classList.toggle('open');
   if(p.classList.contains('open')){
-    // Load giá trị hiện tại vào inputs
     const emp=LIST[i], m=manOf(emp.key);
     const at=AUTO_THUONG[emp.key]||{};
+    // Hiển thị hint DTT
+    const hint=$('dtt-hint-'+i);
+    if(hint) hint.textContent=at.dtt>0?'DTT tháng này: '+vnd(at.dtt)+' ₫':'';
+    // Điền giá trị từng loại
     THUONG_TYPES.forEach(t=>{
       if(t.auto){
-        // Hiện giá trị tự động từ server
         const el=$('ta-'+i+'-'+t.id);
         if(el) el.textContent=at[t.id]>0?vnd(at[t.id])+' ₫':'–';
-        // Đồng bộ vào m để tổng tính đúng
         m[t.id]=at[t.id]||0;
       } else {
         const inp=p.querySelector('[data-tf="'+t.id+'"]');
