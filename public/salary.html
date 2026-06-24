@@ -112,10 +112,12 @@ const MET=[{id:'dt',label:'Doanh thu'},{id:'qc',label:'Chi phí QC'},{id:'gv',la
 const AUTOFIELD={dt:'doanhthu',qc:'chiPhiQC',gv:'giaVon',ship:'phiShip'};
 let TYLE=0.02, AUTO=[], MAN={}, ROSTER=[], LIST=[], HHLEAD={};
 const THUONG_TYPES=[
-  {id:'thuongDTT',   label:'Thưởng DTT'},
-  {id:'thuongNgayTuan', label:'Thưởng Ngày+Tuần'},
-  {id:'thuongTop1',  label:'Thưởng Top 1'},
+  {id:'thuongDTT',      label:'Thưởng DTT',        auto:true,  hint:'Tự động theo DTT'},
+  {id:'thuongNgayTuan', label:'Thưởng Ngày+Tuần',  auto:false, hint:'Nhập tay'},
+  {id:'thuongTop1',     label:'Thưởng Top 1',       auto:true,  hint:'Tự động — lương 2% cao nhất'},
 ];
+// Lưu thưởng tự động từ server (DTT + Top1) để hiển thị trong popup
+let AUTO_THUONG = {}; // { normKey(name): { thuongDTT, thuongTop1 } }
 
 function monthRange(m){const [y,mo]=m.split('-').map(Number);const since=`${y}-${String(mo).padStart(2,'0')}-01`;const last=new Date(y,mo,0).getDate();return {since,until:`${y}-${String(mo).padStart(2,'0')}-${String(last).padStart(2,'0')}`};}
 function blankCh(){return {dt:0,qc:0,gv:0,ship:0};}
@@ -146,7 +148,11 @@ async function load(){
     AUTO=d.rows||[]; MAN=mj.data||{}; ROSTER=d.roster||[]; TYLE=d.tyLe||0.02;
     // Đồng bộ tổng thưởng từ 3 loại khi load
     Object.values(MAN).forEach(m=>{ if(m.thuongDTT||m.thuongNgayTuan||m.thuongTop1){ m.thuong=(+m.thuongDTT||0)+(+m.thuongNgayTuan||0)+(+m.thuongTop1||0); } });
-    HHLEAD={}; (d.rows||[]).forEach(r=>{ if(r.hoaHongLeader) HHLEAD[normKey(r.name)]=r.hoaHongLeader; });
+    HHLEAD={}; AUTO_THUONG={};
+    (d.rows||[]).forEach(r=>{
+      if(r.hoaHongLeader) HHLEAD[normKey(r.name)]=r.hoaHongLeader;
+      AUTO_THUONG[normKey(r.name)]={ thuongDTT: r.thuongDTT||0, thuongTop1: r.thuongTop1||0, dtt: r.dtt||0 };
+    });
     buildList(); buildTable(); recomputeAll(); LIST.forEach((_,i)=>updateThuongPopup(i));
     const t=new Date(d.lastUpdated||Date.now());
     $('status').innerHTML='Cập nhật '+t.toLocaleString('vi-VN')+'  ·  tháng '+mo+'  ·  tỷ lệ '+(TYLE*100)+'%';
@@ -193,7 +199,8 @@ function buildTable(){
       +'<td class="num" id="dt-'+i+'"></td><td class="num" id="qc-'+i+'"></td><td class="num" id="gv-'+i+'"></td><td class="num" id="ship-'+i+'"></td>'
       +'<td class="luong" id="l2-'+i+'"></td>'
       +'<td class="leader" id="hl-'+i+'">–</td>'
-      +'<td>'+pInp(i,'luongCung',m.luongCung)+'</td><td>'+pInp(i,'thuong',m.thuong)+'</td>'
+      +'<td>'+pInp(i,'luongCung',m.luongCung)+'</td>'
+      +'<td><div class="thuong-wrap" id="tw-'+i+'"><button class="thuong-btn" id="tb-'+i+'" onclick="toggleThuong('+i+')">–</button><div class="thuong-popup" id="tp-'+i+'"><div class="tp-title">Chi tiết thưởng</div>'+THUONG_TYPES.map(t=>'<div class="tp-row"><span class="tp-label">'+t.label+'</span><input class="tp-inp" inputmode="numeric" data-i="'+i+'" data-tf="'+t.id+'" placeholder="0"></div>').join('')+'<div class="tp-total" id="tpt-'+i+'">Tổng: 0 ₫</div></div></div></td>'
       +'<td>'+pInp(i,'phat',m.phat)+'</td><td>'+pInp(i,'bhxh',m.bhxh)+'</td>'
       +'<td class="thucnhan" id="tn-'+i+'"></td></tr>';
     html+=detailHTML(i,emp);
@@ -221,6 +228,10 @@ function recompute(i){
   srcCell('dt',i,DT,autoVal(a,'dt'),mDt); srcCell('qc',i,QC,autoVal(a,'qc'),mQc);
   srcCell('gv',i,GV,autoVal(a,'gv'),mGv); srcCell('ship',i,SHIP,autoVal(a,'ship'),mSh);
   const hl=HHLEAD[emp.key]||0;
+  // Tổng thưởng = auto(DTT+Top1) + nhập tay(NgayTuan)
+  const at=AUTO_THUONG[emp.key]||{};
+  THUONG_TYPES.filter(t=>t.auto).forEach(t=>{ m[t.id]=at[t.id]||0; });
+  m.thuong=THUONG_TYPES.reduce((s,t)=>s+(+m[t.id]||0),0);
   const l2e=$('l2-'+i); l2e.textContent=vnd(l2); l2e.className=l2<0?'luong neg':'luong';
   const hle=$('hl-'+i); if(hle){ hle.textContent=hl>0?vnd(hl)+'₫':'–'; }
   const tnWithHl=tn+hl;
@@ -268,15 +279,27 @@ function toggleThuong(i){
   if(p.classList.contains('open')){
     // Load giá trị hiện tại vào inputs
     const emp=LIST[i], m=manOf(emp.key);
+    const at=AUTO_THUONG[emp.key]||{};
     THUONG_TYPES.forEach(t=>{
-      const inp=p.querySelector('[data-tf="'+t.id+'"]');
-      if(inp) inp.value=m[t.id]?vnd(m[t.id]):'';
+      if(t.auto){
+        // Hiện giá trị tự động từ server
+        const el=$('ta-'+i+'-'+t.id);
+        if(el) el.textContent=at[t.id]>0?vnd(at[t.id])+' ₫':'–';
+        // Đồng bộ vào m để tổng tính đúng
+        m[t.id]=at[t.id]||0;
+      } else {
+        const inp=p.querySelector('[data-tf="'+t.id+'"]');
+        if(inp) inp.value=m[t.id]?vnd(m[t.id]):'';
+      }
     });
     updateThuongPopup(i);
   }
 }
 function updateThuongPopup(i){
   const emp=LIST[i], m=manOf(emp.key);
+  const at=AUTO_THUONG[emp.key]||{};
+  // Đồng bộ thưởng tự động vào m trước khi tính tổng
+  THUONG_TYPES.filter(t=>t.auto).forEach(t=>{ m[t.id]=at[t.id]||0; });
   const total=THUONG_TYPES.reduce((s,t)=>s+(+m[t.id]||0),0);
   const tpt=$('tpt-'+i); if(tpt) tpt.textContent='Tổng: '+vnd(total)+' ₫';
   const tb=$('tb-'+i);
