@@ -73,6 +73,7 @@
         <th class="num">Tỷ lệ chốt</th>
         <th class="num">Số SP</th>
         <th class="num">Chi tiêu Meta</th>
+        <th class="num">%CT/DS</th>
         <th class="num">Doanh số (VND)</th>
       </tr>
     </thead>
@@ -95,11 +96,12 @@ function setRange(kind){
 setRange('month');
 
 function esc(s){ return String(s==null?'':s).replace(/[&<>"]/g, c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c])); }
+const pctMeta = (chiTieu, doanhthu) => (doanhthu > 0 && chiTieu > 0) ? (chiTieu / doanhthu * 100).toFixed(1) + '%' : '–';
 
 function render(d){
   const tb = $('rows');
   const rows = (d.rows||[]).slice().sort((a,b)=>(b.doanhthu||0)-(a.doanhthu||0));
-  if(!rows.length){ tb.innerHTML = '<tr><td colspan="8" class="empty">Không có dữ liệu trong khoảng ngày này.</td></tr>'; return; }
+  if(!rows.length){ tb.innerHTML = '<tr><td colspan="9" class="empty">Không có dữ liệu trong khoảng ngày này.</td></tr>'; return; }
   let html='';
   rows.forEach(r=>{
     html += `<tr>
@@ -110,6 +112,7 @@ function render(d){
       <td class="num">${pctf(r.tyLe)}</td>
       <td class="num">${vnd(r.soSP)}</td>
       <td class="num">${vnd(r.chiTieu)}</td>
+      <td class="num" style="color:#C4A8FF;font-weight:600">${pctMeta(r.chiTieu, r.doanhthu)}</td>
       <td class="num rev">${vnd(r.doanhthu)}</td>
     </tr>`;
   });
@@ -122,6 +125,7 @@ function render(d){
     <td class="num">${pctf(t.tyLe)}</td>
     <td class="num">${vnd(t.soSP)}</td>
     <td class="num">${vnd(t.chiTieu)}</td>
+    <td class="num" style="color:#C4A8FF;font-weight:600">${pctMeta(t.chiTieu, t.doanhthu)}</td>
     <td class="num rev">${vnd(t.doanhthu)}</td>
   </tr>`;
   tb.innerHTML = html;
