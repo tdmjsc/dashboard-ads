@@ -1,0 +1,23 @@
+name: Auto Deploy to Hostinger
+
+on:
+  push:
+    branches:
+      - main
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Deploy to Hostinger via SSH
+        uses: appleboy/ssh-action@v1.0.3
+        with:
+          host: 46.202.138.149
+          port: 65002
+          username: u422036594
+          password: ${{ secrets.SSH_PASSWORD }}
+          script: |
+            cd /home/u422036594/domains/ads.tdmjsc.com/nodejs
+            git pull origin main
+            touch tmp/restart.txt
+            echo "✅ Deploy thành công lúc $(date)"
