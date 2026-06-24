@@ -22,7 +22,7 @@
   .status{font-size:13px;color:#9FB0C8;margin:4px 0 14px;min-height:18px;}
   .status .warn{color:#ffc56b;} .status .err{color:#ff9b8a;} .status .ok{color:#7BE3B5;}
   .tblwrap{overflow-x:auto;border-radius:12px;border:1px solid rgba(255,255,255,.06);}
-  table{width:100%;border-collapse:collapse;background:#101B2E;min-width:1120px;}
+  table{width:100%;border-collapse:collapse;background:#101B2E;min-width:1280px;}
   th,td{padding:10px 12px;text-align:right;font-size:13px;border-bottom:1px solid rgba(255,255,255,.05);white-space:nowrap;vertical-align:top;}
   th:first-child,td:first-child{text-align:left;}
   th{background:#16233A;color:#9FB0C8;font-weight:600;font-size:11px;text-transform:uppercase;letter-spacing:.02em;position:sticky;top:0;z-index:2;}
@@ -36,6 +36,7 @@
   .luong{color:#9FE3C4;font-weight:600;font-variant-numeric:tabular-nums;}
   .thucnhan{color:#FFD479;font-weight:800;font-variant-numeric:tabular-nums;}
   .neg{color:#ff9b8a;}
+  .leader{color:#C4A8FF;font-weight:700;font-variant-numeric:tabular-nums;}
   input.cell{width:104px;font-family:inherit;font-size:12.5px;color:#fff;background:rgba(255,255,255,.05);border:1px solid rgba(255,255,255,.12);border-radius:6px;padding:4px 6px;text-align:right;outline:none;font-variant-numeric:tabular-nums;}
   input.cell:focus{border-color:#3D5AFE;background:rgba(61,90,254,.14);}
   input.cell::placeholder{color:#54657F;}
@@ -77,7 +78,7 @@
     <table>
       <thead><tr>
         <th>Nhân viên</th><th>Doanh thu</th><th>Chi phí QC</th><th>Giá vốn</th><th>Phí ship</th>
-        <th>Lương 2%</th><th>Lương cứng</th><th>Thưởng</th><th>Phạt</th><th>BHXH</th><th>Thực nhận</th>
+        <th>Lương 2%</th><th>HH Leader</th><th>Lương cứng</th><th>Thưởng</th><th>Phạt</th><th>BHXH</th><th>Thực nhận</th>
       </tr></thead>
       <tbody id="rows"></tbody>
     </table>
@@ -95,7 +96,7 @@ const num=v=>{const n=parseInt(String(v==null?'':v).replace(/[^\d-]/g,''),10);re
 const CH=[{id:'thailan',label:'Thái Lan'},{id:'pushsale',label:'Pushsale'},{id:'san',label:'Sàn TMĐT'}];
 const MET=[{id:'dt',label:'Doanh thu'},{id:'qc',label:'Chi phí QC'},{id:'gv',label:'Giá vốn'},{id:'ship',label:'Phí ship'}];
 const AUTOFIELD={dt:'doanhthu',qc:'chiPhiQC',gv:'giaVon',ship:'phiShip'};
-let TYLE=0.02, AUTO=[], MAN={}, ROSTER=[], LIST=[];
+let TYLE=0.02, AUTO=[], MAN={}, ROSTER=[], LIST=[], HHLEAD={};
 
 function monthRange(m){const [y,mo]=m.split('-').map(Number);const since=`${y}-${String(mo).padStart(2,'0')}-01`;const last=new Date(y,mo,0).getDate();return {since,until:`${y}-${String(mo).padStart(2,'0')}-${String(last).padStart(2,'0')}`};}
 function blankCh(){return {dt:0,qc:0,gv:0,ship:0};}
@@ -124,12 +125,13 @@ async function load(){
     if(!d.ok){$('status').innerHTML='<span class="err">'+esc(d.message||'Không lấy được dữ liệu')+'</span>';return;}
     const mj=await rMan.json().catch(()=>({data:{}}));
     AUTO=d.rows||[]; MAN=mj.data||{}; ROSTER=d.roster||[]; TYLE=d.tyLe||0.02;
+    HHLEAD={}; (d.rows||[]).forEach(r=>{ if(r.hoaHongLeader) HHLEAD[normKey(r.name)]=r.hoaHongLeader; });
     buildList(); buildTable(); recomputeAll();
     const t=new Date(d.lastUpdated||Date.now());
     $('status').innerHTML='Cập nhật '+t.toLocaleString('vi-VN')+'  ·  tháng '+mo+'  ·  tỷ lệ '+(TYLE*100)+'%';
     $('note').innerHTML='4 cột đầu = số <b>tự động (TĐ)</b> từ Sandbox/Meta <b>＋ các kênh khác</b> bạn nhập tay (Thái Lan, Pushsale, Sàn TMĐT). '
       +'Bấm nút <b>＋</b> ở mỗi nhân viên để mở ô nhập theo từng kênh; kênh có dữ liệu sẽ hiện nhãn. '
-      +'Lương 2% = (Doanh thu − Chi phí QC − Giá vốn − Phí ship) × 2%. <b>Thực nhận = Lương 2% + Lương cứng + Thưởng − Phạt − BHXH.</b> Nhập xong bấm ra ngoài ô là tự lưu.';
+      +'Lương 2% = (Doanh thu − Chi phí QC − Giá vốn − Phí ship) × 2%. HH Leader = ½ × tổng lương 2% nhân viên trong nhóm. <b>Thực nhận = Lương 2% + Lương cứng + Thưởng − Phạt − BHXH.</b> Nhập xong bấm ra ngoài ô là tự lưu.';
   }catch(e){$('status').innerHTML='<span class="err">Không kết nối được máy chủ: '+esc(e.message)+'</span>';}
   finally{$('refreshBtn').disabled=false;}
 }
@@ -156,12 +158,12 @@ function detailHTML(i,emp){
     +' <span class="badge" id="bd-'+i+'-'+c.id+'" style="display:none">có DL</span></div>'
     +MET.map(mt=>'<div class="frow"><span>'+mt.label+'</span>'+cInp(i,c.id,mt.id,m.channels[c.id][mt.id])+'</div>').join('')
     +'</div>').join('');
-  return '<tr class="drow" id="det-'+i+'" style="display:none"><td colspan="11"><div class="panel">'+cards+'</div></td></tr>';
+  return '<tr class="drow" id="det-'+i+'" style="display:none"><td colspan="12"><div class="panel">'+cards+'</div></td></tr>';
 }
 
 function buildTable(){
   const tb=$('rows');
-  if(!LIST.length){tb.innerHTML='<tr><td colspan="11" class="empty">Không có dữ liệu trong tháng này.</td></tr>';return;}
+  if(!LIST.length){tb.innerHTML='<tr><td colspan="12" class="empty">Không có dữ liệu trong tháng này.</td></tr>';return;}
   let html='';
   LIST.forEach((emp,i)=>{
     const m=manOf(emp.key);
@@ -169,6 +171,7 @@ function buildTable(){
       +'<td class="nm"><div class="nmtop"><button class="exp" data-exp="'+i+'">＋</button>'+esc(emp.name)+'</div><div class="bdg" id="bdg-'+i+'"></div></td>'
       +'<td class="num" id="dt-'+i+'"></td><td class="num" id="qc-'+i+'"></td><td class="num" id="gv-'+i+'"></td><td class="num" id="ship-'+i+'"></td>'
       +'<td class="luong" id="l2-'+i+'"></td>'
+      +'<td class="leader" id="hl-'+i+'">–</td>'
       +'<td>'+pInp(i,'luongCung',m.luongCung)+'</td><td>'+pInp(i,'thuong',m.thuong)+'</td>'
       +'<td>'+pInp(i,'phat',m.phat)+'</td><td>'+pInp(i,'bhxh',m.bhxh)+'</td>'
       +'<td class="thucnhan" id="tn-'+i+'"></td></tr>';
@@ -176,7 +179,7 @@ function buildTable(){
   });
   html+='<tr class="total"><td class="nm">Tổng ('+LIST.length+')</td>'
     +'<td class="num" id="t-dt"></td><td class="num" id="t-qc"></td><td class="num" id="t-gv"></td><td class="num" id="t-ship"></td>'
-    +'<td class="luong" id="t-l2"></td><td class="num" id="t-lc"></td><td class="num" id="t-th"></td><td class="num" id="t-ph"></td><td class="num" id="t-bh"></td>'
+    +'<td class="luong" id="t-l2"></td><td class="leader" id="t-hl"></td><td class="num" id="t-lc"></td><td class="num" id="t-th"></td><td class="num" id="t-ph"></td><td class="num" id="t-bh"></td>'
     +'<td class="thucnhan" id="t-tn"></td></tr>';
   tb.innerHTML=html;
   tb.querySelectorAll('button.exp').forEach(b=>b.addEventListener('click',()=>toggle(+b.getAttribute('data-exp'),b)));
@@ -195,8 +198,11 @@ function recompute(i){
   const tn=l2+m.luongCung+m.thuong-m.phat-m.bhxh;
   srcCell('dt',i,DT,autoVal(a,'dt'),mDt); srcCell('qc',i,QC,autoVal(a,'qc'),mQc);
   srcCell('gv',i,GV,autoVal(a,'gv'),mGv); srcCell('ship',i,SHIP,autoVal(a,'ship'),mSh);
+  const hl=HHLEAD[emp.key]||0;
   const l2e=$('l2-'+i); l2e.textContent=vnd(l2); l2e.className=l2<0?'luong neg':'luong';
-  const tne=$('tn-'+i); tne.textContent=vnd(tn)+' ₫'; tne.className=tn<0?'thucnhan neg':'thucnhan';
+  const hle=$('hl-'+i); if(hle){ hle.textContent=hl>0?vnd(hl)+'₫':'–'; }
+  const tnWithHl=tn+hl;
+  const tne=$('tn-'+i); tne.textContent=vnd(tnWithHl)+' ₫'; tne.className=tnWithHl<0?'thucnhan neg':'thucnhan';
   // nhãn kênh có dữ liệu + viền thẻ
   let chips='';
   CH.forEach(c=>{const has=chHasData(m,c.id);
@@ -204,13 +210,13 @@ function recompute(i){
     if(card)card.className='chcard'+(has?' has':''); if(bd)bd.style.display=has?'':'none';
     if(has)chips+='<span class="chip">'+c.label+'</span>';});
   $('bdg-'+i).innerHTML=chips;
-  emp._c={DT,QC,GV,SHIP,l2,lc:m.luongCung,th:m.thuong,ph:m.phat,bh:m.bhxh,tn};
+  emp._c={DT,QC,GV,SHIP,l2,hl,lc:m.luongCung,th:m.thuong,ph:m.phat,bh:m.bhxh,tn:tnWithHl};
 }
 function updateTotals(){
-  const T={DT:0,QC:0,GV:0,SHIP:0,l2:0,lc:0,th:0,ph:0,bh:0,tn:0};
+  const T={DT:0,QC:0,GV:0,SHIP:0,l2:0,hl:0,lc:0,th:0,ph:0,bh:0,tn:0};
   LIST.forEach(e=>{const c=e._c||{};for(const k in T)T[k]+=c[k]||0;});
   $('t-dt').textContent=vnd(T.DT);$('t-qc').textContent=vnd(T.QC);$('t-gv').textContent=vnd(T.GV);$('t-ship').textContent=vnd(T.SHIP);
-  $('t-l2').textContent=vnd(T.l2);$('t-lc').textContent=vnd(T.lc);$('t-th').textContent=vnd(T.th);$('t-ph').textContent=vnd(T.ph);$('t-bh').textContent=vnd(T.bh);
+  $('t-l2').textContent=vnd(T.l2);$('t-hl').textContent=vnd(T.hl);$('t-lc').textContent=vnd(T.lc);$('t-th').textContent=vnd(T.th);$('t-ph').textContent=vnd(T.ph);$('t-bh').textContent=vnd(T.bh);
   $('t-tn').textContent=vnd(T.tn)+' ₫';
 }
 function recomputeAll(){LIST.forEach((_,i)=>recompute(i));updateTotals();}
