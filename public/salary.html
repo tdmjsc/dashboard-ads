@@ -237,14 +237,15 @@ function recompute(i){
   const mDt=chSum(m,'dt'),mQc=chSum(m,'qc'),mGv=chSum(m,'gv'),mSh=chSum(m,'ship');
   const DT=autoVal(a,'dt')+mDt, QC=autoVal(a,'qc')+mQc, GV=autoVal(a,'gv')+mGv, SHIP=autoVal(a,'ship')+mSh;
   const l2=Math.round((DT-QC-GV-SHIP)*TYLE);
-  const tn=l2+m.luongCung+m.thuong-m.phat-m.bhxh;
   srcCell('dt',i,DT,autoVal(a,'dt'),mDt); srcCell('qc',i,QC,autoVal(a,'qc'),mQc);
   srcCell('gv',i,GV,autoVal(a,'gv'),mGv); srcCell('ship',i,SHIP,autoVal(a,'ship'),mSh);
   const hl=HHLEAD[emp.key]||0;
-  // Tổng thưởng = auto(DTT+Top1) + nhập tay(NgayTuan)
+  // Đồng bộ thưởng tự động (DTT+Top1) vào m TRƯỚC khi tính thực nhận
   const at=AUTO_THUONG[emp.key]||{};
   THUONG_TYPES.filter(t=>t.auto).forEach(t=>{ m[t.id]=at[t.id]||0; });
   m.thuong=THUONG_TYPES.reduce((s,t)=>s+(+m[t.id]||0),0);
+  // Tính thực nhận SAU khi đã có đủ thưởng
+  const tn=l2+m.luongCung+m.thuong-m.phat-m.bhxh;
   const l2e=$('l2-'+i); l2e.textContent=vnd(l2); l2e.className=l2<0?'luong neg':'luong';
   const hle=$('hl-'+i); if(hle){ hle.textContent=hl>0?vnd(hl)+'₫':'–'; }
   const tnWithHl=tn+hl;
