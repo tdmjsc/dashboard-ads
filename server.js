@@ -1291,6 +1291,17 @@ app.get('/api/salary/report', async (req, res) => {
       tasks.push(e.id ? productQtyByUser(since, until, e.id, { [p]: ttVal }) : Promise.resolve([]));
     }
     const lists = await Promise.all(tasks);
+
+    // ── Cấu hình Team Lead ────────────────────────────────────────────
+    // Hoa hồng leader = ½ × tổng lương 2% của nhân viên trong nhóm
+    // (KHÔNG tính lương của chính team lead)
+    const TEAM_LEAD = {
+      'Trịnh Đức Phương': ['Đoàn Việt Hà', 'Nguyễn Duy Huân', 'Vũ Thuý An'],
+      'Tạ Quang Trường':  ['Nguyễn Thị Trà My', 'Dương Văn Minh', 'Lê Thị Ánh'],
+    };
+
+    // Tính lương 2% từng người trước, lưu vào luongByName
+    const luongByName = {};
     const rows = emps.map((e, i) => {
       let giaVon = 0;
       for (const pr of lists[i * 2]) giaVon += pr.soLuong * priceOf(pr.ten);
@@ -1299,8 +1310,18 @@ app.get('/api/salary/report', async (req, res) => {
       const chiPhiQC = Math.round((meta[normProd(e.name)] || 0) * (1 + QC_TAX));
       const phiShip = e.soDon * PHI_SHIP_DON;
       const luong = Math.round((e.doanhthu - chiPhiQC - giaVon - phiShip) * LUONG_TY_LE);
-      return { name: e.name, doanhthu: e.doanhthu, chiPhiQC, giaVon, phiShip, soDon: e.soDon, soSP: e.soSP, luong };
+      luongByName[e.name] = luong;
+      return { name: e.name, doanhthu: e.doanhthu, chiPhiQC, giaVon, phiShip, soDon: e.soDon, soSP: e.soSP, luong, hoaHongLeader: 0 };
     });
+
+    // Gắn hoa hồng leader = ½ × tổng lương 2% của nhân viên trong nhóm
+    for (const row of rows) {
+      const members = TEAM_LEAD[row.name];
+      if (!members) continue;
+      const tongLuong = members.reduce((s, name) => s + (luongByName[name] || 0), 0);
+      row.hoaHongLeader = Math.round(tongLuong / 2);
+    }
+
     rows.sort((a, b) => b.luong - a.luong);
     const roster = EMPLOYEES.filter(e => e.code).map(e => e.full).concat('Admin');
     res.json({ ok: true, since, until, nguon: useConfig ? 'live' : 'mau-t5', tyLe: LUONG_TY_LE, phiShipDon: PHI_SHIP_DON, roster, rows, lastUpdated: new Date().toISOString() });
