@@ -160,8 +160,9 @@ async function load(){
     if(!d.ok){$('status').innerHTML='<span class="err">'+esc(d.message||'Không lấy được dữ liệu')+'</span>';return;}
     const mj=await rMan.json().catch(()=>({data:{}}));
     AUTO=d.rows||[]; MAN=mj.data||{}; ROSTER=d.roster||[]; TYLE=d.tyLe||0.02;
-    // Đồng bộ tổng thưởng từ 3 loại khi load
-    Object.values(MAN).forEach(m=>{ if(m.thuongDTT||m.thuongNgayTuan||m.thuongTop1){ m.thuong=(+m.thuongDTT||0)+(+m.thuongNgayTuan||0)+(+m.thuongTop1||0); } });
+    // thuongDTT và thuongTop1 sẽ tính lại phía client trong recomputeAll
+    // Chỉ giữ lại thuongNgayTuan (nhập tay) từ manual data
+    Object.values(MAN).forEach(m=>{ m.thuongDTT=0; m.thuongTop1=0; m.thuong=+m.thuongNgayTuan||0; });
     HHLEAD={}; AUTO_THUONG={};
     (d.rows||[]).forEach(r=>{
       if(r.hoaHongLeader) HHLEAD[normKey(r.name)]=r.hoaHongLeader;
@@ -354,9 +355,8 @@ function toggleThuong(i){
 }
 function updateThuongPopup(i){
   const emp=LIST[i], m=manOf(emp.key);
-  const at=AUTO_THUONG[emp.key]||{};
-  // Đồng bộ thưởng tự động vào m trước khi tính tổng
-  THUONG_TYPES.filter(t=>t.auto).forEach(t=>{ m[t.id]=at[t.id]||0; });
+  // KHÔNG ghi đè m.thuongDTT / m.thuongTop1 từ server
+  // vì đã được tính chính xác phía client trong recompute/recomputeAll
   const total=THUONG_TYPES.reduce((s,t)=>s+(+m[t.id]||0),0);
   const tpt=$('tpt-'+i); if(tpt) tpt.textContent='Tổng: '+vnd(total)+' ₫';
   const tb=$('tb-'+i);
