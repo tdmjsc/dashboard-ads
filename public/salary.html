@@ -111,6 +111,20 @@ const CH=[{id:'thailan',label:'Thái Lan'},{id:'pushsale',label:'Pushsale'},{id:
 const MET=[{id:'dt',label:'Doanh thu'},{id:'qc',label:'Chi phí QC'},{id:'gv',label:'Giá vốn'},{id:'ship',label:'Phí ship'}];
 const AUTOFIELD={dt:'doanhthu',qc:'chiPhiQC',gv:'giaVon',ship:'phiShip'};
 let TYLE=0.02, AUTO=[], MAN={}, ROSTER=[], LIST=[], HHLEAD={};
+// Tính Thưởng DTT phía client — cùng công thức với server
+// DTT = Doanh thu - Giá vốn - Phí ship (KHÔNG trừ chi phí QC)
+const DTT_BRACKETS=[
+  {min:150e6,max:240e6,bonus:1e6},{min:240e6,max:330e6,bonus:2e6},
+  {min:330e6,max:420e6,bonus:3e6},{min:420e6,max:510e6,bonus:4e6},
+  {min:510e6,max:600e6,bonus:5e6},{min:600e6,max:690e6,bonus:6e6},
+];
+function tinhThuongDTT(dtt){
+  if(dtt<150e6) return 0;
+  for(const b of DTT_BRACKETS){ if(dtt>=b.min&&dtt<=b.max) return b.bonus; }
+  if(dtt>690e6) return 6e6+Math.floor((dtt-690e6)/90e6+1)*1e6;
+  return 0;
+}
+
 const THUONG_TYPES=[
   {id:'thuongDTT',      label:'Thưởng DTT',        auto:true,  hint:'Tự động theo DTT'},
   {id:'thuongNgayTuan', label:'Thưởng Ngày+Tuần',  auto:false, hint:'Nhập tay'},
@@ -240,9 +254,10 @@ function recompute(i){
   srcCell('dt',i,DT,autoVal(a,'dt'),mDt); srcCell('qc',i,QC,autoVal(a,'qc'),mQc);
   srcCell('gv',i,GV,autoVal(a,'gv'),mGv); srcCell('ship',i,SHIP,autoVal(a,'ship'),mSh);
   const hl=HHLEAD[emp.key]||0;
-  // Đồng bộ thưởng tự động (DTT+Top1) vào m TRƯỚC khi tính thực nhận
-  const at=AUTO_THUONG[emp.key]||{};
-  THUONG_TYPES.filter(t=>t.auto).forEach(t=>{ m[t.id]=at[t.id]||0; });
+  // Tính lại Thưởng DTT từ DT/GV/SHIP thực tế (gồm cả kênh nhập tay)
+  const dtt=DT-GV-SHIP;
+  m.thuongDTT=tinhThuongDTT(dtt);
+  // thuongTop1 sẽ được gán sau trong recomputeAll (cần so sánh toàn bộ)
   m.thuong=THUONG_TYPES.reduce((s,t)=>s+(+m[t.id]||0),0);
   // Tính thực nhận SAU khi đã có đủ thưởng
   const tn=l2+m.luongCung+m.thuong-m.phat-m.bhxh;
@@ -266,7 +281,30 @@ function updateTotals(){
   $('t-l2').textContent=vnd(T.l2);$('t-hl').textContent=vnd(T.hl);$('t-lc').textContent=vnd(T.lc);$('t-th').textContent=vnd(T.th);$('t-ph').textContent=vnd(T.ph);$('t-bh').textContent=vnd(T.bh);
   $('t-tn').textContent=vnd(T.tn)+' ₫';
 }
-function recomputeAll(){LIST.forEach((_,i)=>recompute(i));updateTotals();}
+function recomputeAll(){
+  // Bước 1: tính lương 2% thực tế từng người (bao gồm tất cả kênh)
+  LIST.forEach((_,i)=>recompute(i));
+
+  // Bước 2: xác định Top 1 — người có lương 2% cao nhất (duy nhất)
+  // Reset thuongTop1 cho tất cả trước
+  LIST.forEach(emp=>{ manOf(emp.key).thuongTop1=0; });
+
+  const eligible=LIST.map((emp,i)=>({emp,i,l2:emp._c?emp._c.l2:0})).filter(x=>x.l2>0);
+  if(eligible.length>0){
+    eligible.sort((a,b)=>b.l2-a.l2);
+    const isUnique=eligible.length===1||eligible[0].l2!==eligible[1].l2;
+    if(isUnique){
+      const top1=eligible[0];
+      const m=manOf(top1.emp.key);
+      m.thuongTop1=Math.round(top1.l2/2);
+      m.thuong=THUONG_TYPES.reduce((s,t)=>s+(+m[t.id]||0),0);
+      // Tính lại thực nhận cho top1 sau khi có thưởng mới
+      recompute(top1.i);
+    }
+  }
+
+  updateTotals();
+}
 
 let saveTimer=null;
 async function onEdit(e){
@@ -295,13 +333,17 @@ function toggleThuong(i){
     const at=AUTO_THUONG[emp.key]||{};
     // Hiển thị hint DTT
     const hint=$('dtt-hint-'+i);
-    if(hint) hint.textContent=at.dtt>0?'DTT tháng này: '+vnd(at.dtt)+' ₫':'';
+    // Tính DTT thực tế từ _c (bao gồm cả kênh nhập tay)
+    const ec=emp._c||{};
+    const dttReal=(ec.DT||0)-(ec.GV||0)-(ec.SHIP||0);
+    if(hint) hint.textContent=dttReal>0?'DTT tháng này: '+vnd(dttReal)+' ₫':'';
     // Điền giá trị từng loại
     THUONG_TYPES.forEach(t=>{
       if(t.auto){
         const el=$('ta-'+i+'-'+t.id);
-        if(el) el.textContent=at[t.id]>0?vnd(at[t.id])+' ₫':'–';
-        m[t.id]=at[t.id]||0;
+        // Cả DTT và Top1 đều tính phía client trong recomputeAll
+        const val=m[t.id]||0;
+        if(el) el.textContent=val>0?vnd(val)+' ₫':'–';
       } else {
         const inp=p.querySelector('[data-tf="'+t.id+'"]');
         if(inp) inp.value=m[t.id]?vnd(m[t.id]):'';
