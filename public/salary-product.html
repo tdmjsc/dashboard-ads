@@ -74,9 +74,10 @@
         <th class="num">Số SP</th>
         <th class="num">SP mới</th>
         <th class="num">SP cũ</th>
+        <th class="num">Đơn ship</th>
+        <th class="num">SL ship</th>
         <th class="num">Doanh thu</th>
         <th class="num">Giá vốn</th>
-        <th class="num">Lợi nhuận</th>
         <th class="num">Hoa hồng</th>
       </tr>
     </thead>
@@ -108,7 +109,7 @@ function monthRange(ym){
 function render(){
   const tb = $('rows');
   const mgrs = DATA.managers || [];
-  if(!mgrs.length){ tb.innerHTML = '<tr><td colspan="8" class="empty">Không có dữ liệu trong tháng này.</td></tr>'; return; }
+  if(!mgrs.length){ tb.innerHTML = '<tr><td colspan="9" class="empty">Không có dữ liệu trong tháng này.</td></tr>'; return; }
   let html = '';
   mgrs.forEach((m, idx) => {
     const isOpen = expanded[m.manager];
@@ -117,9 +118,10 @@ function render(){
       <td class="num">${vnd(m.soSP)}</td>
       <td class="num moi">${vnd(m.soSPmoi)}</td>
       <td class="num cu">${vnd(m.soSPcu)}</td>
+      <td class="num">${vnd(m.soDon)}</td>
+      <td class="num">${vnd(m.soLuongSP)}</td>
       <td class="num">${vnd(m.doanhThu)}</td>
       <td class="num muted">${vnd(m.giaVon)}</td>
-      <td class="num">${vnd(m.loiNhuan)}</td>
       <td class="num hh">${vnd(m.hoaHong)} ₫</td>
     </tr>`;
     // Chi tiết SP của người này
@@ -134,9 +136,10 @@ function render(){
           <td style="padding-left:46px;">${esc(p.product)} ${chip}<br>
             <span class="muted" style="font-size:11px;">Ngày đăng: ${p.ngayDang||'(trống)'} · SL bán: ${vnd(p.soLuongSP)} · giá nhập: ${vnd(p.giaNhap)}</span></td>
           <td></td><td></td><td></td>
+          <td class="num">${vnd(p.soDon)}</td>
+          <td class="num">${vnd(p.soLuongSP)}</td>
           <td class="num">${vnd(p.doanhThu)}</td>
           <td class="num muted">${vnd(p.giaVon)}</td>
-          <td class="num">${vnd(p.loiNhuan)}</td>
           <td class="num ${p.loai==='khong-tinh'?'khong':'hh'}">${p.hoaHong>0?vnd(p.hoaHong)+' ₫':'–'}</td>
         </tr>`;
       });
@@ -147,9 +150,10 @@ function render(){
     <td>Tổng (${mgrs.length} người)</td>
     <td class="num">${vnd(t.soSP)}</td>
     <td class="num"></td><td class="num"></td>
+    <td class="num">${vnd(t.soDon)}</td>
+    <td class="num">${vnd(t.soLuongSP)}</td>
     <td class="num">${vnd(t.doanhThu)}</td>
     <td class="num">${vnd(t.giaVon)}</td>
-    <td class="num">${vnd(t.loiNhuan)}</td>
     <td class="num hh">${vnd(t.hoaHong)} ₫</td>
   </tr>`;
   tb.innerHTML = html;
