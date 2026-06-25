@@ -17,23 +17,28 @@ jobs:
           username: u422036594
           password: ${{ secrets.SSH_PASSWORD }}
           script: |
-            cd /home/u422036594/domains/ads.tdmjsc.com/nodejs
+            set -e
+            PROJECT=/home/u422036594/domains/ads.tdmjsc.com/nodejs
+            DATA=/home/u422036594/data
 
-            # Backup các file dữ liệu TRƯỚC khi pull
-            cp salary-manual.json /tmp/salary-manual.bak.json 2>/dev/null || echo "{}" > /tmp/salary-manual.bak.json
-            cp sessions.json /tmp/sessions.bak.json 2>/dev/null || true
-            cp .env /tmp/env.bak 2>/dev/null || true
+            # Đảm bảo thư mục data tồn tại (nằm NGOÀI project, không bao giờ bị ghi đè)
+            mkdir -p "$DATA"
+            [ -f "$DATA/salary-manual.json" ] || echo '{}' > "$DATA/salary-manual.json"
 
-            # Pull code mới
+            cd "$PROJECT"
+
+            # Pull code mới từ GitHub
+            git checkout main
             git pull origin main
 
-            # Restore các file dữ liệu SAU khi pull
-            cp /tmp/salary-manual.bak.json salary-manual.json
-            cp /tmp/sessions.bak.json sessions.json 2>/dev/null || true
-            cp /tmp/env.bak .env 2>/dev/null || true
+            # Tạo lại symlink trỏ vào file dữ liệu thật ở ~/data
+            # (xóa file/symlink cũ trong project rồi link lại)
+            rm -f "$PROJECT/salary-manual.json"
+            ln -sf "$DATA/salary-manual.json" "$PROJECT/salary-manual.json"
 
             # Restart Node.js
             touch tmp/restart.txt
 
-            echo "✅ Deploy thành công lúc $(date)"
-            echo "📦 salary-manual.json đã được bảo vệ"
+            echo "Deploy thanh cong luc $(date)"
+            echo "Symlink salary-manual.json:"
+            ls -la "$PROJECT/salary-manual.json"
