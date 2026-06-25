@@ -33,8 +33,53 @@ export const USERS = [
   { user: 'kien',  pass: 'Kien@1122', role: 'product', manager: 'Đào Trung Kiên' },
   { user: 'trang', pass: 'Trang@8899', role: 'product', manager: 'Nguyễn Huyền Trang' },
 
-  // Thêm các tài khoản khác ở đây, ví dụ:
-  // { user: 'truong', pass: '...', role: 'viewer', employees: ['Tạ Quang Trường'] },
-  // { user: 'my',     pass: '...', role: 'viewer', employees: ['Nguyễn Thị Trà My'] },
+  // ----- TÀI KHOẢN NHÂN VIÊN XEM LƯƠNG (role: 'staff') -----
+  //  Chỉ vào được trang "Lương của tôi" (my-salary.html), xem bảng lương ĐÃ CÔNG KHAI.
+  //  "employees" ghi TÊN ĐẦY ĐỦ của chính nhân viên đó (1 tên).
+  //  Nhân viên PTSP thì dùng "manager" thay cho "employees".
+  { user: 'nv.truong', pass: 'Truong@xem1', role: 'staff', employees: ['Tạ Quang Trường'] },
+  { user: 'nv.phuong', pass: 'Phuong@xem1', role: 'staff', employees: ['Trịnh Đức Phương'] },
+  { user: 'nv.hieu',   pass: 'Hieu@xem1',   role: 'staff', employees: ['Nguyễn Trung Hiếu'] },
+  { user: 'nv.my',     pass: 'My@xem1',     role: 'staff', employees: ['Nguyễn Thị Trà My'] },
+  { user: 'nv.anh',    pass: 'Anh@xem1',    role: 'staff', employees: ['Lê Thị Ánh'] },
+  { user: 'nv.huan',   pass: 'Huan@xem1',   role: 'staff', employees: ['Nguyễn Duy Huân'] },
+  { user: 'nv.minh',   pass: 'Minh@xem1',   role: 'staff', employees: ['Dương Văn Minh'] },
+  { user: 'nv.giang',  pass: 'Giang@xem1',  role: 'staff', employees: ['Vũ Hà Giang'] },
+  { user: 'nv.ha',     pass: 'Ha@xem1',     role: 'staff', employees: ['Đoàn Việt Hà'] },
+  { user: 'nv.an',     pass: 'An@xem1',     role: 'staff', employees: ['Vũ Thuý An'] },
+  // Nhân viên PTSP xem lương (dùng manager):
+  { user: 'nv.kien',   pass: 'Kien@xem1',   role: 'staff', manager: 'Đào Trung Kiên' },
+  { user: 'nv.trang2', pass: 'Trang@xem1',  role: 'staff', manager: 'Nguyễn Huyền Trang' },
 
 ];
+
+
+// =====================================================================
+//  CHAT ID TELEGRAM CỦA TỪNG NHÂN VIÊN  (để gửi bảng lương riêng)
+//  - KEY = TÊN ĐẦY ĐỦ (giống hệt tên hiển thị trong bảng lương)
+//  - VALUE = Chat ID Telegram (dạng số, ví dụ 123456789)
+//
+//  CÁCH LẤY CHAT ID:
+//   1. Nhân viên nhắn 1 tin bất kỳ cho bot (bấm Start trong Telegram)
+//   2. Admin mở: https://api.telegram.org/bot<TOKEN>/getUpdates
+//   3. Tìm "chat":{"id":123456789} → số đó là Chat ID
+//
+//  ⚠️ Ai CHƯA có Chat ID (để trống/xoá dòng) thì sẽ KHÔNG nhận được lương.
+// =====================================================================
+export const TELEGRAM_CHAT_IDS = {
+  // ----- Nhân viên Marketing -----
+  'Tạ Quang Trường':   '',   // điền Chat ID vào đây
+  'Trịnh Đức Phương':  '',
+  'Nguyễn Trung Hiếu': '',
+  'Nguyễn Thị Trà My': '',
+  'Lê Thị Ánh':        '',
+  'Nguyễn Duy Huân':   '',
+  'Dương Văn Minh':    '',
+  'Vũ Hà Giang':       '',
+  'Đoàn Việt Hà':      '',
+  'Vũ Thuý An':        '',
+
+  // ----- Nhân viên Phát triển sản phẩm -----
+  'Đào Trung Kiên':     '',
+  'Nguyễn Huyền Trang': '',
+};

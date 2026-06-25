@@ -351,7 +351,7 @@ app.post('/login', (req, res) => {
   const u = USERS.find(x => x.user === user && x.pass === pass);
   if (!u) return res.redirect('/login?error=1');
   req.session.user = { user: u.user, role: u.role, employees: u.employees || [], manager: u.manager || '' };
-  res.redirect(u.role === 'product' ? '/products.html' : '/');
+  res.redirect(u.role === 'product' ? '/products.html' : (u.role === 'staff' ? '/my-salary.html' : '/'));
 });
 app.get('/logout', (req, res) => req.session.destroy(() => res.redirect('/login')));
 
@@ -378,6 +378,15 @@ app.use((req, res, next) => {
     if (!allowed) {
       if (p.startsWith('/api/')) return res.status(403).json({ error: 'Không có quyền truy cập mục này.' });
       return res.redirect('/products.html');
+    }
+  }
+  // QUYỀN "staff": chỉ xem lương của mình (my-salary.html)
+  if (me && me.role === 'staff') {
+    const p = req.path;
+    const allowed = ['/my-salary.html', '/logout', '/api/me', '/api/my-salary/months', '/api/my-salary/detail'].includes(p) || p === '/favicon.ico';
+    if (!allowed) {
+      if (p.startsWith('/api/')) return res.status(403).json({ error: 'Không có quyền truy cập mục này.' });
+      return res.redirect('/my-salary.html');
     }
   }
   // Marketing (viewer): chỉ Dashboard + Marketing, KHÔNG vào trang Sản phẩm
@@ -1643,6 +1652,12 @@ let PUBLISHED = {};
 try { PUBLISHED = JSON.parse(fs.readFileSync(PUBLISH_FILE, 'utf8')); } catch { PUBLISHED = {}; }
 function savePublished() { try { fs.writeFileSync(PUBLISH_FILE, JSON.stringify(PUBLISHED)); } catch (e) {} }
 
+// Snapshot bảng lương đã chốt — lưu để nhân viên xem mà KHÔNG cần tính lại
+const SNAPSHOT_FILE = path.join(DATA_DIR, 'salary-snapshots.json');
+let SNAPSHOTS = {};
+try { SNAPSHOTS = JSON.parse(fs.readFileSync(SNAPSHOT_FILE, 'utf8')); } catch { SNAPSHOTS = {}; }
+function saveSnapshots() { try { fs.writeFileSync(SNAPSHOT_FILE, JSON.stringify(SNAPSHOTS)); } catch (e) {} }
+
 // Kiểm tra đã qua ngày 10 của tháng SAU tháng lương chưa
 function canPublish(monthStr) {
   // monthStr = 'YYYY-MM' (tháng lương)
@@ -1715,6 +1730,9 @@ app.post('/api/salary/publish', express.json({ limit: '2mb' }), async (req, res)
   }
   PUBLISHED['mkt-' + month] = { at: new Date().toISOString(), count: results.filter(r => r.ok).length };
   savePublished();
+  // Lưu snapshot để nhân viên xem trực tiếp (không tính lại)
+  SNAPSHOTS['mkt-' + month] = { at: new Date().toISOString(), month, type: 'mkt', rows };
+  saveSnapshots();
   res.json({ ok: true, results });
 });
 
@@ -1762,7 +1780,42 @@ app.post('/api/salary-product/publish', express.json({ limit: '2mb' }), async (r
   }
   PUBLISHED['ptsp-' + month] = { at: new Date().toISOString(), count: results.filter(r => r.ok).length };
   savePublished();
+  SNAPSHOTS['ptsp-' + month] = { at: new Date().toISOString(), month, type: 'ptsp', rows };
+  saveSnapshots();
   res.json({ ok: true, results });
+});
+
+/* ===== API CHO NHÂN VIÊN XEM LƯƠNG ĐÃ CÔNG KHAI (từ snapshot) ===== */
+// Trả về danh sách tháng đã công khai mà nhân viên này có dữ liệu
+app.get('/api/my-salary/months', (req, res) => {
+  const me = req.session.user || {};
+  const myName = (me.employees && me.employees[0]) || me.manager || '';
+  const myNames = me.employees || (me.manager ? [me.manager] : []);
+  const months = [];
+  for (const [key, snap] of Object.entries(SNAPSHOTS)) {
+    const isMine = (snap.rows || []).some(r => {
+      const n = r.name || r.manager;
+      return myNames.includes(n);
+    });
+    if (isMine) months.push({ key, month: snap.month, type: snap.type, at: snap.at });
+  }
+  months.sort((a, b) => b.month.localeCompare(a.month));
+  res.json({ ok: true, months, myNames });
+});
+
+// Trả về bảng lương của chính nhân viên trong 1 tháng đã công khai
+app.get('/api/my-salary/detail', (req, res) => {
+  const me = req.session.user || {};
+  const key = req.query.key || '';
+  const snap = SNAPSHOTS[key];
+  if (!snap) return res.json({ ok: false, message: 'Chưa có bảng lương công khai cho tháng này' });
+  const myNames = me.employees || (me.manager ? [me.manager] : []);
+  // Admin xem được tất cả; nhân viên chỉ thấy dòng của mình
+  let rows = snap.rows || [];
+  if (me.role !== 'admin') {
+    rows = rows.filter(r => myNames.includes(r.name || r.manager));
+  }
+  res.json({ ok: true, month: snap.month, type: snap.type, at: snap.at, rows });
 });
 
 app.use(express.static(path.join(__dirname, 'public')));
