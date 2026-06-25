@@ -1,0 +1,200 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Lương Phát Triển SP — TDMJSC</title>
+<style>
+  *{box-sizing:border-box;}
+  body{margin:0;font-family:'Inter',system-ui,sans-serif;background:#0B1322;color:#E7EEF8;}
+  header{background:#10192B;border-bottom:1px solid rgba(255,255,255,.07);padding:14px 18px;}
+  .top{display:flex;align-items:center;gap:12px;flex-wrap:wrap;}
+  h1{font-size:17px;margin:0;}
+  .sub{color:#9FB0C8;font-size:12px;margin:2px 0 0;font-weight:400;}
+  .ctrl{display:flex;align-items:center;gap:8px;background:rgba(255,255,255,.06);border:1px solid rgba(255,255,255,.10);padding:7px 11px;border-radius:9px;}
+  .ctrl label{font-size:11px;color:#9FB0C8;}
+  .ctrl input[type=month]{font-family:'Inter';font-size:12.5px;color:#fff;background:transparent;border:none;outline:none;color-scheme:dark;}
+  .btn{font-family:'Inter';font-size:13px;font-weight:600;color:#fff;background:#3D5AFE;border:none;padding:8px 16px;border-radius:9px;cursor:pointer;white-space:nowrap;}
+  .btn:hover{background:#2f49d6;} .btn:disabled{opacity:.5;cursor:not-allowed;}
+  .link{color:#C4D0E2;font-size:13px;text-decoration:none;border:1px solid rgba(255,255,255,.14);padding:7px 12px;border-radius:9px;white-space:nowrap;}
+  .link:hover{background:rgba(255,255,255,.08);color:#fff;}
+  main{padding:18px;max-width:1200px;margin:0 auto;}
+  .status{font-size:13px;color:#9FB0C8;margin:4px 0 16px;min-height:18px;}
+  .status .warn{color:#ffc56b;} .status .err{color:#ff9b8a;} .status .ok{color:#7BE3B5;}
+  table{width:100%;border-collapse:collapse;background:#101B2E;border-radius:12px;overflow:hidden;}
+  th,td{padding:12px 14px;text-align:left;font-size:13.5px;border-bottom:1px solid rgba(255,255,255,.05);}
+  th{background:#16233A;color:#9FB0C8;font-weight:600;font-size:12px;text-transform:uppercase;letter-spacing:.03em;}
+  td.num,th.num{text-align:right;font-variant-numeric:tabular-nums;}
+  tr:last-child td{border-bottom:none;}
+  tr.total td{background:#16233A;font-weight:700;color:#fff;}
+  tr.detail-row td{background:#0D1626;font-size:12.5px;padding:8px 14px;}
+  .hh{color:#7BE3B5;font-weight:700;}
+  .moi{color:#7BE3B5;} .cu{color:#ffc56b;} .khong{color:#6B7C97;}
+  .chip{display:inline-block;padding:2px 8px;border-radius:20px;font-size:11px;font-weight:600;}
+  .chip-moi{background:rgba(123,227,181,.12);color:#7BE3B5;}
+  .chip-cu{background:rgba(255,197,107,.12);color:#ffc56b;}
+  .chip-khong{background:rgba(255,255,255,.06);color:#6B7C97;}
+  .expand-btn{cursor:pointer;background:rgba(255,255,255,.06);border:1px solid rgba(255,255,255,.12);color:#9FB0C8;width:24px;height:24px;border-radius:6px;font-size:14px;line-height:1;margin-right:8px;}
+  .expand-btn:hover{background:rgba(61,90,254,.2);color:#fff;}
+  .muted{color:#6B7C97;}
+  .empty{padding:30px;text-align:center;color:#6B7C97;font-size:14px;}
+  .legend{display:flex;gap:16px;flex-wrap:wrap;font-size:12px;color:#9FB0C8;margin-bottom:14px;}
+  .legend b{color:#E7EEF8;}
+  @media(max-width:680px){ h1{font-size:15px;} th,td{padding:9px 7px;font-size:12px;} .ctrl{flex:1 1 100%;} }
+</style>
+</head>
+<body>
+<header>
+  <div class="top">
+    <div style="flex:1;min-width:180px;">
+      <h1>💼 Lương Phát Triển Sản Phẩm</h1>
+      <p class="sub" id="subTitle">Hoa hồng theo người quản lý SP · SP mới 1% · SP cũ 0.7% (Doanh thu − Giá vốn)</p>
+    </div>
+    <div class="ctrl">
+      <label>Tháng</label><input type="month" id="month">
+    </div>
+    <button class="btn" id="refreshBtn">Xem</button>
+    <a href="/" class="link navfull">← Dashboard</a>
+    <a href="/salary.html" class="link navfull">Lương Marketing</a>
+    <a href="/logout" class="link">Đăng xuất</a>
+  </div>
+</header>
+
+<main>
+  <div class="legend">
+    <span>📅 <b>SP mới</b>: đăng ≤ 2 tháng → hoa hồng <b>1%</b></span>
+    <span>📦 <b>SP cũ</b>: đăng > 2 tháng → hoa hồng <b>0.7%</b></span>
+    <span>⛔ <b>Không ngày đăng</b>: không tính lương</span>
+  </div>
+  <div class="status" id="status">Đang tải…</div>
+  <table id="tbl">
+    <thead>
+      <tr>
+        <th>Người quản lý SP</th>
+        <th class="num">Số SP</th>
+        <th class="num">SP mới</th>
+        <th class="num">SP cũ</th>
+        <th class="num">Doanh thu</th>
+        <th class="num">Giá vốn</th>
+        <th class="num">Lợi nhuận</th>
+        <th class="num">Hoa hồng</th>
+      </tr>
+    </thead>
+    <tbody id="rows"></tbody>
+  </table>
+</main>
+
+<script>
+const vnd = n => (Math.round(Number(n)||0)).toLocaleString('vi-VN');
+const $ = id => document.getElementById(id);
+const esc = s => String(s==null?'':s).replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+const pct = n => (Number(n)*100).toFixed(1)+'%';
+
+// Mặc định tháng trước (hoặc tháng hiện tại)
+const now = new Date();
+$('month').value = `${now.getFullYear()}-${String(now.getMonth()+1).padStart(2,'0')}`;
+
+let DATA = { managers: [], products: [], total: {} };
+let expanded = {};
+
+function monthRange(ym){
+  const [y,m] = ym.split('-').map(Number);
+  const since = `${y}-${String(m).padStart(2,'0')}-01`;
+  const last = new Date(y, m, 0).getDate();
+  const until = `${y}-${String(m).padStart(2,'0')}-${String(last).padStart(2,'0')}`;
+  return { since, until };
+}
+
+function render(){
+  const tb = $('rows');
+  const mgrs = DATA.managers || [];
+  if(!mgrs.length){ tb.innerHTML = '<tr><td colspan="8" class="empty">Không có dữ liệu trong tháng này.</td></tr>'; return; }
+  let html = '';
+  mgrs.forEach((m, idx) => {
+    const isOpen = expanded[m.manager];
+    html += `<tr>
+      <td><button class="expand-btn" onclick="toggle('${esc(m.manager)}')">${isOpen?'−':'+'}</button><b>${esc(m.manager)}</b></td>
+      <td class="num">${vnd(m.soSP)}</td>
+      <td class="num moi">${vnd(m.soSPmoi)}</td>
+      <td class="num cu">${vnd(m.soSPcu)}</td>
+      <td class="num">${vnd(m.doanhThu)}</td>
+      <td class="num muted">${vnd(m.giaVon)}</td>
+      <td class="num">${vnd(m.loiNhuan)}</td>
+      <td class="num hh">${vnd(m.hoaHong)} ₫</td>
+    </tr>`;
+    // Chi tiết SP của người này
+    if(isOpen){
+      const prods = (DATA.products||[]).filter(p => p.manager === m.manager)
+        .sort((a,b)=>b.hoaHong-a.hoaHong);
+      prods.forEach(p => {
+        const chip = p.loai==='moi' ? '<span class="chip chip-moi">SP mới 1%</span>'
+                   : p.loai==='cu' ? '<span class="chip chip-cu">SP cũ 0.7%</span>'
+                   : '<span class="chip chip-khong">không tính</span>';
+        html += `<tr class="detail-row">
+          <td style="padding-left:46px;">${esc(p.product)} ${chip}<br>
+            <span class="muted" style="font-size:11px;">Ngày đăng: ${p.ngayDang||'(trống)'} · SL bán: ${vnd(p.soLuongSP)} · giá nhập: ${vnd(p.giaNhap)}</span></td>
+          <td></td><td></td><td></td>
+          <td class="num">${vnd(p.doanhThu)}</td>
+          <td class="num muted">${vnd(p.giaVon)}</td>
+          <td class="num">${vnd(p.loiNhuan)}</td>
+          <td class="num ${p.loai==='khong-tinh'?'khong':'hh'}">${p.hoaHong>0?vnd(p.hoaHong)+' ₫':'–'}</td>
+        </tr>`;
+      });
+    }
+  });
+  const t = DATA.total || {};
+  html += `<tr class="total">
+    <td>Tổng (${mgrs.length} người)</td>
+    <td class="num">${vnd(t.soSP)}</td>
+    <td class="num"></td><td class="num"></td>
+    <td class="num">${vnd(t.doanhThu)}</td>
+    <td class="num">${vnd(t.giaVon)}</td>
+    <td class="num">${vnd(t.loiNhuan)}</td>
+    <td class="num hh">${vnd(t.hoaHong)} ₫</td>
+  </tr>`;
+  tb.innerHTML = html;
+}
+
+function toggle(mgr){ expanded[mgr] = !expanded[mgr]; render(); }
+
+async function load(){
+  const ym = $('month').value;
+  if(!ym) return;
+  const { since, until } = monthRange(ym);
+  $('refreshBtn').disabled = true;
+  $('status').innerHTML = '<span class="warn">⏳ Đang tải báo cáo sản phẩm…</span>';
+  try{
+    const res = await fetch(`/api/salary-product/report?since=${since}&until=${until}`);
+    if(res.status===401){ location.href='/login'; return; }
+    const d = await res.json();
+    if(!d.ok){
+      $('status').innerHTML = '<span class="err">❌ Lỗi: '+esc(d.message||'không lấy được báo cáo')+'</span>';
+      $('rows').innerHTML='';
+    } else {
+      DATA = d;
+      render();
+      let note = `✓ Cập nhật ${new Date(d.lastUpdated).toLocaleString('vi-VN')} · tháng ${ym}`;
+      note += ` · mốc phân loại mới/cũ: ${d.mocPhanLoai}`;
+      if(!d.ownersCount) note += ' · ⚠ chưa đọc được Google Sheet';
+      $('status').innerHTML = '<span class="ok">'+note+'</span>';
+    }
+  }catch(e){ $('status').innerHTML = '<span class="err">❌ Không kết nối được máy chủ: '+esc(e.message)+'</span>'; }
+  finally{ $('refreshBtn').disabled = false; }
+}
+
+$('refreshBtn').addEventListener('click', load);
+$('month').addEventListener('change', load);
+
+// Ẩn nav nếu là tài khoản product
+fetch('/api/me').then(r=>r.ok?r.json():null).then(me=>{
+  if(me && me.role==='product'){
+    document.querySelectorAll('.navfull').forEach(el=>el.style.display='none');
+    const sub=document.querySelector('.sub');
+    if(sub) sub.textContent='Sản phẩm của: '+(me.manager||me.user);
+  }
+}).catch(()=>{});
+
+load();
+</script>
+</body>
+</html>
