@@ -111,7 +111,13 @@ const num=v=>{const n=parseInt(String(v==null?'':v).replace(/[^\d-]/g,''),10);re
 const CH=[{id:'thailan',label:'Thái Lan'},{id:'pushsale',label:'Pushsale'},{id:'san',label:'Sàn TMĐT'}];
 const MET=[{id:'dt',label:'Doanh thu'},{id:'qc',label:'Chi phí QC'},{id:'gv',label:'Giá vốn'},{id:'ship',label:'Phí ship'}];
 const AUTOFIELD={dt:'doanhthu',qc:'chiPhiQC',gv:'giaVon',ship:'phiShip'};
-let TYLE=0.02, AUTO=[], MAN={}, ROSTER=[], LIST=[], HHLEAD={}, TEAM_LEAD={};
+let TYLE=0.02, AUTO=[], MAN={}, ROSTER=[], LIST=[], HHLEAD={};
+// Cấu hình team mặc định (phòng khi server chưa gửi teamLead)
+const TEAM_LEAD_DEFAULT={
+  'Trịnh Đức Phương':['Đoàn Việt Hà','Nguyễn Duy Huân','Vũ Thuý An'],
+  'Tạ Quang Trường':['Nguyễn Thị Trà My','Dương Văn Minh','Lê Thị Ánh'],
+};
+let TEAM_LEAD=TEAM_LEAD_DEFAULT;
 // Tính Thưởng DTT phía client — cùng công thức với server
 // DTT = Doanh thu - Giá vốn - Phí ship (KHÔNG trừ chi phí QC)
 const DTT_BRACKETS=[
@@ -164,7 +170,7 @@ async function load(){
     // thuongDTT và thuongTop1 sẽ tính lại phía client trong recomputeAll
     // Chỉ giữ lại thuongNgayTuan (nhập tay) từ manual data
     Object.values(MAN).forEach(m=>{ m.thuongDTT=0; m.thuongTop1=0; m.thuong=+m.thuongNgayTuan||0; });
-    HHLEAD={}; AUTO_THUONG={}; TEAM_LEAD=d.teamLead||{};
+    HHLEAD={}; AUTO_THUONG={}; TEAM_LEAD=(d.teamLead&&Object.keys(d.teamLead).length)?d.teamLead:TEAM_LEAD_DEFAULT;
     (d.rows||[]).forEach(r=>{
       if(r.hoaHongLeader) HHLEAD[normKey(r.name)]=r.hoaHongLeader;
       AUTO_THUONG[normKey(r.name)]={ thuongDTT: r.thuongDTT||0, thuongTop1: r.thuongTop1||0, dtt: r.dtt||0 };
@@ -274,6 +280,9 @@ function recompute(i){
     if(card)card.className='chcard'+(has?' has':''); if(bd)bd.style.display=has?'':'none';
     if(has)chips+='<span class="chip">'+c.label+'</span>';});
   $('bdg-'+i).innerHTML=chips;
+  // Cập nhật nút Thưởng (hiển thị tổng thưởng đã gồm DTT + Top1 + Ngày/Tuần)
+  const tbtn=$('tb-'+i);
+  if(tbtn){ tbtn.textContent=m.thuong>0?vnd(m.thuong)+' ₫':'–'; tbtn.className='thuong-btn'+(m.thuong>0?' has-data':''); }
   emp._c={DT,QC,GV,SHIP,l2,hl,lc:m.luongCung,th:m.thuong,ph:m.phat,bh:m.bhxh,tn:tnWithHl};
 }
 function updateTotals(){
@@ -289,17 +298,20 @@ function recomputeAll(){
   LIST.forEach((_,i)=>recompute(i));
 
   // Bước 2: tính HH Leader theo lương 2% THỰC TẾ của nhân viên trong nhóm
-  // map tên đầy đủ -> lương 2% thực tế (từ emp._c.l2)
+  // map normKey(tên) -> lương 2% thực tế
   const l2ByName={};
   LIST.forEach(emp=>{ l2ByName[normKey(emp.name)]=emp._c?emp._c.l2:0; });
+  // Chuẩn hoá TEAM_LEAD theo normKey để khớp chắc chắn
+  const teamByKey={};
+  Object.keys(TEAM_LEAD).forEach(lead=>{ teamByKey[normKey(lead)]=TEAM_LEAD[lead]; });
   // Với mỗi team lead, cộng ½ tổng lương 2% nhân viên trong nhóm
   LIST.forEach((emp,i)=>{
-    const members=TEAM_LEAD[emp.name];
+    const members=teamByKey[normKey(emp.name)];
     if(!members) return;
     let tong=0;
     members.forEach(name=>{ tong+=l2ByName[normKey(name)]||0; });
     manOf(emp.key)._hhLeader=Math.round(tong/2);
-    recompute(i); // vẽ lại HH Leader + thực nhận cho leader
+    recompute(i);
   });
 
   // Bước 3: xác định Top 1 — người có lương 2% cao nhất (duy nhất)
