@@ -1133,6 +1133,44 @@ app.get('/api/products/report', async (req, res) => {
 const HH_SP_MOI = Number(process.env.HH_SP_MOI || 0.01);   // 1%
 const HH_SP_CU  = Number(process.env.HH_SP_CU  || 0.007);  // 0.7%
 
+// BHXH mặc định cho nhân viên phát triển SP (theo tên Quản Lý trong Sheet)
+const PTSP_BHXH = {
+  'Đào Trung Kiên':    630000,
+  'Nguyễn Huyền Trang': 577500,
+};
+
+// Dữ liệu nhập tay cho lương PTSP (thưởng/phạt) — lưu theo tháng, trong DATA_DIR
+const PTSP_MANUAL_FILE = path.join(DATA_DIR, 'salary-product-manual.json');
+let PTSP_MANUAL = {};
+try { PTSP_MANUAL = JSON.parse(fs.readFileSync(PTSP_MANUAL_FILE, 'utf8')); } catch { PTSP_MANUAL = {}; }
+function savePtspManual() { try { fs.writeFileSync(PTSP_MANUAL_FILE, JSON.stringify(PTSP_MANUAL)); } catch (e) {} }
+
+// API lấy/lưu dữ liệu tay cho lương PTSP
+app.get('/api/salary-product/manual', (req, res) => {
+  const month = req.query.month || '';
+  const raw = PTSP_MANUAL[month] || {};
+  // Điền BHXH mặc định cho từng người
+  const data = {};
+  for (const [k, v] of Object.entries(raw)) data[k] = { ...v };
+  for (const [name, bhxh] of Object.entries(PTSP_BHXH)) {
+    const k = normProd(name);
+    if (!data[k]) data[k] = { name, thuongSP: 0, thuongThang: 0, phat: 0, bhxh };
+    else if (!data[k].bhxh) data[k].bhxh = bhxh;
+  }
+  res.json({ month, data });
+});
+
+app.post('/api/salary-product/manual', express.json(), (req, res) => {
+  const { month, key, field, value } = req.body || {};
+  if (!month || !key || !field) return res.json({ ok: false, message: 'Thiếu tham số' });
+  if (!PTSP_MANUAL[month]) PTSP_MANUAL[month] = {};
+  if (!PTSP_MANUAL[month][key]) PTSP_MANUAL[month][key] = {};
+  const num = parseInt(String(value == null ? '' : value).replace(/[^\d]/g, ''), 10) || 0;
+  PTSP_MANUAL[month][key][field] = num;
+  savePtspManual();
+  res.json({ ok: true });
+});
+
 app.get('/api/salary-product/report', async (req, res) => {
   const today = new Date().toISOString().slice(0, 10);
   const since = req.query.since || today;
@@ -1207,6 +1245,10 @@ app.get('/api/salary-product/report', async (req, res) => {
       m.hoaHong += p.hoaHong;
     }
 
+    // Gắn BHXH mặc định vào từng manager
+    for (const m of Object.values(byManager)) {
+      m.bhxh = PTSP_BHXH[m.manager] || 0;
+    }
     const managers = Object.values(byManager).sort((a, b) => b.hoaHong - a.hoaHong);
     const total = managers.reduce((s, m) => ({
       soSP: s.soSP + m.soSP, soDon: s.soDon + m.soDon, soLuongSP: s.soLuongSP + m.soLuongSP,
