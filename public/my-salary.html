@@ -1,0 +1,146 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Lương của tôi — TDMJSC</title>
+<style>
+  *{box-sizing:border-box;}
+  body{margin:0;font-family:'Inter',system-ui,sans-serif;background:#0B1322;color:#E7EEF8;}
+  header{background:#10192B;border-bottom:1px solid rgba(255,255,255,.07);padding:14px 18px;}
+  .top{display:flex;align-items:center;gap:12px;flex-wrap:wrap;}
+  h1{font-size:17px;margin:0;}
+  .sub{color:#9FB0C8;font-size:12px;margin:2px 0 0;font-weight:400;}
+  select.pick{font-family:'Inter';font-size:13px;color:#fff;background:rgba(255,255,255,.06);border:1px solid rgba(255,255,255,.10);padding:9px 12px;border-radius:9px;outline:none;cursor:pointer;color-scheme:dark;}
+  .link{color:#C4D0E2;font-size:13px;text-decoration:none;border:1px solid rgba(255,255,255,.14);padding:7px 12px;border-radius:9px;white-space:nowrap;}
+  .link:hover{background:rgba(255,255,255,.08);color:#fff;}
+  main{padding:18px;max-width:560px;margin:0 auto;}
+  .status{font-size:13px;color:#9FB0C8;margin:4px 0 16px;min-height:18px;text-align:center;}
+  .status .err{color:#ff9b8a;}
+  .card{background:#101B2E;border:1px solid rgba(255,255,255,.07);border-radius:16px;padding:24px;margin-bottom:16px;}
+  .card h2{font-size:16px;margin:0 0 4px;}
+  .card .who{color:#9FB0C8;font-size:13px;margin-bottom:18px;}
+  .line{display:flex;justify-content:space-between;align-items:center;padding:11px 0;border-bottom:1px solid rgba(255,255,255,.05);font-size:14px;}
+  .line:last-of-type{border-bottom:none;}
+  .line .lbl{color:#9FB0C8;}
+  .line .val{font-variant-numeric:tabular-nums;font-weight:600;}
+  .line .val.neg{color:#ff9b8a;}
+  .line .val.pos{color:#7BE3B5;}
+  .divider{height:1px;background:rgba(255,255,255,.1);margin:14px 0;}
+  .thuc{background:linear-gradient(135deg,rgba(123,227,181,.12),rgba(61,90,254,.08));border:1px solid rgba(123,227,181,.25);border-radius:12px;padding:18px;text-align:center;margin-top:18px;}
+  .thuc .lbl{color:#9FB0C8;font-size:12px;text-transform:uppercase;letter-spacing:.04em;}
+  .thuc .big{font-size:30px;font-weight:800;color:#7BE3B5;margin-top:6px;letter-spacing:-.5px;}
+  .empty{padding:40px;text-align:center;color:#6B7C97;}
+  .sec-title{font-size:11px;color:#6B7C97;text-transform:uppercase;letter-spacing:.05em;margin:16px 0 4px;font-weight:700;}
+</style>
+</head>
+<body>
+<header>
+  <div class="top">
+    <div style="flex:1;min-width:160px;">
+      <h1>💰 Lương của tôi</h1>
+      <p class="sub" id="sub">Bảng lương đã được công khai</p>
+    </div>
+    <select class="pick" id="monthPick"><option>Đang tải…</option></select>
+    <a href="/logout" class="link">Đăng xuất</a>
+  </div>
+</header>
+
+<main>
+  <div class="status" id="status"></div>
+  <div id="content"></div>
+</main>
+
+<script>
+const $=id=>document.getElementById(id);
+const vnd=n=>(Math.round(Number(n)||0)).toLocaleString('vi-VN');
+const esc=s=>String(s==null?'':s).replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+let MONTHS=[];
+
+async function loadMonths(){
+  try{
+    const r=await fetch('/api/my-salary/months');
+    if(r.status===401){location.href='/login';return;}
+    const d=await r.json();
+    MONTHS=d.months||[];
+    if(!MONTHS.length){
+      $('monthPick').innerHTML='<option>Chưa có</option>';
+      $('content').innerHTML='<div class="empty">Chưa có bảng lương nào được công khai cho bạn.</div>';
+      return;
+    }
+    $('monthPick').innerHTML=MONTHS.map(m=>{
+      const label=(m.type==='ptsp'?'PTSP ':'')+'Tháng '+m.month;
+      return `<option value="${esc(m.key)}">${label}</option>`;
+    }).join('');
+    loadDetail(MONTHS[0].key);
+  }catch(e){ $('status').innerHTML='<span class="err">Lỗi tải dữ liệu</span>'; }
+}
+
+async function loadDetail(key){
+  $('content').innerHTML='<div class="empty">Đang tải…</div>';
+  try{
+    const r=await fetch('/api/my-salary/detail?key='+encodeURIComponent(key));
+    const d=await r.json();
+    if(!d.ok){ $('content').innerHTML='<div class="empty">'+esc(d.message||'Không có dữ liệu')+'</div>'; return; }
+    render(d);
+  }catch(e){ $('content').innerHTML='<div class="empty">Lỗi tải dữ liệu</div>'; }
+}
+
+function render(d){
+  if(!d.rows||!d.rows.length){ $('content').innerHTML='<div class="empty">Không có dữ liệu của bạn trong tháng này.</div>'; return; }
+  let html='';
+  d.rows.forEach(row=>{
+    if(d.type==='ptsp') html+=cardPtsp(row,d.month);
+    else html+=cardMkt(row,d.month);
+  });
+  $('content').innerHTML=html;
+}
+
+function line(lbl,val,cls){ return `<div class="line"><span class="lbl">${esc(lbl)}</span><span class="val ${cls||''}">${val}</span></div>`; }
+
+function cardMkt(row,month){
+  const e=row.extra||{};
+  const thuc=(row.luong||0)+(e.hoaHongLeader||0)+(e.luongCung||0)+(e.thuong||0)-(e.phat||0)-(e.bhxh||0);
+  let h=`<div class="card"><h2>Tháng ${esc(month)}</h2><div class="who">${esc(row.name)}</div>`;
+  h+='<div class="sec-title">Kết quả kinh doanh</div>';
+  h+=line('Doanh thu',vnd(row.doanhthu));
+  h+=line('Chi phí QC',vnd(row.chiPhiQC));
+  h+=line('Giá vốn',vnd(row.giaVon));
+  h+=line('Phí ship',vnd(row.phiShip));
+  h+='<div class="sec-title">Lương & phụ cấp</div>';
+  h+=line('Lương 2%',vnd(row.luong),'pos');
+  if(e.hoaHongLeader) h+=line('Hoa hồng Leader',vnd(e.hoaHongLeader),'pos');
+  if(e.luongCung) h+=line('Lương cứng',vnd(e.luongCung));
+  if(e.thuong) h+=line('Thưởng',vnd(e.thuong),'pos');
+  if(e.phat) h+=line('Phạt','-'+vnd(e.phat),'neg');
+  if(e.bhxh) h+=line('BHXH','-'+vnd(e.bhxh),'neg');
+  h+=`<div class="thuc"><div class="lbl">Thực nhận</div><div class="big">${vnd(thuc)} ₫</div></div>`;
+  h+='</div>';
+  return h;
+}
+
+function cardPtsp(row,month){
+  const thuc=(row.hoaHong||0)+(row.luongCung||0)+(row.thuong||0)-(row.phat||0)-(row.bhxh||0);
+  let h=`<div class="card"><h2>Tháng ${esc(month)} · PTSP</h2><div class="who">${esc(row.manager)}</div>`;
+  h+='<div class="sec-title">Kết quả</div>';
+  h+=line('Số SP',vnd(row.soSP)+' (mới '+vnd(row.soSPmoi)+', cũ '+vnd(row.soSPcu)+')');
+  h+=line('Đơn ship',vnd(row.soDon));
+  h+=line('SL ship',vnd(row.soLuongSP));
+  h+=line('Doanh thu',vnd(row.doanhThu));
+  h+=line('Giá vốn',vnd(row.giaVon));
+  h+='<div class="sec-title">Lương & phụ cấp</div>';
+  h+=line('Hoa hồng',vnd(row.hoaHong),'pos');
+  if(row.luongCung) h+=line('Lương cứng',vnd(row.luongCung));
+  if(row.thuong) h+=line('Thưởng',vnd(row.thuong),'pos');
+  if(row.phat) h+=line('Phạt','-'+vnd(row.phat),'neg');
+  if(row.bhxh) h+=line('BHXH','-'+vnd(row.bhxh),'neg');
+  h+=`<div class="thuc"><div class="lbl">Thực nhận</div><div class="big">${vnd(thuc)} ₫</div></div>`;
+  h+='</div>';
+  return h;
+}
+
+$('monthPick').addEventListener('change',e=>loadDetail(e.target.value));
+loadMonths();
+</script>
+</body>
+</html>

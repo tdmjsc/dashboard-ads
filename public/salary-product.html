@@ -70,6 +70,7 @@
       <label>Tháng</label><input type="month" id="month">
     </div>
     <button class="btn" id="refreshBtn">Xem</button>
+    <button class="btn" id="publishBtn" style="background:#7BE3B5;color:#0B1322;">📤 Công khai lương</button>
     <a href="/" class="link navfull">← Dashboard</a>
     <a href="/salary.html" class="link navfull">Lương Marketing</a>
     <a href="/logout" class="link">Đăng xuất</a>
@@ -304,6 +305,41 @@ fetch('/api/me').then(r=>r.ok?r.json():null).then(me=>{
 }).catch(()=>{});
 
 load();
+
+// ─── Công khai lương PTSP qua Telegram ───
+$('publishBtn').addEventListener('click', async ()=>{
+  const ym=$('month').value;
+  if(!ym) return;
+  if(!confirm('Công khai bảng lương PTSP tháng '+ym+'?\n\nMỗi nhân viên sẽ nhận bảng lương riêng qua Telegram.')) return;
+  $('publishBtn').disabled=true; $('publishBtn').textContent='⏳ Đang gửi…';
+  const rows=(DATA.managers||[]).map(m=>{
+    const man=manOf(m.manager);
+    const thuong=(+man.thuongSP||0)+(+man.thuongThang||0);
+    return {
+      manager:m.manager, soSP:m.soSP, soSPmoi:m.soSPmoi, soSPcu:m.soSPcu,
+      soDon:m.soDon, soLuongSP:m.soLuongSP, doanhThu:m.doanhThu, giaVon:m.giaVon,
+      hoaHong:m.hoaHong, luongCung:(+man.luongCung||0), thuong, phat:(+man.phat||0), bhxh:(+man.bhxh||0)
+    };
+  });
+  try{
+    const res=await fetch('/api/salary-product/publish',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({month:ym,rows})});
+    const d=await res.json();
+    if(!d.ok){ alert('❌ '+(d.message||'Không gửi được')); }
+    else{
+      const ok=d.results.filter(r=>r.ok).length;
+      const fail=d.results.filter(r=>!r.ok);
+      let msg='✅ Đã gửi '+ok+'/'+d.results.length+' bảng lương.';
+      if(fail.length) msg+='\n\nChưa gửi được:\n'+fail.map(f=>'• '+f.name+' ('+f.reason+')').join('\n');
+      alert(msg);
+    }
+  }catch(e){ alert('❌ Lỗi: '+e.message); }
+  finally{ $('publishBtn').disabled=false; $('publishBtn').textContent='📤 Công khai lương'; }
+});
+// Ẩn nút nếu không phải admin
+fetch('/api/me').then(r=>r.ok?r.json():null).then(me=>{
+  if(!me||me.role!=='admin'){ const b=$('publishBtn'); if(b)b.style.display='none'; }
+}).catch(()=>{});
+
 </script>
 </body>
 </html>

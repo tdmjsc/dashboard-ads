@@ -81,6 +81,7 @@
     </div>
     <div class="ctrl"><label>Tháng</label><input type="month" id="month" value="2026-05"></div>
     <button class="btn" id="refreshBtn">Xem</button>
+    <button class="btn" id="publishBtn" style="background:#7BE3B5;color:#0B1322;">📤 Công khai lương</button>
     <a href="/" class="link">← Dashboard</a>
     <a href="/salary-product.html" class="link">Lương PTSP</a>
     <a href="/logout" class="link">Đăng xuất</a>
@@ -390,6 +391,46 @@ document.addEventListener('click',e=>{
 $('refreshBtn').addEventListener('click',()=>{$('status').removeAttribute('data-base');load();});
 $('month').addEventListener('change',()=>{$('status').removeAttribute('data-base');load();});
 load();
+
+// ─── Công khai lương qua Telegram ───
+$('publishBtn').addEventListener('click', async ()=>{
+  const month=$('month').value;
+  if(!month) return;
+  if(!confirm('Công khai bảng lương tháng '+month+'?\n\nMỗi nhân viên sẽ nhận bảng lương riêng qua Telegram. Hành động này không thể hoàn tác.')) return;
+  $('publishBtn').disabled=true;
+  $('publishBtn').textContent='⏳ Đang gửi…';
+  // Soạn dữ liệu từng người (gồm các khoản đã tính client)
+  const rows=LIST.filter(e=>e.name!=='Admin').map(e=>{
+    const m=manOf(e.key), c=e._c||{};
+    const auto=AUTO.find(r=>normKey(r.name)===e.key)||{};
+    return {
+      name:e.name,
+      doanhthu:c.DT||0, chiPhiQC:c.QC||0, giaVon:c.GV||0, phiShip:c.SHIP||0,
+      luong:c.l2||0,
+      extra:{ hoaHongLeader:m._hhLeader||0, luongCung:m.luongCung||0, thuong:m.thuong||0, phat:m.phat||0, bhxh:m.bhxh||0 }
+    };
+  });
+  try{
+    const res=await fetch('/api/salary/publish',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({month,rows})});
+    const d=await res.json();
+    if(!d.ok){ alert('❌ '+(d.message||'Không gửi được')); }
+    else{
+      const ok=d.results.filter(r=>r.ok).length;
+      const fail=d.results.filter(r=>!r.ok);
+      let msg='✅ Đã gửi '+ok+'/'+d.results.length+' bảng lương.';
+      if(fail.length) msg+='\n\nChưa gửi được:\n'+fail.map(f=>'• '+f.name+' ('+f.reason+')').join('\n');
+      alert(msg);
+    }
+  }catch(e){ alert('❌ Lỗi: '+e.message); }
+  finally{ $('publishBtn').disabled=false; $('publishBtn').textContent='📤 Công khai lương'; }
+});
+
+
+// Ẩn nút Công khai nếu không phải admin
+fetch('/api/me').then(r=>r.ok?r.json():null).then(me=>{
+  if(!me||me.role!=='admin'){ const b=$('publishBtn'); if(b)b.style.display='none'; }
+}).catch(()=>{});
+
 </script>
 </body>
 </html>
