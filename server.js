@@ -1160,6 +1160,7 @@ app.get('/api/salary-product/report', async (req, res) => {
       const name = String(pick(o, ['tenSanPham', 'tenSp', 'sanPham', 'name']) || '').trim();
       const doanhThu = +pick(o, ['doanhSo', 'doanhThu', 'tongDoanhSo']) || 0;
       const soLuongSP = +pick(o, ['soLuongSanPham', 'soLuongSP', 'soLuong']) || 0;
+      const soDon = +pick(o, ['soLuongChotDon', 'soLuongChotDonThucTe', 'soDonChot', 'soDonHang', 'soDon']) || 0;
       const own = owners[normProd(name)];
       const manager = own ? own.manager : '';
       const giaNhap = own ? (own.giaNhap || 0) : 0;
@@ -1178,7 +1179,7 @@ app.get('/api/salary-product/report', async (req, res) => {
       }
       const hoaHong = Math.round(loiNhuan * tyLe);
 
-      return { product: name, manager, doanhThu, soLuongSP, giaNhap, giaVon, loiNhuan, ngayDang, loai, tyLe, hoaHong };
+      return { product: name, manager, doanhThu, soLuongSP, soDon, giaNhap, giaVon, loiNhuan, ngayDang, loai, tyLe, hoaHong };
     }).filter(p => p.product);
 
     // Quyền: tài khoản "product" chỉ thấy SP của mình
@@ -1193,11 +1194,13 @@ app.get('/api/salary-product/report', async (req, res) => {
     const byManager = {};
     for (const p of visible) {
       const mgr = p.manager || '(chưa gán)';
-      if (!byManager[mgr]) byManager[mgr] = { manager: mgr, soSP: 0, soSPmoi: 0, soSPcu: 0, doanhThu: 0, giaVon: 0, loiNhuan: 0, hoaHong: 0 };
+      if (!byManager[mgr]) byManager[mgr] = { manager: mgr, soSP: 0, soSPmoi: 0, soSPcu: 0, soDon: 0, soLuongSP: 0, doanhThu: 0, giaVon: 0, loiNhuan: 0, hoaHong: 0 };
       const m = byManager[mgr];
       m.soSP++;
       if (p.loai === 'moi') m.soSPmoi++;
       else if (p.loai === 'cu') m.soSPcu++;
+      m.soDon += p.soDon;
+      m.soLuongSP += p.soLuongSP;
       m.doanhThu += p.doanhThu;
       m.giaVon += p.giaVon;
       m.loiNhuan += p.loiNhuan;
@@ -1206,9 +1209,10 @@ app.get('/api/salary-product/report', async (req, res) => {
 
     const managers = Object.values(byManager).sort((a, b) => b.hoaHong - a.hoaHong);
     const total = managers.reduce((s, m) => ({
-      soSP: s.soSP + m.soSP, doanhThu: s.doanhThu + m.doanhThu,
-      giaVon: s.giaVon + m.giaVon, loiNhuan: s.loiNhuan + m.loiNhuan, hoaHong: s.hoaHong + m.hoaHong,
-    }), { soSP: 0, doanhThu: 0, giaVon: 0, loiNhuan: 0, hoaHong: 0 });
+      soSP: s.soSP + m.soSP, soDon: s.soDon + m.soDon, soLuongSP: s.soLuongSP + m.soLuongSP,
+      doanhThu: s.doanhThu + m.doanhThu, giaVon: s.giaVon + m.giaVon,
+      loiNhuan: s.loiNhuan + m.loiNhuan, hoaHong: s.hoaHong + m.hoaHong,
+    }), { soSP: 0, soDon: 0, soLuongSP: 0, doanhThu: 0, giaVon: 0, loiNhuan: 0, hoaHong: 0 });
 
     res.json({
       ok: true, since, until,
