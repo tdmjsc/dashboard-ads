@@ -1397,9 +1397,27 @@ app.get('/api/salary/debug', async (req, res) => {
 // ===== Dữ liệu NHẬP TAY cho bảng lương (lưu theo tháng + nhân viên) =====
 // Cấu trúc: { name, channels:{ thailan:{dt,qc,gv,ship}, pushsale:{...}, san:{...} },
 //            luongCung, thuong, phat, bhxh }
-const MANUAL_FILE = path.join(__dirname, 'salary-manual.json');
+//
+// QUAN TRỌNG: Dữ liệu lưu ở thư mục NGOÀI project (DATA_DIR) để KHÔNG bị mất
+// khi deploy/ghi đè thư mục nodejs. __dirname = .../ads.tdmjsc.com/nodejs
+// nên ../../../data = /home/u422036594/data. Có thể đổi qua .env DATA_DIR.
+const DATA_DIR = process.env.DATA_DIR || path.join(__dirname, '..', '..', '..', 'data');
+try { fs.mkdirSync(DATA_DIR, { recursive: true }); } catch (e) {}
+
+const MANUAL_FILE = path.join(DATA_DIR, 'salary-manual.json');
+const OLD_MANUAL_FILE = path.join(__dirname, 'salary-manual.json');
+
 let SALARY_MANUAL = {};
-try { SALARY_MANUAL = JSON.parse(fs.readFileSync(MANUAL_FILE, 'utf8')); } catch { SALARY_MANUAL = {}; }
+try {
+  // Ưu tiên đọc dữ liệu từ DATA_DIR (chỗ an toàn)
+  SALARY_MANUAL = JSON.parse(fs.readFileSync(MANUAL_FILE, 'utf8'));
+} catch {
+  // Lần đầu chưa có ở DATA_DIR: thử lấy từ file cũ trong project rồi copy sang
+  try {
+    SALARY_MANUAL = JSON.parse(fs.readFileSync(OLD_MANUAL_FILE, 'utf8'));
+    fs.writeFileSync(MANUAL_FILE, JSON.stringify(SALARY_MANUAL));
+  } catch { SALARY_MANUAL = {}; }
+}
 function saveManual() { try { fs.writeFileSync(MANUAL_FILE, JSON.stringify(SALARY_MANUAL)); } catch (e) {} }
 const SALARY_CHANNELS = ['thailan', 'pushsale', 'san'];
 const CH_METRICS = ['dt', 'qc', 'gv', 'ship'];
