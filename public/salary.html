@@ -144,7 +144,7 @@ function monthRange(m){const [y,mo]=m.split('-').map(Number);const since=`${y}-$
 function blankCh(){return {dt:0,qc:0,gv:0,ship:0};}
 function manOf(name){
   const k=normKey(name); let o=MAN[k]||{};
-  o={name:o.name||name, channels:o.channels||{}, luongCung:+o.luongCung||0, thuong:+o.thuong||0, thuongDTT:+o.thuongDTT||0, thuongNgayTuan:+o.thuongNgayTuan||0, thuongTop1:+o.thuongTop1||0, phat:+o.phat||0, bhxh:+o.bhxh||0};
+  o={name:o.name||name, channels:o.channels||{}, luongCung:+o.luongCung||0, thuong:+o.thuong||0, thuongDTT:+o.thuongDTT||0, thuongNgayTuan:+o.thuongNgayTuan||0, thuongTop1:+o.thuongTop1||0, phat:+o.phat||0, bhxh:+o.bhxh||0, _hhLeader:+o._hhLeader||0};
   CH.forEach(c=>{o.channels[c.id]={...blankCh(),...(o.channels[c.id]||{})};});
   MAN[k]=o; return o;
 }
