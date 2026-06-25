@@ -40,6 +40,22 @@
   .empty{padding:30px;text-align:center;color:#6B7C97;font-size:14px;}
   .legend{display:flex;gap:16px;flex-wrap:wrap;font-size:12px;color:#9FB0C8;margin-bottom:14px;}
   .legend b{color:#E7EEF8;}
+  .cell-inp{font-family:inherit;font-size:12.5px;color:#fff;background:rgba(255,255,255,.06);border:1px solid rgba(255,255,255,.12);border-radius:6px;padding:5px 7px;text-align:right;outline:none;width:96px;font-variant-numeric:tabular-nums;}
+  .cell-inp:focus{border-color:#3D5AFE;background:rgba(61,90,254,.08);}
+  .thuc-nhan{color:#ffc56b;font-weight:700;font-variant-numeric:tabular-nums;}
+  .bhxh-val{color:#ff9b8a;font-variant-numeric:tabular-nums;}
+  /* Popup thưởng */
+  .tw{position:relative;display:inline-block;}
+  .tw-btn{font-family:inherit;font-size:12.5px;color:#fff;background:rgba(255,255,255,.05);border:1px solid rgba(255,255,255,.12);border-radius:6px;padding:5px 8px;cursor:pointer;min-width:96px;text-align:right;font-variant-numeric:tabular-nums;}
+  .tw-btn:hover{border-color:#3D5AFE;}
+  .tw-btn.has{border-color:rgba(255,196,107,.4);color:#ffc56b;}
+  .tw-pop{display:none;position:absolute;right:0;top:110%;z-index:50;background:#16233A;border:1px solid rgba(61,90,254,.5);border-radius:10px;padding:12px;min-width:230px;box-shadow:0 8px 24px rgba(0,0,0,.5);}
+  .tw-pop.open{display:block;}
+  .tw-pop .tp-t{font-size:11px;font-weight:700;color:#9FB0C8;text-transform:uppercase;margin-bottom:10px;}
+  .tw-pop .tp-r{display:flex;align-items:center;justify-content:space-between;gap:8px;margin-bottom:8px;}
+  .tw-pop .tp-l{font-size:12px;color:#C4D0E2;white-space:nowrap;}
+  .tw-pop input{font-family:inherit;font-size:12.5px;color:#fff;background:rgba(255,255,255,.06);border:1px solid rgba(255,255,255,.12);border-radius:6px;padding:4px 6px;text-align:right;outline:none;width:110px;}
+  .tw-pop .tp-sum{font-size:12px;color:#ffc56b;font-weight:700;text-align:right;margin-top:8px;border-top:1px solid rgba(255,255,255,.07);padding-top:8px;}
   @media(max-width:680px){ h1{font-size:15px;} th,td{padding:9px 7px;font-size:12px;} .ctrl{flex:1 1 100%;} }
 </style>
 </head>
@@ -79,6 +95,10 @@
         <th class="num">Doanh thu</th>
         <th class="num">Giá vốn</th>
         <th class="num">Hoa hồng</th>
+        <th class="num">Thưởng</th>
+        <th class="num">Phạt</th>
+        <th class="num">BHXH</th>
+        <th class="num">Thực nhận</th>
       </tr>
     </thead>
     <tbody id="rows"></tbody>
@@ -90,6 +110,8 @@ const vnd = n => (Math.round(Number(n)||0)).toLocaleString('vi-VN');
 const $ = id => document.getElementById(id);
 const esc = s => String(s==null?'':s).replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
 const pct = n => (Number(n)*100).toFixed(1)+'%';
+const normKey = s => String(s||'').normalize('NFD').replace(/[\u0300-\u036f]/g,'').replace(/đ/g,'d').replace(/Đ/g,'D').toLowerCase().trim().replace(/\s+/g,' ');
+const manOf = name => { const k=normKey(name); if(!MANUAL[k]) MANUAL[k]={thuongSP:0,thuongThang:0,phat:0,bhxh:0}; return MANUAL[k]; };
 
 // Mặc định tháng trước (hoặc tháng hiện tại)
 const now = new Date();
@@ -97,6 +119,8 @@ $('month').value = `${now.getFullYear()}-${String(now.getMonth()+1).padStart(2,'
 
 let DATA = { managers: [], products: [], total: {} };
 let expanded = {};
+let MANUAL = {};
+let curMonth = '';
 
 function monthRange(ym){
   const [y,m] = ym.split('-').map(Number);
@@ -109,10 +133,14 @@ function monthRange(ym){
 function render(){
   const tb = $('rows');
   const mgrs = DATA.managers || [];
-  if(!mgrs.length){ tb.innerHTML = '<tr><td colspan="9" class="empty">Không có dữ liệu trong tháng này.</td></tr>'; return; }
+  if(!mgrs.length){ tb.innerHTML = '<tr><td colspan="13" class="empty">Không có dữ liệu trong tháng này.</td></tr>'; return; }
   let html = '';
   mgrs.forEach((m, idx) => {
     const isOpen = expanded[m.manager];
+    const man = manOf(m.manager);
+    man.bhxh = man.bhxh || m.bhxh || 0;
+    const thuongTong = (+man.thuongSP||0) + (+man.thuongThang||0);
+    const thucNhan = m.hoaHong + thuongTong - (+man.phat||0) - (+man.bhxh||0);
     html += `<tr>
       <td><button class="expand-btn" onclick="toggle('${esc(m.manager)}')">${isOpen?'−':'+'}</button><b>${esc(m.manager)}</b></td>
       <td class="num">${vnd(m.soSP)}</td>
@@ -123,6 +151,17 @@ function render(){
       <td class="num">${vnd(m.doanhThu)}</td>
       <td class="num muted">${vnd(m.giaVon)}</td>
       <td class="num hh">${vnd(m.hoaHong)} ₫</td>
+      <td class="num"><div class="tw" id="tw-${idx}">
+        <button class="tw-btn ${thuongTong>0?'has':''}" onclick="toggleThuong(${idx},'${esc(m.manager)}')">${thuongTong>0?vnd(thuongTong)+' ₫':'–'}</button>
+        <div class="tw-pop" id="twpop-${idx}">
+          <div class="tp-t">Chi tiết thưởng</div>
+          <div class="tp-r"><span class="tp-l">Thưởng theo SP</span><input inputmode="numeric" data-mgr="${esc(m.manager)}" data-f="thuongSP" placeholder="0"></div>
+          <div class="tp-r"><span class="tp-l">Thưởng theo tháng</span><input inputmode="numeric" data-mgr="${esc(m.manager)}" data-f="thuongThang" placeholder="0"></div>
+          <div class="tp-sum" id="twsum-${idx}">Tổng: 0 ₫</div>
+        </div></div></td>
+      <td class="num"><input class="cell-inp" inputmode="numeric" data-mgr="${esc(m.manager)}" data-f="phat" value="${man.phat?vnd(man.phat):''}" placeholder="0"></td>
+      <td class="num bhxh-val">${vnd(man.bhxh)}</td>
+      <td class="num thuc-nhan">${vnd(thucNhan)} ₫</td>
     </tr>`;
     // Chi tiết SP của người này
     if(isOpen){
@@ -141,9 +180,18 @@ function render(){
           <td class="num">${vnd(p.doanhThu)}</td>
           <td class="num muted">${vnd(p.giaVon)}</td>
           <td class="num ${p.loai==='khong-tinh'?'khong':'hh'}">${p.hoaHong>0?vnd(p.hoaHong)+' ₫':'–'}</td>
+          <td></td><td></td><td></td><td></td>
         </tr>`;
       });
     }
+  });
+  // Tính tổng các cột nhập tay
+  let totThuong=0, totPhat=0, totBhxh=0, totThucNhan=0;
+  mgrs.forEach(m=>{
+    const man=manOf(m.manager);
+    const tt=(+man.thuongSP||0)+(+man.thuongThang||0);
+    totThuong+=tt; totPhat+=(+man.phat||0); totBhxh+=(+man.bhxh||0);
+    totThucNhan+=m.hoaHong+tt-(+man.phat||0)-(+man.bhxh||0);
   });
   const t = DATA.total || {};
   html += `<tr class="total">
@@ -155,6 +203,10 @@ function render(){
     <td class="num">${vnd(t.doanhThu)}</td>
     <td class="num">${vnd(t.giaVon)}</td>
     <td class="num hh">${vnd(t.hoaHong)} ₫</td>
+    <td class="num">${vnd(totThuong)}</td>
+    <td class="num">${vnd(totPhat)}</td>
+    <td class="num bhxh-val">${vnd(totBhxh)}</td>
+    <td class="num thuc-nhan">${vnd(totThucNhan)} ₫</td>
   </tr>`;
   tb.innerHTML = html;
 }
@@ -168,9 +220,14 @@ async function load(){
   $('refreshBtn').disabled = true;
   $('status').innerHTML = '<span class="warn">⏳ Đang tải báo cáo sản phẩm…</span>';
   try{
-    const res = await fetch(`/api/salary-product/report?since=${since}&until=${until}`);
+    curMonth = ym;
+    const [res, manRes] = await Promise.all([
+      fetch(`/api/salary-product/report?since=${since}&until=${until}`),
+      fetch(`/api/salary-product/manual?month=${ym}`)
+    ]);
     if(res.status===401){ location.href='/login'; return; }
     const d = await res.json();
+    try { const mj = await manRes.json(); MANUAL = mj.data || {}; } catch(e){ MANUAL = {}; }
     if(!d.ok){
       $('status').innerHTML = '<span class="err">❌ Lỗi: '+esc(d.message||'không lấy được báo cáo')+'</span>';
       $('rows').innerHTML='';
@@ -185,6 +242,52 @@ async function load(){
   }catch(e){ $('status').innerHTML = '<span class="err">❌ Không kết nối được máy chủ: '+esc(e.message)+'</span>'; }
   finally{ $('refreshBtn').disabled = false; }
 }
+
+
+// ─── Popup thưởng ───
+function toggleThuong(idx, mgr){
+  document.querySelectorAll('.tw-pop.open').forEach(p=>{ if(p.id!=='twpop-'+idx) p.classList.remove('open'); });
+  const p = $('twpop-'+idx);
+  p.classList.toggle('open');
+  if(p.classList.contains('open')){
+    const man = manOf(mgr);
+    p.querySelectorAll('input').forEach(inp=>{
+      const f = inp.dataset.f;
+      inp.value = man[f] ? vnd(man[f]) : '';
+    });
+    updateThuongSum(idx, mgr);
+  }
+}
+function updateThuongSum(idx, mgr){
+  const man = manOf(mgr);
+  const tot = (+man.thuongSP||0) + (+man.thuongThang||0);
+  const sumEl = $('twsum-'+idx); if(sumEl) sumEl.textContent = 'Tổng: '+vnd(tot)+' ₫';
+}
+document.addEventListener('click', e=>{
+  if(!e.target.closest('.tw')) document.querySelectorAll('.tw-pop.open').forEach(p=>p.classList.remove('open'));
+});
+
+// ─── Lưu khi sửa ô ───
+async function saveField(mgr, field, value){
+  const man = manOf(mgr);
+  const num = parseInt(String(value).replace(/[^\d]/g,''),10) || 0;
+  man[field] = num;
+  try {
+    await fetch('/api/salary-product/manual', {
+      method:'POST', headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({ month: curMonth, key: normKey(mgr), field, value: num })
+    });
+  } catch(e){}
+}
+
+// Bắt sự kiện change trên toàn bảng (event delegation)
+$('rows').addEventListener('change', async e=>{
+  const el = e.target;
+  if(el.dataset && el.dataset.mgr && el.dataset.f){
+    await saveField(el.dataset.mgr, el.dataset.f, el.value);
+    render(); // tính lại thực nhận
+  }
+});
 
 $('refreshBtn').addEventListener('click', load);
 $('month').addEventListener('change', load);
