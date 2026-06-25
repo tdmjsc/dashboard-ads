@@ -29,8 +29,12 @@ const BASE = `https://graph.facebook.com/${V}`;
    Nếu chưa có file users.js, hệ thống dùng tạm 1 tài khoản admin mặc định.
    ========================================================================= */
 let USERS = [{ user: 'admin', pass: 'DOI_MAT_KHAU_NAY', role: 'admin' }];
+let TELEGRAM_CHAT_IDS = {};
 import('./users.js')
-  .then(mod => { if (Array.isArray(mod.USERS) && mod.USERS.length) USERS = mod.USERS; })
+  .then(mod => {
+    if (Array.isArray(mod.USERS) && mod.USERS.length) USERS = mod.USERS;
+    if (mod.TELEGRAM_CHAT_IDS) TELEGRAM_CHAT_IDS = mod.TELEGRAM_CHAT_IDS;
+  })
   .catch(() => console.log('Chưa tìm thấy users.js — đang dùng tài khoản admin mặc định.'));
 
 /* =========================================================================
@@ -1615,7 +1619,7 @@ app.post('/api/salary/manual', (req, res) => {
   // Điền BHXH mặc định từ EMPLOYEES nếu tháng này chưa có giá trị
   const empDef = EMPLOYEES.find(e => normProd(e.full) === normProd(name));
   const bhxhDefault = empDef ? (empDef.bhxh || 0) : 0;
-  const out = { name, channels: {}, luongCung: numClean(v.luongCung), thuong: numClean(v.thuong), phat: numClean(v.phat), bhxh: v.bhxh != null ? numClean(v.bhxh) : bhxhDefault };
+  const out = { name, channels: {}, luongCung: numClean(v.luongCung), thuong: numClean(v.thuong), thuongNgayTuan: numClean(v.thuongNgayTuan), phat: numClean(v.phat), bhxh: v.bhxh != null ? numClean(v.bhxh) : bhxhDefault };
   for (const ch of SALARY_CHANNELS) {
     out.channels[ch] = {};
     const src = (v.channels && v.channels[ch]) || {};
@@ -1624,6 +1628,141 @@ app.post('/api/salary/manual', (req, res) => {
   SALARY_MANUAL[month][k] = out;
   saveManual();
   res.json({ ok: true });
+});
+
+/* ===================== CÔNG KHAI LƯƠNG QUA TELEGRAM =====================
+   - Gửi bảng lương riêng cho từng nhân viên qua Telegram.
+   - Điều kiện: lương tháng X chỉ gửi được SAU ngày 10 tháng X+1.
+   - Cần TELEGRAM_BOT_TOKEN trong .env và Chat ID trong users.js.
+   ====================================================================== */
+const TELEGRAM_BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN || '';
+
+// Lưu lịch sử công khai (tháng nào đã gửi) trong DATA_DIR
+const PUBLISH_FILE = path.join(DATA_DIR, 'salary-published.json');
+let PUBLISHED = {};
+try { PUBLISHED = JSON.parse(fs.readFileSync(PUBLISH_FILE, 'utf8')); } catch { PUBLISHED = {}; }
+function savePublished() { try { fs.writeFileSync(PUBLISH_FILE, JSON.stringify(PUBLISHED)); } catch (e) {} }
+
+// Kiểm tra đã qua ngày 10 của tháng SAU tháng lương chưa
+function canPublish(monthStr) {
+  // monthStr = 'YYYY-MM' (tháng lương)
+  const [y, m] = monthStr.split('-').map(Number);
+  // Mốc: ngày 10 của tháng kế tiếp
+  const unlock = new Date(y, m, 10); // m vì Date month 0-based → m = tháng kế tiếp
+  const now = new Date();
+  return now >= unlock;
+}
+
+// Gửi 1 tin nhắn Telegram
+async function sendTelegram(chatId, text) {
+  if (!TELEGRAM_BOT_TOKEN) throw new Error('Chưa cấu hình TELEGRAM_BOT_TOKEN');
+  const url = `https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/sendMessage`;
+  const r = await fetch(url, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ chat_id: chatId, text, parse_mode: 'HTML' }),
+  });
+  const j = await r.json().catch(() => ({}));
+  return { ok: r.ok && j.ok, error: j.description };
+}
+
+const fmtVnd = n => (Math.round(Number(n) || 0)).toLocaleString('vi-VN');
+
+// Soạn nội dung lương Marketing cho 1 nhân viên
+function buildMktMessage(row, monthStr, extra) {
+  const e = extra || {};
+  const thuc = (row.luong || 0) + (e.hoaHongLeader || 0) + (e.luongCung || 0) + (e.thuong || 0) - (e.phat || 0) - (e.bhxh || 0);
+  let t = `<b>💰 BẢNG LƯƠNG THÁNG ${monthStr}</b>\n`;
+  t += `Nhân viên: <b>${row.name}</b>\n`;
+  t += `━━━━━━━━━━━━━━\n`;
+  t += `Doanh thu: <b>${fmtVnd(row.doanhthu)}</b> đ\n`;
+  t += `Chi phí QC: ${fmtVnd(row.chiPhiQC)} đ\n`;
+  t += `Giá vốn: ${fmtVnd(row.giaVon)} đ\n`;
+  t += `Phí ship: ${fmtVnd(row.phiShip)} đ\n`;
+  t += `━━━━━━━━━━━━━━\n`;
+  t += `Lương 2%: <b>${fmtVnd(row.luong)}</b> đ\n`;
+  if (e.hoaHongLeader) t += `Hoa hồng Leader: ${fmtVnd(e.hoaHongLeader)} đ\n`;
+  if (e.luongCung) t += `Lương cứng: ${fmtVnd(e.luongCung)} đ\n`;
+  if (e.thuong) t += `Thưởng: ${fmtVnd(e.thuong)} đ\n`;
+  if (e.phat) t += `Phạt: -${fmtVnd(e.phat)} đ\n`;
+  if (e.bhxh) t += `BHXH: -${fmtVnd(e.bhxh)} đ\n`;
+  t += `━━━━━━━━━━━━━━\n`;
+  t += `<b>💵 THỰC NHẬN: ${fmtVnd(thuc)} đ</b>`;
+  return t;
+}
+
+// API công khai lương Marketing: nhận danh sách rows đã tính từ client
+app.post('/api/salary/publish', express.json({ limit: '2mb' }), async (req, res) => {
+  const me = req.session.user || {};
+  if (me.role !== 'admin') return res.status(403).json({ ok: false, message: 'Chỉ admin được công khai lương' });
+  const { month, rows } = req.body || {};
+  if (!month || !Array.isArray(rows)) return res.json({ ok: false, message: 'Thiếu dữ liệu' });
+  if (!canPublish(month)) {
+    const [y, m] = month.split('-').map(Number);
+    return res.json({ ok: false, message: `Chưa đến hạn công khai. Lương tháng ${month} chỉ gửi được từ ngày 10/${m + 1}/${y} trở đi.` });
+  }
+  if (!TELEGRAM_BOT_TOKEN) return res.json({ ok: false, message: 'Chưa cấu hình TELEGRAM_BOT_TOKEN trên máy chủ' });
+
+  const results = [];
+  for (const row of rows) {
+    const chatId = TELEGRAM_CHAT_IDS[row.name];
+    if (!chatId) { results.push({ name: row.name, ok: false, reason: 'chưa có Chat ID' }); continue; }
+    try {
+      const msg = buildMktMessage(row, month, row.extra || {});
+      const r = await sendTelegram(chatId, msg);
+      results.push({ name: row.name, ok: r.ok, reason: r.error || '' });
+    } catch (e) { results.push({ name: row.name, ok: false, reason: e.message }); }
+  }
+  PUBLISHED['mkt-' + month] = { at: new Date().toISOString(), count: results.filter(r => r.ok).length };
+  savePublished();
+  res.json({ ok: true, results });
+});
+
+// Soạn nội dung lương PTSP cho 1 người
+function buildPtspMessage(row, monthStr) {
+  const thuc = (row.hoaHong || 0) + (row.luongCung || 0) + (row.thuong || 0) - (row.phat || 0) - (row.bhxh || 0);
+  let t = `<b>💼 BẢNG LƯƠNG PTSP THÁNG ${monthStr}</b>\n`;
+  t += `Nhân viên: <b>${row.manager}</b>\n`;
+  t += `━━━━━━━━━━━━━━\n`;
+  t += `Số SP: ${fmtVnd(row.soSP)} (mới ${fmtVnd(row.soSPmoi)}, cũ ${fmtVnd(row.soSPcu)})\n`;
+  t += `Đơn ship: ${fmtVnd(row.soDon)} · SL: ${fmtVnd(row.soLuongSP)}\n`;
+  t += `Doanh thu: <b>${fmtVnd(row.doanhThu)}</b> đ\n`;
+  t += `Giá vốn: ${fmtVnd(row.giaVon)} đ\n`;
+  t += `━━━━━━━━━━━━━━\n`;
+  t += `Hoa hồng: <b>${fmtVnd(row.hoaHong)}</b> đ\n`;
+  if (row.luongCung) t += `Lương cứng: ${fmtVnd(row.luongCung)} đ\n`;
+  if (row.thuong) t += `Thưởng: ${fmtVnd(row.thuong)} đ\n`;
+  if (row.phat) t += `Phạt: -${fmtVnd(row.phat)} đ\n`;
+  if (row.bhxh) t += `BHXH: -${fmtVnd(row.bhxh)} đ\n`;
+  t += `━━━━━━━━━━━━━━\n`;
+  t += `<b>💵 THỰC NHẬN: ${fmtVnd(thuc)} đ</b>`;
+  return t;
+}
+
+// API công khai lương PTSP
+app.post('/api/salary-product/publish', express.json({ limit: '2mb' }), async (req, res) => {
+  const me = req.session.user || {};
+  if (me.role !== 'admin') return res.status(403).json({ ok: false, message: 'Chỉ admin được công khai lương' });
+  const { month, rows } = req.body || {};
+  if (!month || !Array.isArray(rows)) return res.json({ ok: false, message: 'Thiếu dữ liệu' });
+  if (!canPublish(month)) {
+    const [y, m] = month.split('-').map(Number);
+    return res.json({ ok: false, message: `Chưa đến hạn công khai. Lương tháng ${month} chỉ gửi được từ ngày 10/${m + 1}/${y} trở đi.` });
+  }
+  if (!TELEGRAM_BOT_TOKEN) return res.json({ ok: false, message: 'Chưa cấu hình TELEGRAM_BOT_TOKEN trên máy chủ' });
+
+  const results = [];
+  for (const row of rows) {
+    const chatId = TELEGRAM_CHAT_IDS[row.manager];
+    if (!chatId) { results.push({ name: row.manager, ok: false, reason: 'chưa có Chat ID' }); continue; }
+    try {
+      const r = await sendTelegram(chatId, buildPtspMessage(row, month));
+      results.push({ name: row.manager, ok: r.ok, reason: r.error || '' });
+    } catch (e) { results.push({ name: row.manager, ok: false, reason: e.message }); }
+  }
+  PUBLISHED['ptsp-' + month] = { at: new Date().toISOString(), count: results.filter(r => r.ok).length };
+  savePublished();
+  res.json({ ok: true, results });
 });
 
 app.use(express.static(path.join(__dirname, 'public')));
