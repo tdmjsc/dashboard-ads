@@ -261,8 +261,8 @@ function recompute(i){
   const l2=Math.round((DT-QC-GV-SHIP)*TYLE);
   srcCell('dt',i,DT,autoVal(a,'dt'),mDt); srcCell('qc',i,QC,autoVal(a,'qc'),mQc);
   srcCell('gv',i,GV,autoVal(a,'gv'),mGv); srcCell('ship',i,SHIP,autoVal(a,'ship'),mSh);
-  const hl=manOf(emp.key)._hhLeader||0;  // tính trong recomputeAll
-  // Tính lại Thưởng DTT từ DT/GV/SHIP thực tế (gồm cả kênh nhập tay)
+  const hl=+m._hhLeader||0;  // HH Leader đã set trong recomputeAll
+  // Tính Thưởng DTT từ DT-GV-SHIP thực tế (gồm cả kênh nhập tay)
   const dtt=DT-GV-SHIP;
   m.thuongDTT=tinhThuongDTT(dtt);
   // thuongTop1 sẽ được gán sau trong recomputeAll (cần so sánh toàn bộ)
@@ -293,42 +293,34 @@ function updateTotals(){
   $('t-tn').textContent=vnd(T.tn)+' ₫';
 }
 function recomputeAll(){
-  // Bước 1: tính lương 2% thực tế từng người (bao gồm tất cả kênh nhập tay)
-  LIST.forEach(emp=>{ manOf(emp.key)._hhLeader=0; });
+  // ── Vòng 1: reset HH Leader + Top1, tính lương 2% thực tế từng người ──
+  LIST.forEach(emp=>{ const m=manOf(emp.key); m._hhLeader=0; m.thuongTop1=0; });
   LIST.forEach((_,i)=>recompute(i));
 
-  // Bước 2: tính HH Leader theo lương 2% THỰC TẾ của nhân viên trong nhóm
-  // map normKey(tên) -> lương 2% thực tế
+  // ── Tính HH Leader: ½ tổng lương 2% thực tế của nhân viên trong nhóm ──
   const l2ByName={};
-  LIST.forEach(emp=>{ l2ByName[normKey(emp.name)]=emp._c?emp._c.l2:0; });
-  // Chuẩn hoá TEAM_LEAD theo normKey để khớp chắc chắn
+  LIST.forEach(emp=>{ l2ByName[normKey(emp.name)]=(emp._c&&emp._c.l2)||0; });
   const teamByKey={};
   Object.keys(TEAM_LEAD).forEach(lead=>{ teamByKey[normKey(lead)]=TEAM_LEAD[lead]; });
-  // Với mỗi team lead, cộng ½ tổng lương 2% nhân viên trong nhóm
-  LIST.forEach((emp,i)=>{
+  LIST.forEach(emp=>{
     const members=teamByKey[normKey(emp.name)];
     if(!members) return;
     let tong=0;
     members.forEach(name=>{ tong+=l2ByName[normKey(name)]||0; });
     manOf(emp.key)._hhLeader=Math.round(tong/2);
-    recompute(i);
   });
 
-  // Bước 3: xác định Top 1 — người có lương 2% cao nhất (duy nhất)
-  LIST.forEach(emp=>{ manOf(emp.key).thuongTop1=0; });
-  const eligible=LIST.map((emp,i)=>({emp,i,l2:emp._c?emp._c.l2:0})).filter(x=>x.l2>0);
-  if(eligible.length>0){
+  // ── Xác định Top 1: lương 2% cao nhất (duy nhất) ──
+  const eligible=LIST.map((emp,i)=>({i,l2:(emp._c&&emp._c.l2)||0})).filter(x=>x.l2>0);
+  if(eligible.length){
     eligible.sort((a,b)=>b.l2-a.l2);
-    const isUnique=eligible.length===1||eligible[0].l2!==eligible[1].l2;
-    if(isUnique){
-      const top1=eligible[0];
-      const m=manOf(top1.emp.key);
-      m.thuongTop1=Math.round(top1.l2/2);
-      m.thuong=THUONG_TYPES.reduce((s,t)=>s+(+m[t.id]||0),0);
-      recompute(top1.i);
+    if(eligible.length===1||eligible[0].l2!==eligible[1].l2){
+      manOf(LIST[eligible[0].i].key).thuongTop1=Math.round(eligible[0].l2/2);
     }
   }
 
+  // ── Vòng 2: vẽ lại TẤT CẢ với HH Leader + Top1 đã có ──
+  LIST.forEach((_,i)=>recompute(i));
   updateTotals();
 }
 
