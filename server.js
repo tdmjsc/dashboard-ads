@@ -13,6 +13,11 @@ import { fileURLToPath } from 'node:url';
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const app = express();
 
+// Thư mục lưu dữ liệu NGOÀI project (không bị mất khi deploy). Khai báo SỚM
+// vì nhiều phần bên dưới dùng tới. __dirname = .../ads.tdmjsc.com/nodejs
+const DATA_DIR = process.env.DATA_DIR || path.join(__dirname, '..', '..', '..', 'data');
+try { fs.mkdirSync(DATA_DIR, { recursive: true }); } catch (e) {}
+
 const V = process.env.META_API_VERSION || 'v23.0';
 const BASE = `https://graph.facebook.com/${V}`;
 
@@ -1561,9 +1566,6 @@ app.get('/api/salary/debug', async (req, res) => {
 // QUAN TRỌNG: Dữ liệu lưu ở thư mục NGOÀI project (DATA_DIR) để KHÔNG bị mất
 // khi deploy/ghi đè thư mục nodejs. __dirname = .../ads.tdmjsc.com/nodejs
 // nên ../../../data = /home/u422036594/data. Có thể đổi qua .env DATA_DIR.
-const DATA_DIR = process.env.DATA_DIR || path.join(__dirname, '..', '..', '..', 'data');
-try { fs.mkdirSync(DATA_DIR, { recursive: true }); } catch (e) {}
-
 const MANUAL_FILE = path.join(DATA_DIR, 'salary-manual.json');
 const OLD_MANUAL_FILE = path.join(__dirname, 'salary-manual.json');
 
