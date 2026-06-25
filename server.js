@@ -1532,7 +1532,7 @@ app.get('/api/salary/report', async (req, res) => {
 
     rows.sort((a, b) => b.luong - a.luong);
     const roster = EMPLOYEES.filter(e => e.code).map(e => e.full).concat('Admin');
-    res.json({ ok: true, since, until, nguon: useConfig ? 'live' : 'mau-t5', tyLe: LUONG_TY_LE, phiShipDon: PHI_SHIP_DON, roster, rows, lastUpdated: new Date().toISOString() });
+    res.json({ ok: true, since, until, nguon: useConfig ? 'live' : 'mau-t5', tyLe: LUONG_TY_LE, phiShipDon: PHI_SHIP_DON, roster, rows, teamLead: TEAM_LEAD, lastUpdated: new Date().toISOString() });
   } catch (e) { res.json({ ok: false, since, until, message: e.message }); }
 });
 
