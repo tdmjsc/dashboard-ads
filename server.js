@@ -988,16 +988,30 @@ async function loadOwners(force) {
     const pc = find(['sản phẩm', 'san pham', 'sanpham', 'product', 'tên sp', 'ten sp']);
     const mc = find(['quản lý', 'quan ly', 'phụ trách', 'phu trach', 'nhân viên', 'nhan vien', 'người', 'nguoi']);
     let gc = find(['giá nhập', 'gia nhap', 'gianhap', 'giá vốn', 'gia von']);
+    let dc = find(['ngày đăng', 'ngay dang', 'ngaydang', 'ngày tạo', 'ngay tao', 'ngày lên', 'ngay len']);
     if (pc >= 0 && mc >= 0) { pCol = pc; mCol = mc; start = 1; }
-    if (gc < 0 && start === 1) gc = 3; // mặc định cột D = giá nhập nếu có tiêu đề khác
+    if (gc < 0 && start === 1) gc = 3; // mặc định cột D = giá nhập
+    if (dc < 0 && start === 1) dc = 4; // mặc định cột E = ngày đăng
     const toNum = v => { const n = parseInt(String(v == null ? '' : v).replace(/[^\d]/g, ''), 10); return isNaN(n) ? 0 : n; };
+    // Parse ngày DD/MM/YYYY hoặc DD-MM-YYYY -> 'YYYY-MM-DD' (null nếu trống/sai)
+    const parseDate = v => {
+      const s = String(v == null ? '' : v).trim();
+      if (!s) return null;
+      const mm = s.match(/^(\d{1,2})[\/\-.](\d{1,2})[\/\-.](\d{2,4})$/);
+      if (!mm) return null;
+      let d = mm[1], mo = mm[2], y = mm[3];
+      y = y.length === 2 ? '20' + y : y;
+      const dt = new Date(+y, +mo - 1, +d);
+      return isNaN(dt.getTime()) ? null : dt.toISOString().slice(0, 10);
+    };
     const map = {};
     for (let i = start; i < rows.length; i++) {
       const praw = String(rows[i][pCol] || '').trim();
       const m = String(rows[i][mCol] || '').trim();
       const giaNhap = gc >= 0 ? toNum(rows[i][gc]) : 0;
+      const ngayDang = dc >= 0 ? parseDate(rows[i][dc]) : null;
       const p = normProd(praw);
-      if (p && (m || giaNhap)) map[p] = { manager: m, productRaw: praw, giaNhap };
+      if (p && (m || giaNhap)) map[p] = { manager: m, productRaw: praw, giaNhap, ngayDang };
     }
     if (Object.keys(map).length) { OWNERS = map; OWNERS_AT = Date.now(); }
   } catch (e) { /* giữ bản cũ nếu lỗi */ }
@@ -1105,6 +1119,106 @@ app.get('/api/products/report', async (req, res) => {
       managers = me.manager ? [me.manager] : [];
     }
     res.json({ ok: true, ver: 'prod-2026-06-15-v2', since, until, rows, managers, me: { role: me.role, manager: me.manager || '' }, ownersCount: Object.keys(owners).length, lastUpdated: new Date().toISOString() });
+  } catch (e) { res.json({ ok: false, since, until, message: e.message }); }
+});
+
+/* ===================== TÍNH LƯƠNG PHÁT TRIỂN SẢN PHẨM =====================
+   Hoa hồng theo người Quản Lý SP (cột C Google Sheet):
+   - SP mới (đăng <= 2 tháng tính đến cuối tháng lương): 1.0% × (Doanh thu − Giá vốn)
+   - SP cũ  (đăng >  2 tháng):                          0.7% × (Doanh thu − Giá vốn)
+   - SP không có Ngày Đăng: KHÔNG tính lương
+   Doanh thu = doanhSo từ Sandbox (theo SP)
+   Giá vốn   = soLuongSanPham (ship thành công) × giá nhập (cột D Sheet)
+   ========================================================================== */
+const HH_SP_MOI = Number(process.env.HH_SP_MOI || 0.01);   // 1%
+const HH_SP_CU  = Number(process.env.HH_SP_CU  || 0.007);  // 0.7%
+
+app.get('/api/salary-product/report', async (req, res) => {
+  const today = new Date().toISOString().slice(0, 10);
+  const since = req.query.since || today;
+  const until = req.query.until || since;
+  try {
+    const owners = await loadOwners(false);
+    const rp = await sandboxProductReport(since, until);
+    if (!(rp.json && (rp.json.success ?? rp.json.Success)))
+      return res.json({ ok: false, since, until, httpStatus: rp.httpStatus, message: (rp.json && (rp.json.message || rp.json.Message)) || 'Lỗi gọi báo cáo sản phẩm' });
+
+    // Lấy lưới sản phẩm chi tiết (có doanhSo + soLuongSanPham)
+    const d = (rp.json && rp.json.data) || {};
+    const arr = Array.isArray(d.productGridTable) ? d.productGridTable : [];
+    const pick = (o, keys) => { for (const k of keys) if (o[k] != null) return o[k]; return null; };
+
+    // Mốc phân loại mới/cũ: cuối tháng của "until"
+    const endOfMonth = new Date(until.slice(0, 7) + '-01');
+    endOfMonth.setMonth(endOfMonth.getMonth() + 1);
+    endOfMonth.setDate(0); // ngày cuối tháng
+    // 2 tháng trước cuối tháng → mốc; đăng SAU mốc = mới, TRƯỚC = cũ
+    const twoMonthsAgo = new Date(endOfMonth);
+    twoMonthsAgo.setMonth(twoMonthsAgo.getMonth() - 2);
+
+    const products = arr.map(o => {
+      const name = String(pick(o, ['tenSanPham', 'tenSp', 'sanPham', 'name']) || '').trim();
+      const doanhThu = +pick(o, ['doanhSo', 'doanhThu', 'tongDoanhSo']) || 0;
+      const soLuongSP = +pick(o, ['soLuongSanPham', 'soLuongSP', 'soLuong']) || 0;
+      const own = owners[normProd(name)];
+      const manager = own ? own.manager : '';
+      const giaNhap = own ? (own.giaNhap || 0) : 0;
+      const ngayDang = own ? own.ngayDang : null;
+      const giaVon = soLuongSP * giaNhap;
+      const loiNhuan = doanhThu - giaVon;
+
+      // Phân loại mới/cũ theo ngày đăng
+      let loai = 'khong-tinh'; // mặc định: không có ngày đăng → không tính
+      let tyLe = 0;
+      if (ngayDang) {
+        const dt = new Date(ngayDang);
+        // đăng <= 2 tháng (sau hoặc bằng mốc twoMonthsAgo) = mới
+        loai = (dt >= twoMonthsAgo) ? 'moi' : 'cu';
+        tyLe = (loai === 'moi') ? HH_SP_MOI : HH_SP_CU;
+      }
+      const hoaHong = Math.round(loiNhuan * tyLe);
+
+      return { product: name, manager, doanhThu, soLuongSP, giaNhap, giaVon, loiNhuan, ngayDang, loai, tyLe, hoaHong };
+    }).filter(p => p.product);
+
+    // Quyền: tài khoản "product" chỉ thấy SP của mình
+    const me = req.session.user || {};
+    let visible = products;
+    if (me.role === 'product') {
+      const mine = normProd(me.manager || '');
+      visible = products.filter(p => normProd(p.manager) === mine && mine);
+    }
+
+    // Tổng hợp hoa hồng theo người Quản Lý
+    const byManager = {};
+    for (const p of visible) {
+      const mgr = p.manager || '(chưa gán)';
+      if (!byManager[mgr]) byManager[mgr] = { manager: mgr, soSP: 0, soSPmoi: 0, soSPcu: 0, doanhThu: 0, giaVon: 0, loiNhuan: 0, hoaHong: 0 };
+      const m = byManager[mgr];
+      m.soSP++;
+      if (p.loai === 'moi') m.soSPmoi++;
+      else if (p.loai === 'cu') m.soSPcu++;
+      m.doanhThu += p.doanhThu;
+      m.giaVon += p.giaVon;
+      m.loiNhuan += p.loiNhuan;
+      m.hoaHong += p.hoaHong;
+    }
+
+    const managers = Object.values(byManager).sort((a, b) => b.hoaHong - a.hoaHong);
+    const total = managers.reduce((s, m) => ({
+      soSP: s.soSP + m.soSP, doanhThu: s.doanhThu + m.doanhThu,
+      giaVon: s.giaVon + m.giaVon, loiNhuan: s.loiNhuan + m.loiNhuan, hoaHong: s.hoaHong + m.hoaHong,
+    }), { soSP: 0, doanhThu: 0, giaVon: 0, loiNhuan: 0, hoaHong: 0 });
+
+    res.json({
+      ok: true, since, until,
+      tyLeMoi: HH_SP_MOI, tyLeCu: HH_SP_CU,
+      mocPhanLoai: twoMonthsAgo.toISOString().slice(0, 10),
+      managers, products: visible, total,
+      ownersCount: Object.keys(owners).length,
+      me: { role: me.role, manager: me.manager || '' },
+      lastUpdated: new Date().toISOString(),
+    });
   } catch (e) { res.json({ ok: false, since, until, message: e.message }); }
 });
 
