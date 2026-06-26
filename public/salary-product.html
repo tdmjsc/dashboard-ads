@@ -56,6 +56,14 @@
   .tw-pop .tp-l{font-size:12px;color:#C4D0E2;white-space:nowrap;}
   .tw-pop input{font-family:inherit;font-size:12.5px;color:#fff;background:rgba(255,255,255,.06);border:1px solid rgba(255,255,255,.12);border-radius:6px;padding:4px 6px;text-align:right;outline:none;width:110px;}
   .tw-pop .tp-sum{font-size:12px;color:#ffc56b;font-weight:700;text-align:right;margin-top:8px;border-top:1px solid rgba(255,255,255,.07);padding-top:8px;}
+  .ch-row td{background:#0D1626;padding:10px 14px;}
+  .ch-grid{display:flex;gap:10px;flex-wrap:wrap;align-items:center;}
+  .ch-item{display:flex;align-items:center;gap:6px;background:rgba(255,255,255,.04);border:1px solid rgba(255,255,255,.08);border-radius:8px;padding:6px 10px;}
+  .ch-item .ch-name{font-size:12px;color:#9DB2FF;font-weight:600;min-width:64px;}
+  .ch-item label{font-size:11px;color:#9FB0C8;}
+  .ch-item input{font-family:inherit;font-size:12px;color:#fff;background:rgba(255,255,255,.06);border:1px solid rgba(255,255,255,.12);border-radius:6px;padding:4px 6px;text-align:right;outline:none;width:96px;font-variant-numeric:tabular-nums;}
+  .ch-item input:focus{border-color:#3D5AFE;}
+  .ch-title{font-size:11px;color:#6B7C97;text-transform:uppercase;letter-spacing:.05em;font-weight:700;margin-bottom:8px;}
   @media(max-width:680px){ h1{font-size:15px;} th,td{padding:9px 7px;font-size:12px;} .ctrl{flex:1 1 100%;} }
 </style>
 </head>
@@ -112,7 +120,7 @@ const vnd = n => (Math.round(Number(n)||0)).toLocaleString('vi-VN');
 const $ = id => document.getElementById(id);
 const esc = s => String(s==null?'':s).replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
 const pct = n => (Number(n)*100).toFixed(1)+'%';
-const normKey = s => String(s||'').normalize('NFD').replace(/[\u0300-\u036f]/g,'').replace(/đ/g,'d').replace(/Đ/g,'D').toLowerCase().trim().replace(/\s+/g,' ');
+const normKey = s => String(s==null?'':s).trim().toLowerCase().replace(/\s+/g,' ');
 const manOf = name => { const k=normKey(name); if(!MANUAL[k]) MANUAL[k]={luongCung:0,thuongSP:0,thuongThang:0,phat:0,bhxh:0}; return MANUAL[k]; };
 
 // Mặc định tháng trước (hoặc tháng hiện tại)
@@ -150,8 +158,8 @@ function render(){
       <td class="num cu">${vnd(m.soSPcu)}</td>
       <td class="num">${vnd(m.soDon)}</td>
       <td class="num">${vnd(m.soLuongSP)}</td>
-      <td class="num">${vnd(m.doanhThu)}</td>
-      <td class="num muted">${vnd(m.giaVon)}</td>
+      <td class="num">${vnd(m.doanhThuTong!=null?m.doanhThuTong:m.doanhThu)}</td>
+      <td class="num muted">${vnd(m.giaVonTong!=null?m.giaVonTong:m.giaVon)}</td>
       <td class="num hh">${vnd(m.hoaHong)} ₫</td>
       <td class="num"><input class="cell-inp" inputmode="numeric" data-mgr="${esc(m.manager)}" data-f="luongCung" value="${man.luongCung?vnd(man.luongCung):''}" placeholder="0"></td>
       <td class="num"><div class="tw" id="tw-${idx}">
@@ -168,6 +176,21 @@ function render(){
     </tr>`;
     // Chi tiết SP của người này
     if(isOpen){
+      // Dòng nhập các kênh doanh thu khác (Thái Lan, Pushsale, Shopee) — HH 0.7%
+      const chans = DATA.channels || ['thailan','pushsale','shopee'];
+      const chLabels = {thailan:'Thái Lan', pushsale:'Pushsale', shopee:'Shopee'};
+      const mch = m.channels || {};
+      let chHtml = '<div class="ch-title">Doanh thu kênh khác (hoa hồng 0.7%) — nhập tay</div><div class="ch-grid">';
+      chans.forEach(cid=>{
+        const cd = mch[cid] || {dt:0,gv:0};
+        chHtml += `<div class="ch-item"><span class="ch-name">${chLabels[cid]||cid}</span>`
+          + `<label>DT</label><input inputmode="numeric" data-mgr="${esc(m.manager)}" data-ch="${cid}" data-metric="dt" value="${cd.dt?vnd(cd.dt):''}" placeholder="0">`
+          + `<label>GV</label><input inputmode="numeric" data-mgr="${esc(m.manager)}" data-ch="${cid}" data-metric="gv" value="${cd.gv?vnd(cd.gv):''}" placeholder="0"></div>`;
+      });
+      chHtml += '</div>';
+      if(m.hoaHongKhac>0) chHtml += `<div style="margin-top:8px;font-size:12px;color:#7BE3B5;">Hoa hồng kênh khác: ${vnd(m.hoaHongKhac)} ₫</div>`;
+      html += `<tr class="ch-row"><td colspan="14">${chHtml}</td></tr>`;
+
       const prods = (DATA.products||[]).filter(p => p.manager === m.manager)
         .sort((a,b)=>b.hoaHong-a.hoaHong);
       prods.forEach(p => {
@@ -283,12 +306,39 @@ async function saveField(mgr, field, value){
   } catch(e){}
 }
 
+// Lưu kênh nhập tay (Thái Lan/Pushsale/Shopee)
+async function saveChannel(mgr, channel, metric, value){
+  const num = parseInt(String(value).replace(/[^\d]/g,''),10) || 0;
+  // Cập nhật DATA.managers tại chỗ để render lại đúng
+  const m = (DATA.managers||[]).find(x=>x.manager===mgr);
+  if(m){ if(!m.channels) m.channels={}; if(!m.channels[channel]) m.channels[channel]={dt:0,gv:0}; m.channels[channel][metric]=num;
+    // Tính lại tổng + hoa hồng kênh khác ngay phía client
+    let dtK=0,gvK=0; const chans=DATA.channels||['thailan','pushsale','shopee'];
+    chans.forEach(cid=>{ const cd=m.channels[cid]||{dt:0,gv:0}; dtK+=(+cd.dt||0); gvK+=(+cd.gv||0); });
+    const tyLeKhac=DATA.tyLeKhac||0.007;
+    m.hoaHongKhac=Math.round((dtK-gvK)*tyLeKhac);
+    m.doanhThuTong=(m.doanhThu||0)+dtK;
+    m.giaVonTong=(m.giaVon||0)+gvK;
+    m.hoaHong=(m.hoaHongSandbox!=null?m.hoaHongSandbox:m.hoaHong)+m.hoaHongKhac;
+    m.hoaHongSandbox=(m.hoaHongSandbox!=null?m.hoaHongSandbox:(m.hoaHong-m.hoaHongKhac));
+  }
+  try {
+    await fetch('/api/salary-product/manual', {
+      method:'POST', headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({ month: curMonth, key: normKey(mgr), channel, metric, value: num })
+    });
+  } catch(e){}
+}
+
 // Bắt sự kiện change trên toàn bảng (event delegation)
 $('rows').addEventListener('change', async e=>{
   const el = e.target;
-  if(el.dataset && el.dataset.mgr && el.dataset.f){
+  if(el.dataset && el.dataset.mgr && el.dataset.ch && el.dataset.metric){
+    await saveChannel(el.dataset.mgr, el.dataset.ch, el.dataset.metric, el.value);
+    render();
+  } else if(el.dataset && el.dataset.mgr && el.dataset.f){
     await saveField(el.dataset.mgr, el.dataset.f, el.value);
-    render(); // tính lại thực nhận
+    render();
   }
 });
 
