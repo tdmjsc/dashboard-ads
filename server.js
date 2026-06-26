@@ -413,6 +413,28 @@ app.use((req, res, next) => {
 const DATA_CACHE = new Map();
 const CACHE_MS = 3 * 60 * 1000; // 3 phút
 
+// ===== CACHE VĨNH VIỄN cho các khoảng ngày ĐÃ QUA (chi tiêu Meta cố định) =====
+// Lưu file trong DATA_DIR. Chỉ cache khi until < hôm nay (dữ liệu không còn đổi).
+const META_CACHE_FILE = path.join(DATA_DIR, 'meta-cache.json');
+let META_CACHE = {};
+try { META_CACHE = JSON.parse(fs.readFileSync(META_CACHE_FILE, 'utf8')); } catch { META_CACHE = {}; }
+let metaCacheSaveTimer = null;
+function saveMetaCache() {
+  // Gộp nhiều lần ghi trong 2 giây thành 1 lần để đỡ ghi đĩa liên tục
+  clearTimeout(metaCacheSaveTimer);
+  metaCacheSaveTimer = setTimeout(() => {
+    try { fs.writeFileSync(META_CACHE_FILE, JSON.stringify(META_CACHE)); } catch (e) {}
+  }, 2000);
+}
+// Khoảng [since, until] đã hoàn toàn nằm trong quá khứ chưa? (until < hôm nay theo giờ VN)
+function isPastRange(until) {
+  const today = new Date();
+  // Giờ VN = UTC+7
+  const vnNow = new Date(today.getTime() + 7 * 3600 * 1000);
+  const todayStr = vnNow.toISOString().slice(0, 10);
+  return until < todayStr; // until trước hôm nay → cố định
+}
+
 // Nạp 1 tài khoản, tự thử lại nếu lỗi (token nặng/timeout thỉnh thoảng rớt)
 async function fetchAccountRetry(acc, token, days, since, until, tries = 3) {
   let lastErr;
@@ -427,8 +449,18 @@ async function fetchAccountRetry(acc, token, days, since, until, tries = 3) {
 async function getCampaigns(since, until) {
   const days = listDays(since, until);
   const key = since + '|' + until;
+  const past = isPastRange(until);
+
+  // (1) Khoảng đã qua: nếu có trong cache file → trả luôn, KHÔNG gọi API Facebook
+  if (past && META_CACHE[key] && Array.isArray(META_CACHE[key].campaigns)) {
+    return META_CACHE[key].campaigns;
+  }
+
+  // (2) Cache RAM ngắn hạn (3 phút) cho khoảng có hôm nay
   const cached = DATA_CACHE.get(key);
   if (cached && cached.complete && Date.now() - cached.at < CACHE_MS) return cached.campaigns;
+
+  // (3) Gọi API Facebook
   const tasks = [];
   for (const src of SOURCES)
     for (const acc of src.accounts)
@@ -437,8 +469,16 @@ async function getCampaigns(since, until) {
   const campaigns = [];
   let failed = 0;
   for (const r of results) { if (r.status === 'fulfilled') campaigns.push(...r.value); else failed++; }
-  if (failed === 0) DATA_CACHE.set(key, { at: Date.now(), campaigns, complete: true });
-  return campaigns; // nếu thiếu tài khoản -> trả tạm nhưng KHÔNG lưu đệm, lần sau nạp lại
+
+  if (failed === 0) {
+    DATA_CACHE.set(key, { at: Date.now(), campaigns, complete: true });
+    // Khoảng đã qua + lấy đủ tất cả tài khoản → LƯU VĨNH VIỄN (chi tiêu không đổi nữa)
+    if (past) {
+      META_CACHE[key] = { at: new Date().toISOString(), campaigns };
+      saveMetaCache();
+    }
+  }
+  return campaigns; // thiếu tài khoản -> trả tạm, KHÔNG lưu, lần sau nạp lại
 }
 
 app.get('/api/data', async (req, res) => {
@@ -1841,6 +1881,28 @@ app.get('/api/my-salary/detail', (req, res) => {
     rows = rows.filter(r => myNames.includes(r.name || r.manager));
   }
   res.json({ ok: true, month: snap.month, type: snap.type, at: snap.at, rows });
+});
+
+// Xem trạng thái cache Meta (admin) — biết đã cache những khoảng nào
+app.get('/api/meta-cache/status', (req, res) => {
+  const me = req.session.user || {};
+  if (me.role !== 'admin') return res.status(403).json({ error: 'Chỉ admin' });
+  const list = Object.entries(META_CACHE).map(([key, v]) => ({
+    range: key, at: v.at, soChienDich: (v.campaigns || []).length,
+  })).sort((a, b) => b.range.localeCompare(a.range));
+  res.json({ ok: true, soKhoang: list.length, list });
+});
+
+// Xoá cache 1 khoảng hoặc tất cả (admin) — khi muốn lấy lại số liệu mới từ Facebook
+app.post('/api/meta-cache/clear', express.json(), (req, res) => {
+  const me = req.session.user || {};
+  if (me.role !== 'admin') return res.status(403).json({ error: 'Chỉ admin' });
+  const { range } = req.body || {};
+  if (range === 'all') { META_CACHE = {}; }
+  else if (range && META_CACHE[range]) { delete META_CACHE[range]; }
+  else return res.json({ ok: false, message: 'Không tìm thấy khoảng cần xoá' });
+  saveMetaCache();
+  res.json({ ok: true });
 });
 
 app.use(express.static(path.join(__dirname, 'public')));
