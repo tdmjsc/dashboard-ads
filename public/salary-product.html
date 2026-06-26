@@ -360,7 +360,7 @@ load();
 $('publishBtn').addEventListener('click', async ()=>{
   const ym=$('month').value;
   if(!ym) return;
-  if(!confirm('Công khai bảng lương PTSP tháng '+ym+'?\n\nMỗi nhân viên sẽ nhận bảng lương riêng qua Telegram.')) return;
+  if(!confirm('Công khai bảng lương PTSP tháng '+ym+'?\n\nNhân viên sẽ xem được bảng lương của mình trên trang "Lương của tôi". Có thể công khai lại để cập nhật.')) return;
   $('publishBtn').disabled=true; $('publishBtn').textContent='⏳ Đang gửi…';
   const rows=(DATA.managers||[]).map(m=>{
     const man=manOf(m.manager);
@@ -376,11 +376,7 @@ $('publishBtn').addEventListener('click', async ()=>{
     const d=await res.json();
     if(!d.ok){ alert('❌ '+(d.message||'Không gửi được')); }
     else{
-      const ok=d.results.filter(r=>r.ok).length;
-      const fail=d.results.filter(r=>!r.ok);
-      let msg='✅ Đã gửi '+ok+'/'+d.results.length+' bảng lương.';
-      if(fail.length) msg+='\n\nChưa gửi được:\n'+fail.map(f=>'• '+f.name+' ('+f.reason+')').join('\n');
-      alert(msg);
+      alert('✅ Đã công khai bảng lương cho '+(d.count||0)+' nhân viên.\nNhân viên có thể xem trong trang "Lương của tôi".');
     }
   }catch(e){ alert('❌ Lỗi: '+e.message); }
   finally{ $('publishBtn').disabled=false; $('publishBtn').textContent='📤 Công khai lương'; }
