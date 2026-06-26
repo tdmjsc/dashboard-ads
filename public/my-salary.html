@@ -14,25 +14,31 @@
   select.pick{font-family:'Inter';font-size:13px;color:#fff;background:rgba(255,255,255,.06);border:1px solid rgba(255,255,255,.10);padding:9px 12px;border-radius:9px;outline:none;cursor:pointer;color-scheme:dark;}
   .link{color:#C4D0E2;font-size:13px;text-decoration:none;border:1px solid rgba(255,255,255,.14);padding:7px 12px;border-radius:9px;white-space:nowrap;}
   .link:hover{background:rgba(255,255,255,.08);color:#fff;}
-  main{padding:18px;max-width:560px;margin:0 auto;}
-  .status{font-size:13px;color:#9FB0C8;margin:4px 0 16px;min-height:18px;text-align:center;}
-  .status .err{color:#ff9b8a;}
-  .card{background:#101B2E;border:1px solid rgba(255,255,255,.07);border-radius:16px;padding:24px;margin-bottom:16px;}
-  .card h2{font-size:16px;margin:0 0 4px;}
-  .card .who{color:#9FB0C8;font-size:13px;margin-bottom:18px;}
-  .line{display:flex;justify-content:space-between;align-items:center;padding:11px 0;border-bottom:1px solid rgba(255,255,255,.05);font-size:14px;}
-  .line:last-of-type{border-bottom:none;}
-  .line .lbl{color:#9FB0C8;}
-  .line .val{font-variant-numeric:tabular-nums;font-weight:600;}
-  .line .val.neg{color:#ff9b8a;}
-  .line .val.pos{color:#7BE3B5;}
-  .divider{height:1px;background:rgba(255,255,255,.1);margin:14px 0;}
-  .thuc{background:linear-gradient(135deg,rgba(123,227,181,.12),rgba(61,90,254,.08));border:1px solid rgba(123,227,181,.25);border-radius:12px;padding:18px;text-align:center;margin-top:18px;}
-  .thuc .lbl{color:#9FB0C8;font-size:12px;text-transform:uppercase;letter-spacing:.04em;}
-  .thuc .big{font-size:30px;font-weight:800;color:#7BE3B5;margin-top:6px;letter-spacing:-.5px;}
-  .empty{padding:40px;text-align:center;color:#6B7C97;}
-  .sec-title{font-size:11px;color:#6B7C97;text-transform:uppercase;letter-spacing:.05em;margin:16px 0 4px;font-weight:700;}
   .user-badge{display:inline-flex;align-items:center;gap:6px;font-size:13px;color:#9DB2FF;background:rgba(157,178,255,.1);border:1px solid rgba(157,178,255,.2);padding:7px 12px;border-radius:9px;font-weight:600;white-space:nowrap;}
+  main{padding:18px;max-width:1100px;margin:0 auto;}
+  .status{font-size:13px;color:#9FB0C8;margin:4px 0 16px;min-height:18px;}
+  .status .err{color:#ff9b8a;} .status .ok{color:#7BE3B5;}
+  .wrap{overflow-x:auto;border-radius:12px;}
+  table{width:100%;border-collapse:collapse;background:#101B2E;border-radius:12px;overflow:hidden;min-width:760px;}
+  th,td{padding:12px 14px;text-align:left;font-size:13.5px;border-bottom:1px solid rgba(255,255,255,.05);white-space:nowrap;}
+  th{background:#16233A;color:#9FB0C8;font-weight:600;font-size:11.5px;text-transform:uppercase;letter-spacing:.03em;}
+  td.num,th.num{text-align:right;font-variant-numeric:tabular-nums;}
+  .auto{display:block;font-size:11px;color:#6B7C97;margin-top:2px;}
+  .l2{color:#7BE3B5;font-weight:700;}
+  .hh{color:#C4A8FF;font-weight:600;}
+  .thuc{color:#ffc56b;font-weight:800;}
+  .neg{color:#ff9b8a;}
+  .exp{cursor:pointer;background:rgba(255,255,255,.06);border:1px solid rgba(255,255,255,.12);color:#9FB0C8;width:24px;height:24px;border-radius:6px;font-size:14px;margin-right:8px;}
+  .exp:hover{background:rgba(61,90,254,.2);color:#fff;}
+  .detail td{background:#0D1626;font-size:12.5px;}
+  .chip{display:inline-block;padding:2px 8px;border-radius:20px;font-size:10.5px;font-weight:600;margin-left:6px;}
+  .chip-moi{background:rgba(123,227,181,.12);color:#7BE3B5;}
+  .chip-cu{background:rgba(255,197,107,.12);color:#ffc56b;}
+  .muted{color:#6B7C97;}
+  .empty{padding:40px;text-align:center;color:#6B7C97;}
+  .ch-grid{display:flex;gap:10px;flex-wrap:wrap;margin-top:4px;}
+  .ch-item{background:rgba(255,255,255,.04);border:1px solid rgba(255,255,255,.08);border-radius:8px;padding:6px 10px;font-size:12px;}
+  .ch-item b{color:#9DB2FF;}
 </style>
 </head>
 <body>
@@ -51,14 +57,15 @@
 
 <main>
   <div class="status" id="status"></div>
-  <div id="content"></div>
+  <div class="wrap"><div id="content"></div></div>
 </main>
 
 <script>
 const $=id=>document.getElementById(id);
 const vnd=n=>(Math.round(Number(n)||0)).toLocaleString('vi-VN');
 const esc=s=>String(s==null?'':s).replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
-let MONTHS=[];
+let MONTHS=[], CUR=null, expanded={};
+const CH_LABEL={thailan:'Thái Lan',pushsale:'Pushsale',shopee:'Shopee',san:'Sàn TMĐT'};
 
 async function loadMonths(){
   try{
@@ -72,7 +79,7 @@ async function loadMonths(){
       return;
     }
     $('monthPick').innerHTML=MONTHS.map(m=>{
-      const label=(m.type==='ptsp'?'PTSP ':'')+'Tháng '+m.month;
+      const label=(m.type==='ptsp'?'PTSP ':'Marketing ')+'Tháng '+m.month;
       return `<option value="${esc(m.key)}">${label}</option>`;
     }).join('');
     loadDetail(MONTHS[0].key);
@@ -80,85 +87,127 @@ async function loadMonths(){
 }
 
 async function loadDetail(key){
+  expanded={};
   $('content').innerHTML='<div class="empty">Đang tải…</div>';
   try{
     const r=await fetch('/api/my-salary/detail?key='+encodeURIComponent(key));
     const d=await r.json();
     if(!d.ok){ $('content').innerHTML='<div class="empty">'+esc(d.message||'Không có dữ liệu')+'</div>'; return; }
-    render(d);
+    CUR=d;
+    render();
+    $('status').innerHTML='<span class="ok">✓ Bảng lương tháng '+esc(d.month)+(d.type==='ptsp'?' · Phát triển SP':' · Marketing')+'</span>';
   }catch(e){ $('content').innerHTML='<div class="empty">Lỗi tải dữ liệu</div>'; }
 }
 
-function render(d){
-  if(!d.rows||!d.rows.length){ $('content').innerHTML='<div class="empty">Không có dữ liệu của bạn trong tháng này.</div>'; return; }
-  let html='';
-  d.rows.forEach(row=>{
-    if(d.type==='ptsp') html+=cardPtsp(row,d.month);
-    else html+=cardMkt(row,d.month);
+function render(){
+  if(!CUR||!CUR.rows||!CUR.rows.length){ $('content').innerHTML='<div class="empty">Không có dữ liệu của bạn trong tháng này.</div>'; return; }
+  if(CUR.type==='ptsp') renderPtsp(); else renderMkt();
+}
+
+function renderMkt(){
+  let h='<table><thead><tr><th>Nhân viên</th><th class="num">Doanh thu</th><th class="num">Chi phí QC</th><th class="num">Giá vốn</th><th class="num">Phí ship</th><th class="num">Lương 2%</th><th class="num">HH Leader</th><th class="num">Lương cứng</th><th class="num">Thưởng</th><th class="num">Phạt</th><th class="num">BHXH</th><th class="num">Thực nhận</th></tr></thead><tbody>';
+  CUR.rows.forEach((row,idx)=>{
+    const e=row.extra||{};
+    const thuc=(row.luong||0)+(e.hoaHongLeader||0)+(e.luongCung||0)+(e.thuong||0)-(e.phat||0)-(e.bhxh||0);
+    const hasCh=row.channels&&Object.values(row.channels).some(cd=>cd.dt||cd.qc||cd.gv||cd.ship);
+    const isOpen=expanded[idx];
+    h+=`<tr>
+      <td>${hasCh?`<button class="exp" onclick="tg(${idx})">${isOpen?'−':'+'}</button>`:''}<b>${esc(row.name)}</b></td>
+      <td class="num">${vnd(row.doanhthu)}${row.autoDT!=null?`<span class="auto">TĐ ${vnd(row.autoDT)}</span>`:''}</td>
+      <td class="num">${vnd(row.chiPhiQC)}${row.autoQC!=null?`<span class="auto">TĐ ${vnd(row.autoQC)}</span>`:''}</td>
+      <td class="num">${vnd(row.giaVon)}${row.autoGV!=null?`<span class="auto">TĐ ${vnd(row.autoGV)}</span>`:''}</td>
+      <td class="num">${vnd(row.phiShip)}${row.autoSHIP!=null?`<span class="auto">TĐ ${vnd(row.autoSHIP)}</span>`:''}</td>
+      <td class="num l2">${vnd(row.luong)}</td>
+      <td class="num hh">${e.hoaHongLeader?vnd(e.hoaHongLeader):'–'}</td>
+      <td class="num">${e.luongCung?vnd(e.luongCung):'–'}</td>
+      <td class="num">${e.thuong?vnd(e.thuong):'–'}</td>
+      <td class="num neg">${e.phat?'-'+vnd(e.phat):'–'}</td>
+      <td class="num neg">${e.bhxh?'-'+vnd(e.bhxh):'–'}</td>
+      <td class="num thuc">${vnd(thuc)} ₫</td>
+    </tr>`;
+    if(isOpen&&hasCh){
+      let cells='<div class="ch-grid">';
+      Object.entries(row.channels).forEach(([cid,cd])=>{
+        if(cd.dt||cd.qc||cd.gv||cd.ship)
+          cells+=`<div class="ch-item"><b>${CH_LABEL[cid]||cid}</b> · DT ${vnd(cd.dt)} · QC ${vnd(cd.qc)} · GV ${vnd(cd.gv)} · Ship ${vnd(cd.ship)}</div>`;
+      });
+      cells+='</div>';
+      let tb='';
+      if(e.thuongDTT) tb+=`Thưởng DTT: ${vnd(e.thuongDTT)} · `;
+      if(e.thuongTop1) tb+=`Thưởng Top 1: ${vnd(e.thuongTop1)} · `;
+      if(e.thuongNgayTuan) tb+=`Thưởng Ngày/Tuần: ${vnd(e.thuongNgayTuan)}`;
+      h+=`<tr class="detail"><td colspan="12"><div class="muted" style="font-size:11px;margin-bottom:6px;">Doanh thu các kênh khác (đã cộng vào tổng):</div>${cells}${tb?`<div class="muted" style="font-size:12px;margin-top:8px;">${tb}</div>`:''}</td></tr>`;
+    }
   });
-  $('content').innerHTML=html;
+  h+='</tbody></table>';
+  $('content').innerHTML=h;
 }
 
-function line(lbl,val,cls){ return `<div class="line"><span class="lbl">${esc(lbl)}</span><span class="val ${cls||''}">${val}</span></div>`; }
-
-function cardMkt(row,month){
-  const e=row.extra||{};
-  const thuc=(row.luong||0)+(e.hoaHongLeader||0)+(e.luongCung||0)+(e.thuong||0)-(e.phat||0)-(e.bhxh||0);
-  let h=`<div class="card"><h2>Tháng ${esc(month)}</h2><div class="who">${esc(row.name)}</div>`;
-  h+='<div class="sec-title">Kết quả kinh doanh</div>';
-  h+=line('Doanh thu',vnd(row.doanhthu));
-  h+=line('Chi phí QC',vnd(row.chiPhiQC));
-  h+=line('Giá vốn',vnd(row.giaVon));
-  h+=line('Phí ship',vnd(row.phiShip));
-  h+='<div class="sec-title">Lương & phụ cấp</div>';
-  h+=line('Lương 2%',vnd(row.luong),'pos');
-  if(e.hoaHongLeader) h+=line('Hoa hồng Leader',vnd(e.hoaHongLeader),'pos');
-  if(e.luongCung) h+=line('Lương cứng',vnd(e.luongCung));
-  if(e.thuong) h+=line('Thưởng',vnd(e.thuong),'pos');
-  if(e.phat) h+=line('Phạt','-'+vnd(e.phat),'neg');
-  if(e.bhxh) h+=line('BHXH','-'+vnd(e.bhxh),'neg');
-  h+=`<div class="thuc"><div class="lbl">Thực nhận</div><div class="big">${vnd(thuc)} ₫</div></div>`;
-  h+='</div>';
-  return h;
+function renderPtsp(){
+  let h='<table><thead><tr><th>Người quản lý</th><th class="num">Số SP</th><th class="num">SP mới</th><th class="num">SP cũ</th><th class="num">Đơn ship</th><th class="num">SL ship</th><th class="num">Doanh thu</th><th class="num">Giá vốn</th><th class="num">Hoa hồng</th><th class="num">Lương cứng</th><th class="num">Thưởng</th><th class="num">Phạt</th><th class="num">BHXH</th><th class="num">Thực nhận</th></tr></thead><tbody>';
+  CUR.rows.forEach((m,idx)=>{
+    const thuc=(m.hoaHong||0)+(m.luongCung||0)+(m.thuong||0)-(m.phat||0)-(m.bhxh||0);
+    const isOpen=expanded[idx];
+    h+=`<tr>
+      <td><button class="exp" onclick="tg(${idx})">${isOpen?'−':'+'}</button><b>${esc(m.manager)}</b></td>
+      <td class="num">${vnd(m.soSP)}</td>
+      <td class="num" style="color:#7BE3B5">${vnd(m.soSPmoi)}</td>
+      <td class="num" style="color:#ffc56b">${vnd(m.soSPcu)}</td>
+      <td class="num">${vnd(m.soDon)}</td>
+      <td class="num">${vnd(m.soLuongSP)}</td>
+      <td class="num">${vnd(m.doanhThuTong!=null?m.doanhThuTong:m.doanhThu)}</td>
+      <td class="num muted">${vnd(m.giaVonTong!=null?m.giaVonTong:m.giaVon)}</td>
+      <td class="num l2">${vnd(m.hoaHong)} ₫</td>
+      <td class="num">${m.luongCung?vnd(m.luongCung):'–'}</td>
+      <td class="num">${m.thuong?vnd(m.thuong):'–'}</td>
+      <td class="num neg">${m.phat?'-'+vnd(m.phat):'–'}</td>
+      <td class="num neg">${m.bhxh?'-'+vnd(m.bhxh):'–'}</td>
+      <td class="num thuc">${vnd(thuc)} ₫</td>
+    </tr>`;
+    if(isOpen){
+      let inner='';
+      const hasCh=m.channels&&Object.values(m.channels).some(cd=>cd.dt||cd.gv);
+      if(hasCh){
+        inner+='<div class="muted" style="font-size:11px;margin-bottom:6px;">Doanh thu kênh khác (hoa hồng 0.7%):</div><div class="ch-grid">';
+        Object.entries(m.channels).forEach(([cid,cd])=>{
+          if(cd.dt||cd.gv) inner+=`<div class="ch-item"><b>${CH_LABEL[cid]||cid}</b> · DT ${vnd(cd.dt)} · GV ${vnd(cd.gv)}</div>`;
+        });
+        inner+='</div>';
+        if(m.hoaHongKhac) inner+=`<div style="font-size:12px;color:#7BE3B5;margin-top:6px;">Hoa hồng kênh khác: ${vnd(m.hoaHongKhac)} ₫</div>`;
+      }
+      if(m.products&&m.products.length){
+        inner+='<div class="muted" style="font-size:11px;margin:12px 0 6px;">Chi tiết sản phẩm:</div>';
+        inner+='<table style="min-width:0;background:transparent;"><tbody>';
+        m.products.sort((a,b)=>b.hoaHong-a.hoaHong).forEach(p=>{
+          const chip=p.loai==='moi'?'<span class="chip chip-moi">mới 1%</span>':p.loai==='cu'?'<span class="chip chip-cu">cũ 0.7%</span>':'';
+          inner+=`<tr><td style="border:none;padding:4px 8px;">${esc(p.product)}${chip}<span class="muted" style="font-size:11px;"> · ${p.ngayDang||'(trống)'} · SL ${vnd(p.soLuongSP)}</span></td>
+            <td class="num" style="border:none;padding:4px 8px;">DT ${vnd(p.doanhThu)}</td>
+            <td class="num muted" style="border:none;padding:4px 8px;">GV ${vnd(p.giaVon)}</td>
+            <td class="num l2" style="border:none;padding:4px 8px;">${p.hoaHong>0?vnd(p.hoaHong)+' ₫':'–'}</td></tr>`;
+        });
+        inner+='</tbody></table>';
+      }
+      h+=`<tr class="detail"><td colspan="14">${inner||'<span class="muted">Không có chi tiết</span>'}</td></tr>`;
+    }
+  });
+  h+='</tbody></table>';
+  $('content').innerHTML=h;
 }
 
-function cardPtsp(row,month){
-  const thuc=(row.hoaHong||0)+(row.luongCung||0)+(row.thuong||0)-(row.phat||0)-(row.bhxh||0);
-  let h=`<div class="card"><h2>Tháng ${esc(month)} · PTSP</h2><div class="who">${esc(row.manager)}</div>`;
-  h+='<div class="sec-title">Kết quả</div>';
-  h+=line('Số SP',vnd(row.soSP)+' (mới '+vnd(row.soSPmoi)+', cũ '+vnd(row.soSPcu)+')');
-  h+=line('Đơn ship',vnd(row.soDon));
-  h+=line('SL ship',vnd(row.soLuongSP));
-  h+=line('Doanh thu',vnd(row.doanhThu));
-  h+=line('Giá vốn',vnd(row.giaVon));
-  h+='<div class="sec-title">Lương & phụ cấp</div>';
-  h+=line('Hoa hồng',vnd(row.hoaHong),'pos');
-  if(row.luongCung) h+=line('Lương cứng',vnd(row.luongCung));
-  if(row.thuong) h+=line('Thưởng',vnd(row.thuong),'pos');
-  if(row.phat) h+=line('Phạt','-'+vnd(row.phat),'neg');
-  if(row.bhxh) h+=line('BHXH','-'+vnd(row.bhxh),'neg');
-  h+=`<div class="thuc"><div class="lbl">Thực nhận</div><div class="big">${vnd(thuc)} ₫</div></div>`;
-  h+='</div>';
-  return h;
-}
+function tg(idx){ expanded[idx]=!expanded[idx]; render(); }
 
-// Link quay lại theo vai trò
+$('monthPick').addEventListener('change',e=>loadDetail(e.target.value));
+
 fetch('/api/me').then(r=>r.ok?r.json():null).then(me=>{
   if(!me) return;
   const back=$('backLink');
   if(me.role==='product'){ back.href='/products.html'; back.textContent='← Sản phẩm'; }
   else if(me.role==='viewer'){ back.href='/'; back.textContent='← Dashboard'; }
   else if(me.role==='staff'){ back.style.display='none'; }
+  if(me.displayName){ const b=$('userBadge'); if(b) b.textContent='👤 '+me.displayName; }
 }).catch(()=>{});
 
-$('monthPick').addEventListener('change',e=>loadDetail(e.target.value));
 loadMonths();
-
-// Hiện tên nhân viên cạnh nút đăng xuất
-fetch('/api/me').then(r=>r.ok?r.json():null).then(me=>{
-  if(me&&me.displayName){ const b=document.getElementById('userBadge'); if(b) b.textContent='👤 '+me.displayName; }
-}).catch(()=>{});
-
 </script>
 </body>
 </html>
