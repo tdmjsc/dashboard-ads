@@ -1243,6 +1243,7 @@ app.post('/api/salary-product/manual', express.json(), (req, res) => {
 // Các kênh nhập tay cho PTSP và tỷ lệ hoa hồng cố định 0.7%
 const PTSP_CHANNELS = ['thailan', 'pushsale', 'shopee'];
 const HH_KENH_KHAC = Number(process.env.HH_KENH_KHAC || 0.007);  // 0.7%
+const PHI_SHIP_DON_PTSP = Number(process.env.PHI_SHIP_DON || 30000);  // phí ship mỗi đơn
 
 app.get('/api/salary-product/report', async (req, res) => {
   const today = new Date().toISOString().slice(0, 10);
@@ -1277,7 +1278,8 @@ app.get('/api/salary-product/report', async (req, res) => {
       const giaNhap = own ? (own.giaNhap || 0) : 0;
       const ngayDang = own ? own.ngayDang : null;
       const giaVon = soLuongSP * giaNhap;
-      const loiNhuan = doanhThu - giaVon;
+      const phiShip = soDon * PHI_SHIP_DON_PTSP;  // phí ship = số đơn × 30.000
+      const loiNhuan = doanhThu - giaVon - phiShip;
 
       // Phân loại mới/cũ theo ngày đăng
       let loai = 'khong-tinh'; // mặc định: không có ngày đăng → không tính
@@ -1290,7 +1292,7 @@ app.get('/api/salary-product/report', async (req, res) => {
       }
       const hoaHong = Math.round(loiNhuan * tyLe);
 
-      return { product: name, manager, doanhThu, soLuongSP, soDon, giaNhap, giaVon, loiNhuan, ngayDang, loai, tyLe, hoaHong };
+      return { product: name, manager, doanhThu, soLuongSP, soDon, giaNhap, giaVon, phiShip, loiNhuan, ngayDang, loai, tyLe, hoaHong };
     }).filter(p => p.product);
 
     // Quyền: tài khoản "product" chỉ thấy SP của mình
@@ -1305,7 +1307,7 @@ app.get('/api/salary-product/report', async (req, res) => {
     const byManager = {};
     for (const p of visible) {
       const mgr = p.manager || '(chưa gán)';
-      if (!byManager[mgr]) byManager[mgr] = { manager: mgr, soSP: 0, soSPmoi: 0, soSPcu: 0, soDon: 0, soLuongSP: 0, doanhThu: 0, giaVon: 0, loiNhuan: 0, hoaHong: 0 };
+      if (!byManager[mgr]) byManager[mgr] = { manager: mgr, soSP: 0, soSPmoi: 0, soSPcu: 0, soDon: 0, soLuongSP: 0, doanhThu: 0, giaVon: 0, phiShip: 0, loiNhuan: 0, hoaHong: 0 };
       const m = byManager[mgr];
       m.soSP++;
       if (p.loai === 'moi') m.soSPmoi++;
@@ -1314,6 +1316,7 @@ app.get('/api/salary-product/report', async (req, res) => {
       m.soLuongSP += p.soLuongSP;
       m.doanhThu += p.doanhThu;
       m.giaVon += p.giaVon;
+      m.phiShip += p.phiShip;
       m.loiNhuan += p.loiNhuan;
       m.hoaHong += p.hoaHong;
     }
@@ -1326,37 +1329,43 @@ app.get('/api/salary-product/report', async (req, res) => {
       // Lấy channels nhập tay của người này
       const rec = manualMonth[normProd(m.manager)] || {};
       const ch = rec.channels || {};
-      let dtKhac = 0, gvKhac = 0;
+      let dtKhac = 0, gvKhac = 0, shipKhac = 0;
       m.channels = {};
       for (const cid of PTSP_CHANNELS) {
         const dt = Number((ch[cid] || {}).dt) || 0;
         const gv = Number((ch[cid] || {}).gv) || 0;
-        m.channels[cid] = { dt, gv };
-        dtKhac += dt; gvKhac += gv;
+        const ship = Number((ch[cid] || {}).ship) || 0;
+        m.channels[cid] = { dt, gv, ship };
+        dtKhac += dt; gvKhac += gv; shipKhac += ship;
       }
       m.dtKhac = dtKhac;
       m.gvKhac = gvKhac;
-      m.hoaHongKhac = Math.round((dtKhac - gvKhac) * HH_KENH_KHAC);
+      m.shipKhac = shipKhac;
+      // Hoa hồng kênh khác = (DT - GV - Phí ship) × 0.7%
+      m.hoaHongKhac = Math.round((dtKhac - gvKhac - shipKhac) * HH_KENH_KHAC);
       // Tổng hoa hồng = HH Sandbox (đã có) + HH kênh khác
       m.hoaHongSandbox = m.hoaHong;
       m.hoaHong = m.hoaHong + m.hoaHongKhac;
-      // Cộng doanh thu/giá vốn kênh khác vào tổng hiển thị
+      // Cộng doanh thu/giá vốn/phí ship kênh khác vào tổng hiển thị
       m.doanhThuTong = m.doanhThu + dtKhac;
       m.giaVonTong = m.giaVon + gvKhac;
+      m.phiShipTong = (m.phiShip || 0) + shipKhac;
     }
     const managers = Object.values(byManager).sort((a, b) => b.hoaHong - a.hoaHong);
     const total = managers.reduce((s, m) => ({
       soSP: s.soSP + m.soSP, soDon: s.soDon + m.soDon, soLuongSP: s.soLuongSP + m.soLuongSP,
-      doanhThu: s.doanhThu + m.doanhThu, giaVon: s.giaVon + m.giaVon,
+      doanhThu: s.doanhThu + m.doanhThu, giaVon: s.giaVon + m.giaVon, phiShip: s.phiShip + m.phiShip,
       loiNhuan: s.loiNhuan + m.loiNhuan, hoaHong: s.hoaHong + m.hoaHong,
-    }), { soSP: 0, soDon: 0, soLuongSP: 0, doanhThu: 0, giaVon: 0, loiNhuan: 0, hoaHong: 0 });
+    }), { soSP: 0, soDon: 0, soLuongSP: 0, doanhThu: 0, giaVon: 0, phiShip: 0, loiNhuan: 0, hoaHong: 0 });
 
     // Cập nhật total gồm cả kênh khác
     total.dtKhac = managers.reduce((s, m) => s + (m.dtKhac || 0), 0);
     total.gvKhac = managers.reduce((s, m) => s + (m.gvKhac || 0), 0);
+    total.shipKhac = managers.reduce((s, m) => s + (m.shipKhac || 0), 0);
     total.hoaHongKhac = managers.reduce((s, m) => s + (m.hoaHongKhac || 0), 0);
     total.doanhThu += total.dtKhac;
     total.giaVon += total.gvKhac;
+    total.phiShip = (total.phiShip || 0) + total.shipKhac;
 
     res.json({
       ok: true, since, until,
