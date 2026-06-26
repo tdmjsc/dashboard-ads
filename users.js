@@ -32,14 +32,14 @@ export const USERS = [
     salaryName: 'Tạ Quang Trường' },
 
   // ----- NHÂN VIÊN MARKETING (xem KQ marketing của mình + lương của mình) -----
-  { user: 'hieu',  pass: 'Hieu@1234',  role: 'viewer', employees: ['Nguyễn Trung Hiếu'], salaryName: 'Nguyễn Trung Hiếu' },
-  { user: 'my',    pass: 'My@1234',    role: 'viewer', employees: ['Nguyễn Thị Trà My'], salaryName: 'Nguyễn Thị Trà My' },
-  { user: 'anh',   pass: 'Anh@1234',   role: 'viewer', employees: ['Lê Thị Ánh'],        salaryName: 'Lê Thị Ánh' },
-  { user: 'huan',  pass: 'Huan@1234',  role: 'viewer', employees: ['Nguyễn Duy Huân'],   salaryName: 'Nguyễn Duy Huân' },
-  { user: 'minh',  pass: 'Minh@1234',  role: 'viewer', employees: ['Dương Văn Minh'],    salaryName: 'Dương Văn Minh' },
-  { user: 'giang', pass: 'Giang@1234', role: 'viewer', employees: ['Vũ Hà Giang'],       salaryName: 'Vũ Hà Giang' },
-  { user: 'ha',    pass: 'Ha@1234',    role: 'viewer', employees: ['Đoàn Việt Hà'],       salaryName: 'Đoàn Việt Hà' },
-  { user: 'an',    pass: 'An@1234',    role: 'viewer', employees: ['Vũ Thuý An'],         salaryName: 'Vũ Thuý An' },
+  { user: 'mkt.hieu',  pass: 'Hieu@1452',  role: 'viewer', employees: ['Nguyễn Trung Hiếu'], salaryName: 'Nguyễn Trung Hiếu' },
+  { user: 'mkt.my',    pass: 'My@7853',    role: 'viewer', employees: ['Nguyễn Thị Trà My'], salaryName: 'Nguyễn Thị Trà My' },
+  { user: 'mkt.anh',   pass: 'Anh@2314',   role: 'viewer', employees: ['Lê Thị Ánh'],        salaryName: 'Lê Thị Ánh' },
+  { user: 'mkt.huan',  pass: 'Huan@1245',  role: 'viewer', employees: ['Nguyễn Duy Huân'],   salaryName: 'Nguyễn Duy Huân' },
+  { user: 'mkt.minh',  pass: 'Minh@7532',  role: 'viewer', employees: ['Dương Văn Minh'],    salaryName: 'Dương Văn Minh' },
+  { user: 'mkt.giang', pass: 'Giang@1737', role: 'viewer', employees: ['Vũ Hà Giang'],       salaryName: 'Vũ Hà Giang' },
+  { user: 'mkt.ha',    pass: 'Ha@3597',    role: 'viewer', employees: ['Đoàn Việt Hà'],       salaryName: 'Đoàn Việt Hà' },
+  { user: 'mkt.thuyan',    pass: 'An@2578',    role: 'viewer', employees: ['Vũ Thuý An'],         salaryName: 'Vũ Thuý An' },
 
   // ----- NHÂN VIÊN PHÁT TRIỂN SẢN PHẨM (xem trang SP của mình + lương của mình) -----
   //  manager = tên ở cột "Quản Lý" trong Google Sheet (để lọc SP + xem lương)
