@@ -24,10 +24,10 @@ export const USERS = [
   // ----- TEAM LEAD MARKETING -----
   //  employees = danh sách người xem được KẾT QUẢ Marketing (cả team)
   //  salaryName = chỉ xem LƯƠNG của chính mình
-  { user: 'phuong', pass: 'Phuong@4567', role: 'viewer',
+  { user: 'mkt.phuong', pass: 'Phuong@45678', role: 'viewer',
     employees: ['Trịnh Đức Phương', 'Đoàn Việt Hà', 'Nguyễn Duy Huân', 'Vũ Thuý An'],
     salaryName: 'Trịnh Đức Phương' },
-  { user: 'truong', pass: 'Truong@1234', role: 'viewer',
+  { user: 'mkt.truong', pass: 'Truong@1234', role: 'viewer',
     employees: ['Tạ Quang Trường', 'Nguyễn Thị Trà My', 'Dương Văn Minh', 'Lê Thị Ánh'],
     salaryName: 'Tạ Quang Trường' },
 
