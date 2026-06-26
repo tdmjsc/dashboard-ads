@@ -21,35 +21,30 @@ export const USERS = [
   { user: 'tdmjsc', pass: 'Tdmjsc@0611', role: 'admin' },
   { user: 'ketoan', pass: 'Tdmjsc@1234', role: 'admin' },
 
-  // ----- Trưởng phòng (xem nhiều nhân viên) — ví dụ, sửa lại theo thực tế -----
-  { user: 'mkt.phuong', pass: 'Phuong@45678', role: 'viewer',
-    employees: ['Trịnh Đức Phương', 'Đoàn Việt Hà', 'Nguyễn Duy Huân', 'Vũ Thuý An'] },
+  // ----- TEAM LEAD MARKETING -----
+  //  employees = danh sách người xem được KẾT QUẢ Marketing (cả team)
+  //  salaryName = chỉ xem LƯƠNG của chính mình
+  { user: 'phuong', pass: 'Phuong@4567', role: 'viewer',
+    employees: ['Trịnh Đức Phương', 'Đoàn Việt Hà', 'Nguyễn Duy Huân', 'Vũ Thuý An'],
+    salaryName: 'Trịnh Đức Phương' },
+  { user: 'truong', pass: 'Truong@1234', role: 'viewer',
+    employees: ['Tạ Quang Trường', 'Nguyễn Thị Trà My', 'Dương Văn Minh', 'Lê Thị Ánh'],
+    salaryName: 'Tạ Quang Trường' },
 
-  // ----- Nhân viên (chỉ xem chính mình) — ví dụ -----
-  { user: 'mkt.truong', pass: 'Truong@1234', role: 'viewer',
-    employees: ['Tạ Quang Trường', 'Nguyễn Thị Trà My', 'Dương Văn Minh', 'Lê Thị Ánh'] },
-  // ----- Nhân viên PHÁT TRIỂN SẢN PHẨM (chỉ vào trang Sản phẩm, chỉ thấy SP của mình) -----
-  //  "manager" phải KHỚP tên ở cột "Quản Lý" trong Google Sheet.
-  { user: 'kien',  pass: 'Kien@1122', role: 'product', manager: 'Đào Trung Kiên' },
-  { user: 'trang', pass: 'Trang@8899', role: 'product', manager: 'Nguyễn Huyền Trang' },
+  // ----- NHÂN VIÊN MARKETING (xem KQ marketing của mình + lương của mình) -----
+  { user: 'hieu',  pass: 'Hieu@1234',  role: 'viewer', employees: ['Nguyễn Trung Hiếu'], salaryName: 'Nguyễn Trung Hiếu' },
+  { user: 'my',    pass: 'My@1234',    role: 'viewer', employees: ['Nguyễn Thị Trà My'], salaryName: 'Nguyễn Thị Trà My' },
+  { user: 'anh',   pass: 'Anh@1234',   role: 'viewer', employees: ['Lê Thị Ánh'],        salaryName: 'Lê Thị Ánh' },
+  { user: 'huan',  pass: 'Huan@1234',  role: 'viewer', employees: ['Nguyễn Duy Huân'],   salaryName: 'Nguyễn Duy Huân' },
+  { user: 'minh',  pass: 'Minh@1234',  role: 'viewer', employees: ['Dương Văn Minh'],    salaryName: 'Dương Văn Minh' },
+  { user: 'giang', pass: 'Giang@1234', role: 'viewer', employees: ['Vũ Hà Giang'],       salaryName: 'Vũ Hà Giang' },
+  { user: 'ha',    pass: 'Ha@1234',    role: 'viewer', employees: ['Đoàn Việt Hà'],       salaryName: 'Đoàn Việt Hà' },
+  { user: 'an',    pass: 'An@1234',    role: 'viewer', employees: ['Vũ Thuý An'],         salaryName: 'Vũ Thuý An' },
 
-  // ----- TÀI KHOẢN NHÂN VIÊN XEM LƯƠNG (role: 'staff') -----
-  //  Chỉ vào được trang "Lương của tôi" (my-salary.html), xem bảng lương ĐÃ CÔNG KHAI.
-  //  "employees" ghi TÊN ĐẦY ĐỦ của chính nhân viên đó (1 tên).
-  //  Nhân viên PTSP thì dùng "manager" thay cho "employees".
-  { user: 'nv.truong', pass: 'Truong@xem1', role: 'staff', employees: ['Tạ Quang Trường'] },
-  { user: 'nv.phuong', pass: 'Phuong@xem1', role: 'staff', employees: ['Trịnh Đức Phương'] },
-  { user: 'nv.hieu',   pass: 'Hieu@xem1',   role: 'staff', employees: ['Nguyễn Trung Hiếu'] },
-  { user: 'nv.my',     pass: 'My@xem1',     role: 'staff', employees: ['Nguyễn Thị Trà My'] },
-  { user: 'nv.anh',    pass: 'Anh@xem1',    role: 'staff', employees: ['Lê Thị Ánh'] },
-  { user: 'nv.huan',   pass: 'Huan@xem1',   role: 'staff', employees: ['Nguyễn Duy Huân'] },
-  { user: 'nv.minh',   pass: 'Minh@xem1',   role: 'staff', employees: ['Dương Văn Minh'] },
-  { user: 'nv.giang',  pass: 'Giang@xem1',  role: 'staff', employees: ['Vũ Hà Giang'] },
-  { user: 'nv.ha',     pass: 'Ha@xem1',     role: 'staff', employees: ['Đoàn Việt Hà'] },
-  { user: 'nv.an',     pass: 'An@xem1',     role: 'staff', employees: ['Vũ Thuý An'] },
-  // Nhân viên PTSP xem lương (dùng manager):
-  { user: 'nv.kien',   pass: 'Kien@xem1',   role: 'staff', manager: 'Đào Trung Kiên' },
-  { user: 'nv.trang2', pass: 'Trang@xem1',  role: 'staff', manager: 'Nguyễn Huyền Trang' },
+  // ----- NHÂN VIÊN PHÁT TRIỂN SẢN PHẨM (xem trang SP của mình + lương của mình) -----
+  //  manager = tên ở cột "Quản Lý" trong Google Sheet (để lọc SP + xem lương)
+  { user: 'kien',  pass: 'Kien@1122', role: 'product', manager: 'Đào Trung Kiên',     salaryName: 'Đào Trung Kiên' },
+  { user: 'trang', pass: 'Trang@8899', role: 'product', manager: 'Nguyễn Huyền Trang', salaryName: 'Nguyễn Huyền Trang' },
 
 ];
 

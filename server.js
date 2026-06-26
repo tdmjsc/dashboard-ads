@@ -350,7 +350,7 @@ app.post('/login', (req, res) => {
   const { user, pass } = req.body;
   const u = USERS.find(x => x.user === user && x.pass === pass);
   if (!u) return res.redirect('/login?error=1');
-  req.session.user = { user: u.user, role: u.role, employees: u.employees || [], manager: u.manager || '' };
+  req.session.user = { user: u.user, role: u.role, employees: u.employees || [], manager: u.manager || '', salaryName: u.salaryName || '' };
   res.redirect(u.role === 'product' ? '/products.html' : (u.role === 'staff' ? '/my-salary.html' : '/'));
 });
 app.get('/logout', (req, res) => req.session.destroy(() => res.redirect('/login')));
@@ -365,7 +365,7 @@ app.use((req, res, next) => {
 // Cho trang biết người đang đăng nhập là ai (để ẩn/hiện menu, lọc theo người)
 app.get('/api/me', (req, res) => {
   const u = req.session.user || {};
-  res.json({ user: u.user, role: u.role, manager: u.manager || '', employees: u.employees || [] });
+  res.json({ user: u.user, role: u.role, manager: u.manager || '', employees: u.employees || [], salaryName: u.salaryName || '' });
 });
 
 // QUYỀN "product": chỉ được vào trang Sản phẩm + API sản phẩm của mình.
@@ -374,7 +374,7 @@ app.use((req, res, next) => {
   const me = req.session.user;
   if (me && me.role === 'product') {
     const p = req.path;
-    const allowed = ['/products.html', '/logout', '/api/products/report', '/api/me'].includes(p) || p === '/favicon.ico';
+    const allowed = ['/products.html', '/my-salary.html', '/logout', '/api/products/report', '/api/me', '/api/my-salary/months', '/api/my-salary/detail'].includes(p) || p === '/favicon.ico';
     if (!allowed) {
       if (p.startsWith('/api/')) return res.status(403).json({ error: 'Không có quyền truy cập mục này.' });
       return res.redirect('/products.html');
@@ -1832,8 +1832,10 @@ app.post('/api/salary-product/publish', express.json({ limit: '2mb' }), async (r
 // Trả về danh sách tháng đã công khai mà nhân viên này có dữ liệu
 app.get('/api/my-salary/months', (req, res) => {
   const me = req.session.user || {};
-  const myName = (me.employees && me.employees[0]) || me.manager || '';
-  const myNames = me.employees || (me.manager ? [me.manager] : []);
+  // salaryName = tên để xem LƯƠNG (chỉ của chính mình). Nếu không có thì fallback.
+  const myNames = me.salaryName ? [me.salaryName]
+    : (me.role === 'product' && me.manager ? [me.manager]
+    : (me.employees && me.employees.length ? [me.employees[0]] : []));
   const months = [];
   for (const [key, snap] of Object.entries(SNAPSHOTS)) {
     const isMine = (snap.rows || []).some(r => {
@@ -1852,7 +1854,9 @@ app.get('/api/my-salary/detail', (req, res) => {
   const key = req.query.key || '';
   const snap = SNAPSHOTS[key];
   if (!snap) return res.json({ ok: false, message: 'Chưa có bảng lương công khai cho tháng này' });
-  const myNames = me.employees || (me.manager ? [me.manager] : []);
+  const myNames = me.salaryName ? [me.salaryName]
+    : (me.role === 'product' && me.manager ? [me.manager]
+    : (me.employees && me.employees.length ? [me.employees[0]] : []));
   // Admin xem được tất cả; nhân viên chỉ thấy dòng của mình
   let rows = snap.rows || [];
   if (me.role !== 'admin') {
