@@ -144,7 +144,7 @@ function renderMkt(){
 }
 
 function renderPtsp(){
-  let h='<table><thead><tr><th>Người quản lý</th><th class="num">Số SP</th><th class="num">SP mới</th><th class="num">SP cũ</th><th class="num">Đơn ship</th><th class="num">SL ship</th><th class="num">Doanh thu</th><th class="num">Giá vốn</th><th class="num">Hoa hồng</th><th class="num">Lương cứng</th><th class="num">Thưởng</th><th class="num">Phạt</th><th class="num">BHXH</th><th class="num">Thực nhận</th></tr></thead><tbody>';
+  let h='<table><thead><tr><th>Người quản lý</th><th class="num">Số SP</th><th class="num">SP mới</th><th class="num">SP cũ</th><th class="num">Đơn ship</th><th class="num">SL ship</th><th class="num">Doanh thu</th><th class="num">Giá vốn</th><th class="num">Phí ship</th><th class="num">Hoa hồng</th><th class="num">Lương cứng</th><th class="num">Thưởng</th><th class="num">Phạt</th><th class="num">BHXH</th><th class="num">Thực nhận</th></tr></thead><tbody>';
   CUR.rows.forEach((m,idx)=>{
     const thuc=(m.hoaHong||0)+(m.luongCung||0)+(m.thuong||0)-(m.phat||0)-(m.bhxh||0);
     const isOpen=expanded[idx];
@@ -157,6 +157,7 @@ function renderPtsp(){
       <td class="num">${vnd(m.soLuongSP)}</td>
       <td class="num">${vnd(m.doanhThuTong!=null?m.doanhThuTong:m.doanhThu)}</td>
       <td class="num muted">${vnd(m.giaVonTong!=null?m.giaVonTong:m.giaVon)}</td>
+      <td class="num muted">${vnd(m.phiShipTong!=null?m.phiShipTong:m.phiShip)}</td>
       <td class="num l2">${vnd(m.hoaHong)} ₫</td>
       <td class="num">${m.luongCung?vnd(m.luongCung):'–'}</td>
       <td class="num">${m.thuong?vnd(m.thuong):'–'}</td>
@@ -170,7 +171,7 @@ function renderPtsp(){
       if(hasCh){
         inner+='<div class="muted" style="font-size:11px;margin-bottom:6px;">Doanh thu kênh khác (hoa hồng 0.7%):</div><div class="ch-grid">';
         Object.entries(m.channels).forEach(([cid,cd])=>{
-          if(cd.dt||cd.gv) inner+=`<div class="ch-item"><b>${CH_LABEL[cid]||cid}</b> · DT ${vnd(cd.dt)} · GV ${vnd(cd.gv)}</div>`;
+          if(cd.dt||cd.gv||cd.ship) inner+=`<div class="ch-item"><b>${CH_LABEL[cid]||cid}</b> · DT ${vnd(cd.dt)} · GV ${vnd(cd.gv)} · Ship ${vnd(cd.ship)}</div>`;
         });
         inner+='</div>';
         if(m.hoaHongKhac) inner+=`<div style="font-size:12px;color:#7BE3B5;margin-top:6px;">Hoa hồng kênh khác: ${vnd(m.hoaHongKhac)} ₫</div>`;
@@ -187,7 +188,7 @@ function renderPtsp(){
         });
         inner+='</tbody></table>';
       }
-      h+=`<tr class="detail"><td colspan="14">${inner||'<span class="muted">Không có chi tiết</span>'}</td></tr>`;
+      h+=`<tr class="detail"><td colspan="15">${inner||'<span class="muted">Không có chi tiết</span>'}</td></tr>`;
     }
   });
   h+='</tbody></table>';
