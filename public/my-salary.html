@@ -42,6 +42,7 @@
       <p class="sub" id="sub">Bảng lương đã được công khai</p>
     </div>
     <select class="pick" id="monthPick"><option>Đang tải…</option></select>
+    <a href="/" class="link" id="backLink">← Trang chính</a>
     <a href="/logout" class="link">Đăng xuất</a>
   </div>
 </header>
@@ -138,6 +139,15 @@ function cardPtsp(row,month){
   h+='</div>';
   return h;
 }
+
+// Link quay lại theo vai trò
+fetch('/api/me').then(r=>r.ok?r.json():null).then(me=>{
+  if(!me) return;
+  const back=$('backLink');
+  if(me.role==='product'){ back.href='/products.html'; back.textContent='← Sản phẩm'; }
+  else if(me.role==='viewer'){ back.href='/'; back.textContent='← Dashboard'; }
+  else if(me.role==='staff'){ back.style.display='none'; }
+}).catch(()=>{});
 
 $('monthPick').addEventListener('change',e=>loadDetail(e.target.value));
 loadMonths();

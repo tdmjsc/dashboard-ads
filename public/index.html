@@ -221,6 +221,7 @@
       <a href="/products.html" class="logout" id="navProducts">Sản phẩm</a>
       <a href="/salary.html" class="logout" id="navSalary">Lương MKT</a>
       <a href="/salary-product.html" class="logout" id="navSalaryProduct">Lương PTSP</a>
+      <a href="/my-salary.html" class="logout" id="navMySalary">Lương của tôi</a>
       <a href="/logout" class="logout">Đăng xuất</a>
       <div class="avatar" id="avatar" title="">QT</div>
     </div>
@@ -347,7 +348,15 @@ async function loadData(){
     if(res.status===401){ location.href='/login'; return; }
     const data=await res.json();
     if(data.error){ msg.textContent='Lỗi: '+data.error; return; }
-    if(data.me){ const a=document.getElementById('avatar'); a.textContent=data.me.user.slice(0,2).toUpperCase(); a.title=data.me.user+(data.me.role==='admin'?' (admin)':''); const np=document.getElementById('navProducts'); if(np&&data.me.role!=='admin') np.style.display='none'; const ns=document.getElementById('navSalary'); if(ns&&data.me.role!=='admin') ns.style.display='none'; }
+    if(data.me){
+      const a=document.getElementById('avatar'); a.textContent=data.me.user.slice(0,2).toUpperCase(); a.title=data.me.user+(data.me.role==='admin'?' (admin)':'');
+      const isAdmin=data.me.role==='admin';
+      const np=document.getElementById('navProducts'); if(np&&!isAdmin) np.style.display='none';
+      const ns=document.getElementById('navSalary'); if(ns&&!isAdmin) ns.style.display='none';
+      const nsp=document.getElementById('navSalaryProduct'); if(nsp&&!isAdmin) nsp.style.display='none';
+      // "Lương của tôi": admin KHÔNG cần (đã có bảng đầy đủ), nhân viên thì HIỆN
+      const nms=document.getElementById('navMySalary'); if(nms&&isAdmin) nms.style.display='none';
+    }
     DAYS=data.days; CAMPAIGNS=data.campaigns;
     /* dựng danh sách tài khoản từ dữ liệu */
     const seen={}; ACCOUNTS=[{id:"all",name:"Tất cả tài khoản",color:"#3D5AFE"}];
