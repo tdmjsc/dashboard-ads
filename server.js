@@ -1179,15 +1179,28 @@ app.get('/api/salary-product/manual', (req, res) => {
 });
 
 app.post('/api/salary-product/manual', express.json(), (req, res) => {
-  const { month, key, field, value } = req.body || {};
-  if (!month || !key || !field) return res.json({ ok: false, message: 'Thiếu tham số' });
+  const { month, key, field, value, channel, metric } = req.body || {};
+  if (!month || !key) return res.json({ ok: false, message: 'Thiếu tham số' });
   if (!PTSP_MANUAL[month]) PTSP_MANUAL[month] = {};
   if (!PTSP_MANUAL[month][key]) PTSP_MANUAL[month][key] = {};
   const num = parseInt(String(value == null ? '' : value).replace(/[^\d]/g, ''), 10) || 0;
-  PTSP_MANUAL[month][key][field] = num;
+  if (channel && metric) {
+    // Lưu kênh nhập tay: channels.thailan.dt / channels.thailan.gv ...
+    if (!PTSP_MANUAL[month][key].channels) PTSP_MANUAL[month][key].channels = {};
+    if (!PTSP_MANUAL[month][key].channels[channel]) PTSP_MANUAL[month][key].channels[channel] = {};
+    PTSP_MANUAL[month][key].channels[channel][metric] = num;
+  } else if (field) {
+    PTSP_MANUAL[month][key][field] = num;
+  } else {
+    return res.json({ ok: false, message: 'Thiếu field hoặc channel/metric' });
+  }
   savePtspManual();
   res.json({ ok: true });
 });
+
+// Các kênh nhập tay cho PTSP và tỷ lệ hoa hồng cố định 0.7%
+const PTSP_CHANNELS = ['thailan', 'pushsale', 'shopee'];
+const HH_KENH_KHAC = Number(process.env.HH_KENH_KHAC || 0.007);  // 0.7%
 
 app.get('/api/salary-product/report', async (req, res) => {
   const today = new Date().toISOString().slice(0, 10);
@@ -1263,9 +1276,31 @@ app.get('/api/salary-product/report', async (req, res) => {
       m.hoaHong += p.hoaHong;
     }
 
-    // Gắn BHXH mặc định vào từng manager
+    // Gắn BHXH mặc định + tính HH kênh khác (Thái Lan, Pushsale, Shopee × 0.7%)
+    const monthKey = (since || '').slice(0, 7);
+    const manualMonth = PTSP_MANUAL[monthKey] || {};
     for (const m of Object.values(byManager)) {
       m.bhxh = PTSP_BHXH[m.manager] || 0;
+      // Lấy channels nhập tay của người này
+      const rec = manualMonth[normProd(m.manager)] || {};
+      const ch = rec.channels || {};
+      let dtKhac = 0, gvKhac = 0;
+      m.channels = {};
+      for (const cid of PTSP_CHANNELS) {
+        const dt = Number((ch[cid] || {}).dt) || 0;
+        const gv = Number((ch[cid] || {}).gv) || 0;
+        m.channels[cid] = { dt, gv };
+        dtKhac += dt; gvKhac += gv;
+      }
+      m.dtKhac = dtKhac;
+      m.gvKhac = gvKhac;
+      m.hoaHongKhac = Math.round((dtKhac - gvKhac) * HH_KENH_KHAC);
+      // Tổng hoa hồng = HH Sandbox (đã có) + HH kênh khác
+      m.hoaHongSandbox = m.hoaHong;
+      m.hoaHong = m.hoaHong + m.hoaHongKhac;
+      // Cộng doanh thu/giá vốn kênh khác vào tổng hiển thị
+      m.doanhThuTong = m.doanhThu + dtKhac;
+      m.giaVonTong = m.giaVon + gvKhac;
     }
     const managers = Object.values(byManager).sort((a, b) => b.hoaHong - a.hoaHong);
     const total = managers.reduce((s, m) => ({
@@ -1274,9 +1309,17 @@ app.get('/api/salary-product/report', async (req, res) => {
       loiNhuan: s.loiNhuan + m.loiNhuan, hoaHong: s.hoaHong + m.hoaHong,
     }), { soSP: 0, soDon: 0, soLuongSP: 0, doanhThu: 0, giaVon: 0, loiNhuan: 0, hoaHong: 0 });
 
+    // Cập nhật total gồm cả kênh khác
+    total.dtKhac = managers.reduce((s, m) => s + (m.dtKhac || 0), 0);
+    total.gvKhac = managers.reduce((s, m) => s + (m.gvKhac || 0), 0);
+    total.hoaHongKhac = managers.reduce((s, m) => s + (m.hoaHongKhac || 0), 0);
+    total.doanhThu += total.dtKhac;
+    total.giaVon += total.gvKhac;
+
     res.json({
       ok: true, since, until,
-      tyLeMoi: HH_SP_MOI, tyLeCu: HH_SP_CU,
+      tyLeMoi: HH_SP_MOI, tyLeCu: HH_SP_CU, tyLeKhac: HH_KENH_KHAC,
+      channels: PTSP_CHANNELS,
       mocPhanLoai: twoMonthsAgo.toISOString().slice(0, 10),
       managers, products: visible, total,
       ownersCount: Object.keys(owners).length,
