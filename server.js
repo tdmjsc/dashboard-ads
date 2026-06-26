@@ -1759,24 +1759,12 @@ app.post('/api/salary/publish', express.json({ limit: '2mb' }), async (req, res)
     const [y, m] = month.split('-').map(Number);
     return res.json({ ok: false, message: `Chưa đến hạn công khai. Lương tháng ${month} chỉ gửi được từ ngày 10/${m + 1}/${y} trở đi.` });
   }
-  if (!TELEGRAM_BOT_TOKEN) return res.json({ ok: false, message: 'Chưa cấu hình TELEGRAM_BOT_TOKEN trên máy chủ' });
-
-  const results = [];
-  for (const row of rows) {
-    const chatId = TELEGRAM_CHAT_IDS[row.name];
-    if (!chatId) { results.push({ name: row.name, ok: false, reason: 'chưa có Chat ID' }); continue; }
-    try {
-      const msg = buildMktMessage(row, month, row.extra || {});
-      const r = await sendTelegram(chatId, msg);
-      results.push({ name: row.name, ok: r.ok, reason: r.error || '' });
-    } catch (e) { results.push({ name: row.name, ok: false, reason: e.message }); }
-  }
-  PUBLISHED['mkt-' + month] = { at: new Date().toISOString(), count: results.filter(r => r.ok).length };
-  savePublished();
-  // Lưu snapshot để nhân viên xem trực tiếp (không tính lại)
+  // Lưu snapshot để nhân viên xem trên web (KHÔNG gửi Telegram)
   SNAPSHOTS['mkt-' + month] = { at: new Date().toISOString(), month, type: 'mkt', rows };
   saveSnapshots();
-  res.json({ ok: true, results });
+  PUBLISHED['mkt-' + month] = { at: new Date().toISOString(), count: rows.length };
+  savePublished();
+  res.json({ ok: true, count: rows.length });
 });
 
 // Soạn nội dung lương PTSP cho 1 người
@@ -1810,22 +1798,12 @@ app.post('/api/salary-product/publish', express.json({ limit: '2mb' }), async (r
     const [y, m] = month.split('-').map(Number);
     return res.json({ ok: false, message: `Chưa đến hạn công khai. Lương tháng ${month} chỉ gửi được từ ngày 10/${m + 1}/${y} trở đi.` });
   }
-  if (!TELEGRAM_BOT_TOKEN) return res.json({ ok: false, message: 'Chưa cấu hình TELEGRAM_BOT_TOKEN trên máy chủ' });
-
-  const results = [];
-  for (const row of rows) {
-    const chatId = TELEGRAM_CHAT_IDS[row.manager];
-    if (!chatId) { results.push({ name: row.manager, ok: false, reason: 'chưa có Chat ID' }); continue; }
-    try {
-      const r = await sendTelegram(chatId, buildPtspMessage(row, month));
-      results.push({ name: row.manager, ok: r.ok, reason: r.error || '' });
-    } catch (e) { results.push({ name: row.manager, ok: false, reason: e.message }); }
-  }
-  PUBLISHED['ptsp-' + month] = { at: new Date().toISOString(), count: results.filter(r => r.ok).length };
-  savePublished();
+  // Lưu snapshot để nhân viên xem trên web (KHÔNG gửi Telegram)
   SNAPSHOTS['ptsp-' + month] = { at: new Date().toISOString(), month, type: 'ptsp', rows };
   saveSnapshots();
-  res.json({ ok: true, results });
+  PUBLISHED['ptsp-' + month] = { at: new Date().toISOString(), count: rows.length };
+  savePublished();
+  res.json({ ok: true, count: rows.length });
 });
 
 /* ===== API CHO NHÂN VIÊN XEM LƯƠNG ĐÃ CÔNG KHAI (từ snapshot) ===== */
