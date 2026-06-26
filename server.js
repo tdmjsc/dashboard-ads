@@ -1206,12 +1206,44 @@ try { PTSP_MANUAL = JSON.parse(fs.readFileSync(PTSP_MANUAL_FILE, 'utf8')); } cat
 function savePtspManual() { try { fs.writeFileSync(PTSP_MANUAL_FILE, JSON.stringify(PTSP_MANUAL)); } catch (e) {} }
 
 // API lấy/lưu dữ liệu tay cho lương PTSP
+// Bỏ dấu tiếng Việt (để gộp key cũ "dao trung kien" với key mới "đào trung kiên")
+function stripVN(s) {
+  return String(s == null ? '' : s).normalize('NFD').replace(/[\u0300-\u036f]/g, '')
+    .replace(/đ/g, 'd').replace(/Đ/g, 'D').toLowerCase().trim().replace(/\s+/g, ' ');
+}
 app.get('/api/salary-product/manual', (req, res) => {
   const month = req.query.month || '';
   const raw = PTSP_MANUAL[month] || {};
-  // Điền BHXH mặc định cho từng người
   const data = {};
-  for (const [k, v] of Object.entries(raw)) data[k] = { ...v };
+  // GỘP dữ liệu theo tên bỏ dấu — gom cả key cũ (không dấu) và mới (có dấu)
+  const byStrip = {};
+  for (const [k, v] of Object.entries(raw)) {
+    const sk = stripVN(k);
+    if (!byStrip[sk]) byStrip[sk] = {};
+    // Gộp: ưu tiên giá trị khác 0 / có dữ liệu
+    const merged = byStrip[sk];
+    for (const [field, val] of Object.entries(v)) {
+      if (field === 'channels') {
+        merged.channels = merged.channels || {};
+        for (const [ch, cv] of Object.entries(val || {})) {
+          merged.channels[ch] = { ...(merged.channels[ch] || {}), ...cv };
+        }
+      } else if (val != null && (merged[field] == null || merged[field] === 0)) {
+        merged[field] = val;
+      }
+    }
+  }
+  // Đưa dữ liệu đã gộp vào key CHUẨN (normProd = có dấu) theo tên trong PTSP_BHXH
+  for (const name of Object.keys(PTSP_BHXH)) {
+    const sk = stripVN(name);
+    const k = normProd(name);
+    if (byStrip[sk]) { data[k] = { ...byStrip[sk], name }; delete byStrip[sk]; }
+  }
+  // Các key còn lại (người không có trong PTSP_BHXH) giữ nguyên theo normProd
+  for (const [sk, v] of Object.entries(byStrip)) {
+    data[v.name ? normProd(v.name) : sk] = v;
+  }
+  // Điền BHXH mặc định
   for (const [name, bhxh] of Object.entries(PTSP_BHXH)) {
     const k = normProd(name);
     if (!data[k]) data[k] = { name, thuongSP: 0, thuongThang: 0, phat: 0, bhxh };
@@ -1224,6 +1256,27 @@ app.post('/api/salary-product/manual', express.json(), (req, res) => {
   const { month, key, field, value, channel, metric } = req.body || {};
   if (!month || !key) return res.json({ ok: false, message: 'Thiếu tham số' });
   if (!PTSP_MANUAL[month]) PTSP_MANUAL[month] = {};
+  // DỌN KEY TRÙNG: nếu tồn tại key cũ không dấu khác key hiện tại nhưng cùng tên bỏ dấu,
+  // gộp dữ liệu cũ vào key chuẩn rồi xoá key cũ (tránh phân mảnh dữ liệu)
+  const stripKey = s => String(s||'').normalize('NFD').replace(/[\u0300-\u036f]/g,'').replace(/đ/g,'d').replace(/Đ/g,'D').toLowerCase().trim().replace(/\s+/g,' ');
+  const targetStrip = stripKey(key);
+  for (const ek of Object.keys(PTSP_MANUAL[month])) {
+    if (ek !== key && stripKey(ek) === targetStrip) {
+      const oldRec = PTSP_MANUAL[month][ek];
+      if (!PTSP_MANUAL[month][key]) PTSP_MANUAL[month][key] = {};
+      // Gộp field cũ vào key mới (không ghi đè field mới đã có giá trị)
+      for (const [f, vv] of Object.entries(oldRec)) {
+        if (f === 'channels') {
+          PTSP_MANUAL[month][key].channels = PTSP_MANUAL[month][key].channels || {};
+          for (const [ch, cv] of Object.entries(vv || {}))
+            PTSP_MANUAL[month][key].channels[ch] = { ...(PTSP_MANUAL[month][key].channels[ch]||{}), ...cv };
+        } else if (PTSP_MANUAL[month][key][f] == null || PTSP_MANUAL[month][key][f] === 0) {
+          PTSP_MANUAL[month][key][f] = vv;
+        }
+      }
+      delete PTSP_MANUAL[month][ek];
+    }
+  }
   if (!PTSP_MANUAL[month][key]) PTSP_MANUAL[month][key] = {};
   const num = parseInt(String(value == null ? '' : value).replace(/[^\d]/g, ''), 10) || 0;
   if (channel && metric) {
