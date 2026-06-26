@@ -200,6 +200,7 @@
   }
   @media (prefers-reduced-motion:reduce){*{transition:none!important;}}
   :focus-visible{outline:2px solid var(--accent);outline-offset:2px;border-radius:6px;}
+  .user-badge{display:inline-flex;align-items:center;gap:6px;font-size:13px;color:#9DB2FF;background:rgba(157,178,255,.1);border:1px solid rgba(157,178,255,.2);padding:7px 12px;border-radius:9px;font-weight:600;white-space:nowrap;margin-right:6px;}
 </style>
 </head>
 <body>
@@ -222,6 +223,7 @@
       <a href="/salary.html" class="logout" id="navSalary">Lương MKT</a>
       <a href="/salary-product.html" class="logout" id="navSalaryProduct">Lương PTSP</a>
       <a href="/my-salary.html" class="logout" id="navMySalary">Lương của tôi</a>
+      <span class="user-badge" id="userBadge"></span>
       <a href="/logout" class="logout">Đăng xuất</a>
       <div class="avatar" id="avatar" title="">QT</div>
     </div>
@@ -350,6 +352,7 @@ async function loadData(){
     if(data.error){ msg.textContent='Lỗi: '+data.error; return; }
     if(data.me){
       const a=document.getElementById('avatar'); a.textContent=data.me.user.slice(0,2).toUpperCase(); a.title=data.me.user+(data.me.role==='admin'?' (admin)':'');
+      const ub=document.getElementById('userBadge'); if(ub&&data.me.displayName) ub.textContent='👤 '+data.me.displayName;
       const isAdmin=data.me.role==='admin';
       const np=document.getElementById('navProducts'); if(np&&!isAdmin) np.style.display='none';
       const ns=document.getElementById('navSalary'); if(ns&&!isAdmin) ns.style.display='none';

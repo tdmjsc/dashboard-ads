@@ -70,6 +70,7 @@
   .empty{padding:30px;text-align:center;color:#6B7C97;font-size:14px;}
   .note{font-size:12px;color:#7C8CA6;margin-top:12px;line-height:1.6;}
   @media(max-width:680px){ h1{font-size:15px;} th,td{padding:8px 8px;font-size:12px;} input.cell{width:88px;} td.nm,th:first-child{min-width:135px;} }
+  .user-badge{display:inline-flex;align-items:center;gap:6px;font-size:13px;color:#9DB2FF;background:rgba(157,178,255,.1);border:1px solid rgba(157,178,255,.2);padding:7px 12px;border-radius:9px;font-weight:600;white-space:nowrap;}
 </style>
 </head>
 <body>
@@ -84,6 +85,7 @@
     <button class="btn" id="publishBtn" style="background:#7BE3B5;color:#0B1322;">📤 Công khai lương</button>
     <a href="/" class="link">← Dashboard</a>
     <a href="/salary-product.html" class="link">Lương PTSP</a>
+    <span class="user-badge" id="userBadge"></span>
     <a href="/logout" class="link">Đăng xuất</a>
   </div>
 </header>
@@ -402,12 +404,20 @@ $('publishBtn').addEventListener('click', async ()=>{
   // Soạn dữ liệu từng người (gồm các khoản đã tính client)
   const rows=LIST.filter(e=>e.name!=='Admin').map(e=>{
     const m=manOf(e.key), c=e._c||{};
-    const auto=AUTO.find(r=>normKey(r.name)===e.key)||{};
+    const a=e.a||{};
+    // Chi tiết kênh nhập tay (auto = số từ Sandbox/Meta, kênh = nhập tay)
+    const channels={};
+    CH.forEach(ch=>{ const cd=m.channels[ch.id]||{}; channels[ch.id]={dt:+cd.dt||0,qc:+cd.qc||0,gv:+cd.gv||0,ship:+cd.ship||0}; });
     return {
       name:e.name,
       doanhthu:c.DT||0, chiPhiQC:c.QC||0, giaVon:c.GV||0, phiShip:c.SHIP||0,
       luong:c.l2||0,
-      extra:{ hoaHongLeader:m._hhLeader||0, luongCung:m.luongCung||0, thuong:m.thuong||0, phat:m.phat||0, bhxh:m.bhxh||0 }
+      // Số tự động (Sandbox/Meta) để hiển thị "TĐ ..."
+      autoDT:autoVal(a,'dt'), autoQC:autoVal(a,'qc'), autoGV:autoVal(a,'gv'), autoSHIP:autoVal(a,'ship'),
+      channels,
+      extra:{ hoaHongLeader:m._hhLeader||0, luongCung:m.luongCung||0,
+        thuong:m.thuong||0, thuongDTT:m.thuongDTT||0, thuongTop1:m.thuongTop1||0, thuongNgayTuan:m.thuongNgayTuan||0,
+        phat:m.phat||0, bhxh:m.bhxh||0 }
     };
   });
   try{
@@ -425,6 +435,12 @@ $('publishBtn').addEventListener('click', async ()=>{
 // Ẩn nút Công khai nếu không phải admin
 fetch('/api/me').then(r=>r.ok?r.json():null).then(me=>{
   if(!me||me.role!=='admin'){ const b=$('publishBtn'); if(b)b.style.display='none'; }
+}).catch(()=>{});
+
+
+// Hiện tên nhân viên cạnh nút đăng xuất
+fetch('/api/me').then(r=>r.ok?r.json():null).then(me=>{
+  if(me&&me.displayName){ const b=document.getElementById('userBadge'); if(b) b.textContent='👤 '+me.displayName; }
 }).catch(()=>{});
 
 </script>

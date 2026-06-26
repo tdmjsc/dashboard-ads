@@ -65,6 +65,7 @@
   .ch-item input:focus{border-color:#3D5AFE;}
   .ch-title{font-size:11px;color:#6B7C97;text-transform:uppercase;letter-spacing:.05em;font-weight:700;margin-bottom:8px;}
   @media(max-width:680px){ h1{font-size:15px;} th,td{padding:9px 7px;font-size:12px;} .ctrl{flex:1 1 100%;} }
+  .user-badge{display:inline-flex;align-items:center;gap:6px;font-size:13px;color:#9DB2FF;background:rgba(157,178,255,.1);border:1px solid rgba(157,178,255,.2);padding:7px 12px;border-radius:9px;font-weight:600;white-space:nowrap;}
 </style>
 </head>
 <body>
@@ -81,6 +82,7 @@
     <button class="btn" id="publishBtn" style="background:#7BE3B5;color:#0B1322;">📤 Công khai lương</button>
     <a href="/" class="link navfull">← Dashboard</a>
     <a href="/salary.html" class="link navfull">Lương Marketing</a>
+    <span class="user-badge" id="userBadge"></span>
     <a href="/logout" class="link">Đăng xuất</a>
   </div>
 </header>
@@ -364,11 +366,20 @@ $('publishBtn').addEventListener('click', async ()=>{
   $('publishBtn').disabled=true; $('publishBtn').textContent='⏳ Đang gửi…';
   const rows=(DATA.managers||[]).map(m=>{
     const man=manOf(m.manager);
-    const thuong=(+man.thuongSP||0)+(+man.thuongThang||0);
+    const thuongSP=(+man.thuongSP||0), thuongThang=(+man.thuongThang||0);
+    const thuong=thuongSP+thuongThang;
+    // Danh sách SP của người này (để nhân viên bấm + xem chi tiết)
+    const products=(DATA.products||[]).filter(p=>p.manager===m.manager)
+      .map(p=>({product:p.product,ngayDang:p.ngayDang,loai:p.loai,soDon:p.soDon,soLuongSP:p.soLuongSP,
+        giaNhap:p.giaNhap,doanhThu:p.doanhThu,giaVon:p.giaVon,hoaHong:p.hoaHong}));
     return {
       manager:m.manager, soSP:m.soSP, soSPmoi:m.soSPmoi, soSPcu:m.soSPcu,
-      soDon:m.soDon, soLuongSP:m.soLuongSP, doanhThu:m.doanhThu, giaVon:m.giaVon,
-      hoaHong:m.hoaHong, luongCung:(+man.luongCung||0), thuong, phat:(+man.phat||0), bhxh:(+man.bhxh||0)
+      soDon:m.soDon, soLuongSP:m.soLuongSP,
+      doanhThu:m.doanhThu, giaVon:m.giaVon, doanhThuTong:m.doanhThuTong, giaVonTong:m.giaVonTong,
+      hoaHong:m.hoaHong, hoaHongSandbox:m.hoaHongSandbox, hoaHongKhac:m.hoaHongKhac,
+      channels:m.channels||{}, dtKhac:m.dtKhac||0, gvKhac:m.gvKhac||0,
+      luongCung:(+man.luongCung||0), thuong, thuongSP, thuongThang, phat:(+man.phat||0), bhxh:(+man.bhxh||0),
+      products
     };
   });
   try{
@@ -384,6 +395,12 @@ $('publishBtn').addEventListener('click', async ()=>{
 // Ẩn nút nếu không phải admin
 fetch('/api/me').then(r=>r.ok?r.json():null).then(me=>{
   if(!me||me.role!=='admin'){ const b=$('publishBtn'); if(b)b.style.display='none'; }
+}).catch(()=>{});
+
+
+// Hiện tên nhân viên cạnh nút đăng xuất
+fetch('/api/me').then(r=>r.ok?r.json():null).then(me=>{
+  if(me&&me.displayName){ const b=document.getElementById('userBadge'); if(b) b.textContent='👤 '+me.displayName; }
 }).catch(()=>{});
 
 </script>

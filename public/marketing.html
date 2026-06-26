@@ -35,6 +35,7 @@
   .muted{color:#6B7C97;}
   .empty{padding:30px;text-align:center;color:#6B7C97;font-size:14px;}
   @media(max-width:680px){ h1{font-size:15px;} th,td{padding:9px 7px;font-size:12px;} .daterange{flex:1 1 100%;} }
+  .user-badge{display:inline-flex;align-items:center;gap:6px;font-size:13px;color:#9DB2FF;background:rgba(157,178,255,.1);border:1px solid rgba(157,178,255,.2);padding:7px 12px;border-radius:9px;font-weight:600;white-space:nowrap;}
 </style>
 </head>
 <body>
@@ -58,6 +59,7 @@
     <a href="/" class="link">← Dashboard</a>
     <a href="/products.html" class="link" id="navProducts">Sản phẩm</a>
     <a href="/my-salary.html" class="link" id="navMySalary">Lương của tôi</a>
+    <span class="user-badge" id="userBadge"></span>
     <a href="/logout" class="link">Đăng xuất</a>
   </div>
 </header>
@@ -160,6 +162,12 @@ fetch('/api/me').then(r=>r.ok?r.json():null).then(me=>{
   if(me && me.role!=='admin'){ const np=document.getElementById('navProducts'); if(np) np.style.display='none'; }
 }).catch(()=>{});
 load();
+
+// Hiện tên nhân viên cạnh nút đăng xuất
+fetch('/api/me').then(r=>r.ok?r.json():null).then(me=>{
+  if(me&&me.displayName){ const b=document.getElementById('userBadge'); if(b) b.textContent='👤 '+me.displayName; }
+}).catch(()=>{});
+
 </script>
 </body>
 </html>

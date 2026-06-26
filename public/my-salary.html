@@ -32,6 +32,7 @@
   .thuc .big{font-size:30px;font-weight:800;color:#7BE3B5;margin-top:6px;letter-spacing:-.5px;}
   .empty{padding:40px;text-align:center;color:#6B7C97;}
   .sec-title{font-size:11px;color:#6B7C97;text-transform:uppercase;letter-spacing:.05em;margin:16px 0 4px;font-weight:700;}
+  .user-badge{display:inline-flex;align-items:center;gap:6px;font-size:13px;color:#9DB2FF;background:rgba(157,178,255,.1);border:1px solid rgba(157,178,255,.2);padding:7px 12px;border-radius:9px;font-weight:600;white-space:nowrap;}
 </style>
 </head>
 <body>
@@ -43,6 +44,7 @@
     </div>
     <select class="pick" id="monthPick"><option>Đang tải…</option></select>
     <a href="/" class="link" id="backLink">← Trang chính</a>
+    <span class="user-badge" id="userBadge"></span>
     <a href="/logout" class="link">Đăng xuất</a>
   </div>
 </header>
@@ -151,6 +153,12 @@ fetch('/api/me').then(r=>r.ok?r.json():null).then(me=>{
 
 $('monthPick').addEventListener('change',e=>loadDetail(e.target.value));
 loadMonths();
+
+// Hiện tên nhân viên cạnh nút đăng xuất
+fetch('/api/me').then(r=>r.ok?r.json():null).then(me=>{
+  if(me&&me.displayName){ const b=document.getElementById('userBadge'); if(b) b.textContent='👤 '+me.displayName; }
+}).catch(()=>{});
+
 </script>
 </body>
 </html>
