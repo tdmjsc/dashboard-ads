@@ -1,0 +1,314 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Quản lý đơn Thái Lan — TDM</title>
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@tabler/icons-webfont@2.44.0/tabler-icons.min.css">
+<style>
+  *{box-sizing:border-box;margin:0;padding:0}
+  :root{
+    --bg:#f4f5f7;--surface:#fff;--border:#e2e4e9;--border-strong:#c8ccd6;
+    --text:#1a1d23;--text2:#5c6170;--text3:#9399a6;
+    --blue:#2a78d6;--blue-bg:#e8f0fc;--blue-tx:#1a55a3;
+    --green:#1baf7a;--green-bg:#e2f5ed;--green-tx:#0d7a54;
+    --amber:#e09000;--amber-bg:#fef3d6;--amber-tx:#8a5a00;
+    --red:#e34948;--red-bg:#fde8e8;--red-tx:#a32d2d;
+    --purple:#6e56cf;--purple-bg:#eeebfc;--purple-tx:#4a3aa7;
+    --pink:#d4537e;--pink-bg:#fce8f1;--pink-tx:#8a2452;
+    --radius:8px;
+  }
+  body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;background:var(--bg);color:var(--text);font-size:14px;min-height:100vh}
+  #app{display:flex;flex-direction:column;min-height:100vh}
+  .topnav{background:var(--surface);border-bottom:1px solid var(--border);padding:0 20px;display:flex;align-items:center;gap:16px;height:54px;position:sticky;top:0;z-index:100}
+  .topnav-brand{font-size:15px;font-weight:600;display:flex;align-items:center;gap:8px;color:var(--text)}
+  .topnav-brand i{color:var(--blue);font-size:20px}
+  .topnav-tabs{display:flex;gap:2px;margin-left:8px}
+  .tab-btn{padding:6px 14px;border-radius:6px;border:none;background:transparent;font-size:13px;color:var(--text2);cursor:pointer;display:flex;align-items:center;gap:5px}
+  .tab-btn:hover{background:var(--bg)}
+  .tab-btn.active{background:var(--blue-bg);color:var(--blue-tx);font-weight:500}
+  .topnav-right{margin-left:auto;display:flex;align-items:center;gap:8px}
+  .btn-sm{padding:6px 12px;border-radius:var(--radius);border:1px solid var(--border-strong);background:var(--surface);font-size:12px;color:var(--text2);cursor:pointer;display:inline-flex;align-items:center;gap:5px}
+  .btn-sm:hover{background:var(--bg)}
+  .main{padding:20px;flex:1}
+  .stats-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(130px,1fr));gap:10px;margin-bottom:16px}
+  .stat-card{background:var(--surface);border:1px solid var(--border);border-radius:12px;padding:12px 16px}
+  .stat-label{font-size:11px;color:var(--text3);margin-bottom:4px;text-transform:uppercase;letter-spacing:.5px}
+  .stat-val{font-size:22px;font-weight:600;color:var(--text)}
+  .stat-val.blue{color:var(--blue)}
+  .stat-val.green{color:var(--green)}
+  .stat-val.amber{color:var(--amber)}
+  .toolbar{display:flex;gap:8px;margin-bottom:12px;flex-wrap:wrap;align-items:center}
+  .toolbar input[type=text]{flex:1;min-width:180px;height:34px;padding:0 10px;border:1px solid var(--border-strong);border-radius:var(--radius);font-size:13px;outline:none}
+  .toolbar select{height:34px;padding:0 8px;border:1px solid var(--border-strong);border-radius:var(--radius);font-size:13px;background:var(--surface);color:var(--text);cursor:pointer;outline:none}
+  .table-wrap{background:var(--surface);border:1px solid var(--border);border-radius:12px;overflow:hidden;overflow-x:auto}
+  table{width:100%;border-collapse:collapse;min-width:900px}
+  th{background:#f9fafb;padding:9px 12px;text-align:left;font-weight:500;font-size:11px;color:var(--text3);border-bottom:1px solid var(--border);white-space:nowrap;text-transform:uppercase;letter-spacing:.4px}
+  td{padding:9px 12px;border-bottom:1px solid var(--border);font-size:13px;vertical-align:middle}
+  tr:last-child td{border-bottom:none}
+  tr:hover td{background:#fafbfc}
+  .oc{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:0}
+  .status-sel{font-size:11px;border:1px solid var(--border);border-radius:20px;padding:3px 8px;background:transparent;color:var(--text);cursor:pointer;outline:none;max-width:120px}
+  .s-new{background:var(--blue-bg);color:var(--blue-tx)}
+  .s-confirmed{background:var(--green-bg);color:var(--green-tx)}
+  .s-shipping{background:var(--amber-bg);color:var(--amber-tx)}
+  .s-done{background:#d4f5e8;color:#0a6640}
+  .s-cancel{background:var(--red-bg);color:var(--red-tx)}
+  .s-return{background:var(--pink-bg);color:var(--pink-tx)}
+  .combo-pill{font-size:11px;padding:2px 8px;border-radius:4px;background:var(--blue-bg);color:var(--blue-tx);white-space:nowrap;display:inline-block;max-width:160px;overflow:hidden;text-overflow:ellipsis}
+  .auto-tag{font-size:10px;padding:1px 5px;border-radius:3px;background:var(--green-bg);color:var(--green-tx);margin-left:4px}
+  .mk-tag{font-size:11px;padding:2px 8px;border-radius:20px;background:var(--purple-bg);color:var(--purple-tx)}
+  .pager{margin-top:10px;font-size:12px;color:var(--text3);text-align:right}
+  .mk-cards{display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:12px;margin-bottom:16px}
+  .mk-card{background:var(--surface);border:1px solid var(--border);border-radius:12px;padding:16px}
+  .mk-card-head{display:flex;align-items:center;gap:10px;margin-bottom:12px}
+  .mk-avatar{width:36px;height:36px;border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:13px;font-weight:600;flex-shrink:0}
+  .mk-name{font-size:14px;font-weight:500}
+  .mk-rows{font-size:12px}
+  .mk-row{display:flex;justify-content:space-between;padding:4px 0;border-bottom:1px solid var(--border)}
+  .mk-row:last-child{border-bottom:none;font-weight:500}
+  .mk-row .lbl{color:var(--text3)}
+  .toast{position:fixed;bottom:20px;right:20px;background:#1a1d23;color:#fff;padding:10px 16px;border-radius:8px;font-size:13px;z-index:999;opacity:0;transition:opacity .3s;pointer-events:none}
+  .toast.show{opacity:1}
+  .empty{text-align:center;padding:48px;color:var(--text3)}
+  .empty i{font-size:36px;display:block;margin-bottom:10px}
+  .spinning{animation:spin .8s linear infinite}
+  @keyframes spin{to{transform:rotate(360deg)}}
+  #tab-orders{display:block}
+  #tab-stats{display:none}
+</style>
+</head>
+<body>
+<div id="app" style="display:flex;flex-direction:column;min-height:100vh">
+  <div class="topnav">
+    <div class="topnav-brand"><i class="ti ti-receipt"></i> Đơn Thái Lan</div>
+    <div class="topnav-tabs">
+      <button class="tab-btn active" onclick="switchTab('orders',this)"><i class="ti ti-list"></i> Đơn hàng</button>
+      <button class="tab-btn" onclick="switchTab('stats',this)"><i class="ti ti-chart-bar"></i> Thống kê</button>
+    </div>
+    <div class="topnav-right">
+      <span id="last-update" style="font-size:11px;color:var(--text3)"></span>
+      <button class="btn-sm" onclick="loadOrders()"><i class="ti ti-refresh" id="refresh-icon"></i></button>
+      <button class="btn-sm" onclick="exportCSV()"><i class="ti ti-download"></i> Xuất CSV</button>
+      <button class="btn-sm" onclick="logout()"><i class="ti ti-logout"></i></button>
+    </div>
+  </div>
+  <div class="main">
+    <div id="tab-orders">
+      <div class="stats-grid" id="stats-bar"></div>
+      <div class="toolbar">
+        <input type="text" id="search" placeholder="Tìm tên, SĐT, địa chỉ..." oninput="filterTable()">
+        <select id="fil-status" onchange="filterTable()">
+          <option value="">Tất cả tình trạng</option>
+          <option>Mới về</option><option>Đã xác nhận</option><option>Đang giao</option>
+          <option>Thành công</option><option>Huỷ</option><option>Hoàn hàng</option>
+        </select>
+        <select id="fil-mk" onchange="filterTable()"><option value="">Tất cả MKT</option></select>
+      </div>
+      <div class="table-wrap">
+        <table>
+          <thead><tr>
+            <th style="width:44px">#</th>
+            <th style="width:120px">Ngày về</th>
+            <th style="width:150px">Họ và tên</th>
+            <th style="width:100px">SĐT</th>
+            <th style="width:150px">Địa chỉ</th>
+            <th style="width:170px">Combo</th>
+            <th style="width:44px;text-align:center">SL</th>
+            <th style="width:80px;text-align:right">Giá (THB)</th>
+            <th style="width:90px">Marketing</th>
+            <th style="width:120px">Tình trạng</th>
+            <th style="width:100px">Ghi chú</th>
+          </tr></thead>
+          <tbody id="order-tbody"></tbody>
+        </table>
+        <div id="empty-state" class="empty" style="display:none"><i class="ti ti-inbox"></i>Chưa có đơn hàng nào</div>
+      </div>
+      <div class="pager" id="pager"></div>
+    </div>
+    <div id="tab-stats">
+      <div class="mk-cards" id="mk-cards"></div>
+      <div class="table-wrap" style="margin-top:4px">
+        <table>
+          <thead><tr>
+            <th>Nhân viên</th>
+            <th style="text-align:center">Mới về</th>
+            <th style="text-align:center">Đã XN</th>
+            <th style="text-align:center">Đang giao</th>
+            <th style="text-align:center">Thành công</th>
+            <th style="text-align:center">Huỷ</th>
+            <th style="text-align:center">Hoàn</th>
+            <th style="text-align:right">Tổng đơn</th>
+            <th style="text-align:right">Doanh thu (THB)</th>
+          </tr></thead>
+          <tbody id="stat-tbody"></tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+</div>
+<div class="toast" id="toast"></div>
+<script>
+const BASE = window.location.origin;
+let allOrders = [];
+const STATUSES = ['Mới về','Đã xác nhận','Đang giao','Thành công','Huỷ','Hoàn hàng'];
+const S_CLASS = {'Mới về':'s-new','Đã xác nhận':'s-confirmed','Đang giao':'s-shipping','Thành công':'s-done','Huỷ':'s-cancel','Hoàn hàng':'s-return'};
+const AV_COLORS = [['#E8F0FC','#1a55a3'],['#E2F5ED','#0d7a54'],['#FEF3D6','#8a5a00'],['#EEEBFC','#4a3aa7'],['#FCE8F1','#8a2452']];
+const COMBO_MAP = {
+  'คอมโบ 2 กล่อง: 549 THB + ค่าส่ง 49 THB':{qty:2,price:598,label:'Combo 2 hộp + ship'},
+  'คอมโบ 3 กล่อง: 799 THB (แถมฟรี 1 กล่อง + ส่งฟรี)':{qty:4,price:799,label:'Combo 3→4 hộp'},
+  'คอมโบ 4 กล่อง: 959 THB (แถมฟรี 1 กล่อง + ส่งฟรี)':{qty:5,price:959,label:'Combo 4→5 hộp'},
+  'คอมโบ 5 กล่อง: 1,129 THB (แถมฟรี 1 กล่อง + ส่งฟรี)':{qty:6,price:1129,label:'Combo 5→6 hộp'},
+};
+function comboLabel(raw){return(COMBO_MAP[(raw||'').trim()]||{}).label||raw;}
+function logout(){window.location.href='/thailand/logout';}
+
+async function loadOrders(){
+  const icon=document.getElementById('refresh-icon');
+  if(icon)icon.classList.add('spinning');
+  try{
+    const r=await fetch(`${BASE}/api/thailand/orders`);
+    if(r.status===401){window.location.href='/thailand/login';return;}
+    if(!r.ok)return;
+    const json=await r.json();
+    allOrders=json.data||[];
+    renderStats();renderTable(allOrders);renderMkFilter();
+    const el=document.getElementById('last-update');
+    const now=new Date();
+    if(el)el.textContent=`Cập nhật ${now.getHours()}:${String(now.getMinutes()).padStart(2,'0')}`;
+  }catch(e){}
+  finally{if(icon)icon.classList.remove('spinning');}
+}
+setInterval(loadOrders,60000);
+
+function renderStats(){
+  const total=allOrders.length;
+  const moi=allOrders.filter(o=>o.status==='Mới về').length;
+  const done=allOrders.filter(o=>o.status==='Thành công').length;
+  const rev=allOrders.filter(o=>o.status==='Thành công').reduce((a,o)=>a+(o.price||0),0);
+  const qty=allOrders.filter(o=>o.status==='Thành công').reduce((a,o)=>a+(o.qty||0),0);
+  document.getElementById('stats-bar').innerHTML=`
+    <div class="stat-card"><div class="stat-label">Tổng đơn</div><div class="stat-val">${total}</div></div>
+    <div class="stat-card"><div class="stat-label">Mới về</div><div class="stat-val blue">${moi}</div></div>
+    <div class="stat-card"><div class="stat-label">Thành công</div><div class="stat-val green">${done}</div></div>
+    <div class="stat-card"><div class="stat-label">Doanh thu (THB)</div><div class="stat-val">${rev.toLocaleString()}</div></div>
+    <div class="stat-card"><div class="stat-label">Tổng hộp gel</div><div class="stat-val amber">${qty}</div></div>`;
+}
+
+function renderTable(list){
+  const tbody=document.getElementById('order-tbody');
+  const empty=document.getElementById('empty-state');
+  document.getElementById('pager').textContent=`Hiển thị ${list.length} / ${allOrders.length} đơn`;
+  if(!list.length){tbody.innerHTML='';empty.style.display='block';return;}
+  empty.style.display='none';
+  tbody.innerHTML=list.map(o=>{
+    const dt=new Date(o.received_at).toLocaleString('vi-VN',{day:'2-digit',month:'2-digit',hour:'2-digit',minute:'2-digit'});
+    const label=comboLabel(o.combo_raw);
+    const isAuto=!!COMBO_MAP[(o.combo_raw||'').trim()];
+    return `<tr>
+      <td style="color:var(--text3);font-size:11px">${o.id}</td>
+      <td style="font-size:11px;color:var(--text2)">${dt}</td>
+      <td class="oc" style="width:150px" title="${o.full_name}"><strong style="font-weight:500">${o.full_name||'—'}</strong></td>
+      <td style="font-family:monospace;font-size:12px">${o.phone||'—'}</td>
+      <td class="oc" style="width:150px;color:var(--text2)" title="${o.address||''}">${o.address||'—'}</td>
+      <td style="max-width:170px"><span class="combo-pill" title="${o.combo_raw||''}">${label||o.combo_raw||'—'}</span>${isAuto?'<span class="auto-tag">tự động</span>':''}</td>
+      <td style="text-align:center;font-weight:500">${o.qty!=null?o.qty:'—'}</td>
+      <td style="text-align:right;font-weight:500">${o.price!=null?Number(o.price).toLocaleString():'—'}</td>
+      <td>${o.marketer?`<span class="mk-tag">${o.marketer}</span>`:'<span style="color:var(--text3)">—</span>'}</td>
+      <td><select class="status-sel ${S_CLASS[o.status]||''}" onchange="updateStatus(${o.id},this.value)">
+        ${STATUSES.map(s=>`<option${s===o.status?' selected':''}>${s}</option>`).join('')}
+      </select></td>
+      <td class="oc" style="width:100px;color:var(--text3)" title="${o.note||''}">${o.note||'—'}</td>
+    </tr>`;
+  }).join('');
+}
+
+function renderMkFilter(){
+  const mks=[...new Set(allOrders.map(o=>o.marketer).filter(Boolean))];
+  const sel=document.getElementById('fil-mk');
+  const cur=sel.value;
+  sel.innerHTML='<option value="">Tất cả MKT</option>'+mks.map(m=>`<option value="${m}">${m}</option>`).join('');
+  sel.value=cur;
+}
+
+function filterTable(){
+  const q=document.getElementById('search').value.toLowerCase();
+  const fs=document.getElementById('fil-status').value;
+  const fm=document.getElementById('fil-mk').value;
+  renderTable(allOrders.filter(o=>
+    (!q||(o.full_name||'').toLowerCase().includes(q)||(o.phone||'').includes(q)||(o.address||'').toLowerCase().includes(q))&&
+    (!fs||o.status===fs)&&(!fm||o.marketer===fm)
+  ));
+}
+
+async function updateStatus(id,status){
+  const r=await fetch(`${BASE}/api/thailand/orders/${id}`,{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify({status,note:''})});
+  if(r.ok){const o=allOrders.find(x=>x.id===id);if(o)o.status=status;renderStats();showToast(`Đã cập nhật: ${status}`);}
+  else showToast('Lỗi cập nhật!');
+}
+
+function switchTab(tab,btn){
+  document.querySelectorAll('.tab-btn').forEach(b=>b.classList.remove('active'));
+  btn.classList.add('active');
+  document.getElementById('tab-orders').style.display=tab==='orders'?'block':'none';
+  document.getElementById('tab-stats').style.display=tab==='stats'?'block':'none';
+  if(tab==='stats')renderStatsTab();
+}
+
+function renderStatsTab(){
+  const mkMap={};
+  allOrders.forEach(o=>{
+    const mk=o.marketer||'(chưa có)';
+    if(!mkMap[mk])mkMap[mk]={total:0,revenue:0,new:0,confirmed:0,shipping:0,done:0,cancel:0,ret:0};
+    const m=mkMap[mk];m.total++;m.revenue+=(o.price||0);
+    if(o.status==='Mới về')m.new++;if(o.status==='Đã xác nhận')m.confirmed++;
+    if(o.status==='Đang giao')m.shipping++;if(o.status==='Thành công')m.done++;
+    if(o.status==='Huỷ')m.cancel++;if(o.status==='Hoàn hàng')m.ret++;
+  });
+  const list=Object.entries(mkMap).sort((a,b)=>b[1].revenue-a[1].revenue);
+  document.getElementById('mk-cards').innerHTML=list.map(([mk,s],i)=>{
+    const [bg,tx]=AV_COLORS[i%5];
+    const initials=mk.split(' ').map(w=>w[0]).join('').slice(0,2).toUpperCase();
+    return `<div class="mk-card"><div class="mk-card-head"><div class="mk-avatar" style="background:${bg};color:${tx}">${initials}</div><div class="mk-name">${mk}${i===0?'<span class="auto-tag" style="margin-left:6px">#1</span>':''}</div></div>
+    <div class="mk-rows">
+      <div class="mk-row"><span class="lbl">Tổng đơn</span><span>${s.total}</span></div>
+      <div class="mk-row"><span class="lbl">Mới về</span><span style="color:var(--blue)">${s.new}</span></div>
+      <div class="mk-row"><span class="lbl">Đang giao</span><span style="color:var(--amber)">${s.shipping}</span></div>
+      <div class="mk-row"><span class="lbl">Thành công</span><span style="color:var(--green)">${s.done}</span></div>
+      <div class="mk-row"><span class="lbl">Doanh thu</span><span style="color:var(--green)">${s.revenue.toLocaleString()} THB</span></div>
+    </div></div>`;
+  }).join('');
+  document.getElementById('stat-tbody').innerHTML=list.map(([mk,s])=>`
+    <tr>
+      <td><strong style="font-weight:500">${mk}</strong></td>
+      <td style="text-align:center;color:var(--blue)">${s.new}</td>
+      <td style="text-align:center;color:var(--green-tx)">${s.confirmed}</td>
+      <td style="text-align:center;color:var(--amber)">${s.shipping}</td>
+      <td style="text-align:center;color:var(--green);font-weight:500">${s.done}</td>
+      <td style="text-align:center;color:var(--red)">${s.cancel}</td>
+      <td style="text-align:center;color:var(--pink)">${s.ret}</td>
+      <td style="text-align:right;font-weight:500">${s.total}</td>
+      <td style="text-align:right;font-weight:500;color:var(--green)">${s.revenue.toLocaleString()}</td>
+    </tr>`).join('');
+}
+
+function exportCSV(){
+  const heads=['ID','Ngày về','Họ và tên','SĐT','Địa chỉ','Combo','SL gel','Giá (THB)','Marketing','Tình trạng','Ghi chú'];
+  const rows=allOrders.map(o=>[o.id,o.received_at,o.full_name,o.phone,o.address,o.combo_raw,o.qty||'',o.price||'',o.marketer,o.status,o.note||''].map(v=>`"${String(v||'').replace(/"/g,'""')}"`).join(','));
+  const csv='\uFEFF'+[heads.join(','),...rows].join('\n');
+  const a=document.createElement('a');
+  a.href=URL.createObjectURL(new Blob([csv],{type:'text/csv;charset=utf-8'}));
+  a.download=`don-thai-lan-${new Date().toISOString().slice(0,10)}.csv`;
+  a.click();
+}
+
+function showToast(msg){
+  const t=document.getElementById('toast');
+  t.textContent=msg;t.classList.add('show');
+  setTimeout(()=>t.classList.remove('show'),2500);
+}
+
+loadOrders();
+</script>
+</body>
+</html>
