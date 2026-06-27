@@ -1,0 +1,432 @@
+// =====================================================================
+//  MODULE QUẢN LÝ ĐƠN HÀNG THÁI LAN  —  thailand.js
+//  Thiết kế AN TOÀN TUYỆT ĐỐI: nếu phần này lỗi, KHÔNG làm sập app chính.
+//  - Kết nối MySQL kiểu LAZY (chỉ kết nối khi có request, không chặn khởi động)
+//  - Mọi thứ bọc try/catch, lỗi DB chỉ trả JSON lỗi cho route /thailand
+//  - Export 1 hàm mountThailand(app, deps) để server.js gọi trong try/catch
+// =====================================================================
+
+// Trạng thái đơn hợp lệ
+const TRANG_THAI = ['Mới về', 'Đã xác nhận', 'Đang giao', 'Thành công', 'Huỷ', 'Hoàn hàng'];
+
+// ---- Tách Số lượng + Giá từ combo (chuỗi tiếng Thái) ----
+// Quy tắc theo bảng người dùng cung cấp. Nếu không khớp mẫu nào → trả 0.
+function parseCombo(message) {
+  const s = String(message == null ? '' : message);
+  // Tìm "X กล่อง" để biết số hộp mua (combo)
+  const mBox = s.match(/(\d+)\s*กล่อง/);
+  const boxes = mBox ? parseInt(mBox[1], 10) : 0;
+  // Tìm giá: số đứng trước "THB" (có thể có dấu phẩy ngăn nghìn)
+  const mPrice = s.match(/([\d,]+)\s*THB/);
+  const gia = mPrice ? parseInt(mPrice[1].replace(/,/g, ''), 10) : 0;
+
+  // Số lượng gel thực nhận theo bảng (mua 3 tặng 1 = 4, mua 4 tặng 1 = 5, mua 5 tặng 1 = 6)
+  let soLuong = boxes;
+  if (boxes >= 3) soLuong = boxes + 1; // combo 3/4/5 đều tặng thêm 1
+  return { soLuong: soLuong || 0, gia: gia || 0, boxes: boxes || 0 };
+}
+
+// ---- Tạo bảng nếu chưa có (chạy lazy, an toàn) ----
+async function ensureTable(pool) {
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS th_orders (
+      id INT AUTO_INCREMENT PRIMARY KEY,
+      created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+      ngay_ve DATE,
+      ho_ten VARCHAR(255),
+      sdt VARCHAR(50),
+      dia_chi TEXT,
+      combo TEXT,
+      so_luong INT DEFAULT 0,
+      gia_thb INT DEFAULT 0,
+      nhan_vien VARCHAR(120) DEFAULT '',
+      trang_thai VARCHAR(40) DEFAULT 'Mới về',
+      ghi_chu TEXT,
+      INDEX idx_ngay (ngay_ve),
+      INDEX idx_nv (nhan_vien),
+      INDEX idx_tt (trang_thai)
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+  `);
+}
+
+// =====================================================================
+//  mountThailand(app, { mysql, requireLogin })
+//   - app: express app
+//   - mysql: module 'mysql2/promise' (truyền từ server.js sau khi import động)
+//   - requireLogin: middleware đăng nhập của dashboard (tái dùng phiên admin)
+// =====================================================================
+export function mountThailand(app, { mysql, requireLogin, express }) {
+  let pool = null;
+  let tableReady = false;
+
+  // Lazy: chỉ tạo pool khi cần, KHÔNG chạy lúc khởi động
+  function getPool() {
+    if (pool) return pool;
+    const host = process.env.TH_DB_HOST || 'localhost';
+    const user = process.env.TH_DB_USER || '';
+    const password = process.env.TH_DB_PASS || '';
+    const database = process.env.TH_DB_NAME || '';
+    if (!user || !database) throw new Error('Chưa cấu hình biến môi trường TH_DB_* cho Thailand');
+    pool = mysql.createPool({
+      host, user, password, database,
+      waitForConnections: true, connectionLimit: 5, queueLimit: 0,
+      charset: 'utf8mb4',
+    });
+    return pool;
+  }
+
+  // Đảm bảo có pool + bảng, gọi đầu mỗi request DB
+  async function db() {
+    const p = getPool();
+    if (!tableReady) { await ensureTable(p); tableReady = true; }
+    return p;
+  }
+
+  // Middleware bắt lỗi async gọn gàng
+  const wrap = fn => (req, res) => fn(req, res).catch(err => {
+    console.error('[thailand] lỗi:', err.message);
+    res.status(500).json({ ok: false, message: 'Lỗi máy chủ Thailand: ' + err.message });
+  });
+
+  // ---- Auth riêng cho Thailand (đơn giản, dùng session admin của dashboard) ----
+  // Nếu đã đăng nhập dashboard với role admin → cho vào luôn.
+  function thaiAuth(req, res, next) {
+    const u = req.session && req.session.user;
+    if (u && u.role === 'admin') return next();
+    // Cho phép đăng nhập riêng bằng TH_ADMIN_USER/PASS qua session.thAuth
+    if (req.session && req.session.thAuth) return next();
+    // Chưa đăng nhập
+    if (req.path.startsWith('/api/')) return res.status(401).json({ ok: false, message: 'Cần đăng nhập' });
+    return res.redirect('/thailand/login');
+  }
+
+  // ====================== WEBHOOK NHẬN ĐƠN TỪ LADIPAGE ======================
+  // POST /thailand/webhook  — KHÔNG cần đăng nhập (Ladipage gọi tự động)
+  // Bọc try/catch, lỗi DB không làm sập gì, chỉ trả lỗi JSON.
+  app.post('/thailand/webhook', express.json(), wrap(async (req, res) => {
+    const b = req.body || {};
+    const name = String(b.name || b.ho_ten || '').trim();
+    const phone = String(b.phone || b.sdt || '').trim();
+    const address = String(b.address || b.dia_chi || '').trim();
+    const message = String(b.message || b.combo || '').trim();
+    if (!name && !phone) return res.json({ ok: false, message: 'Thiếu tên và SĐT' });
+
+    const { soLuong, gia } = parseCombo(message);
+    // Nhân viên marketing: Ladipage có thể gửi qua utm/ref — lấy nếu có
+    const nhanVien = String(b.nhan_vien || b.marketing || b.utm_source || '').trim();
+
+    const p = await db();
+    const today = new Date().toISOString().slice(0, 10);
+    await p.query(
+      `INSERT INTO th_orders (ngay_ve, ho_ten, sdt, dia_chi, combo, so_luong, gia_thb, nhan_vien, trang_thai)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'Mới về')`,
+      [today, name, phone, address, message, soLuong, gia, nhanVien]
+    );
+    res.json({ ok: true, message: 'Đã nhận đơn', parsed: { soLuong, gia } });
+  }));
+
+  // ====================== ĐĂNG NHẬP RIÊNG CHO THAILAND ======================
+  app.get('/thailand/login', (req, res) => {
+    res.type('html').send(loginHtml());
+  });
+  app.post('/thailand/login', express.urlencoded({ extended: true }), (req, res) => {
+    const { user, pass } = req.body || {};
+    const okUser = process.env.TH_ADMIN_USER || 'admin';
+    const okPass = process.env.TH_ADMIN_PASS || '';
+    if (user === okUser && pass === okPass && okPass) {
+      req.session.thAuth = true;
+      return res.redirect('/thailand');
+    }
+    res.type('html').send(loginHtml('Sai tài khoản hoặc mật khẩu'));
+  });
+  app.get('/thailand/logout', (req, res) => {
+    if (req.session) req.session.thAuth = false;
+    res.redirect('/thailand/login');
+  });
+
+  // ====================== API DỮ LIỆU (cần đăng nhập) ======================
+  // Danh sách đơn + lọc + tìm kiếm
+  app.get('/thailand/api/orders', thaiAuth, wrap(async (req, res) => {
+    const p = await db();
+    const { tu, den, nv, tt, q } = req.query;
+    const where = [], args = [];
+    if (tu) { where.push('ngay_ve >= ?'); args.push(tu); }
+    if (den) { where.push('ngay_ve <= ?'); args.push(den); }
+    if (nv) { where.push('nhan_vien = ?'); args.push(nv); }
+    if (tt) { where.push('trang_thai = ?'); args.push(tt); }
+    if (q) { where.push('(ho_ten LIKE ? OR sdt LIKE ? OR dia_chi LIKE ?)'); const like = '%' + q + '%'; args.push(like, like, like); }
+    const wsql = where.length ? 'WHERE ' + where.join(' AND ') : '';
+    const [rows] = await p.query(`SELECT * FROM th_orders ${wsql} ORDER BY id DESC LIMIT 2000`, args);
+    // Danh sách nhân viên (để lọc)
+    const [nvRows] = await p.query(`SELECT DISTINCT nhan_vien FROM th_orders WHERE nhan_vien <> '' ORDER BY nhan_vien`);
+    res.json({ ok: true, orders: rows, nhanViens: nvRows.map(r => r.nhan_vien), trangThais: TRANG_THAI });
+  }));
+
+  // Cập nhật 1 đơn (trạng thái, nhân viên, hoặc sửa thông tin)
+  app.post('/thailand/api/order/update', thaiAuth, express.json(), wrap(async (req, res) => {
+    const { id, field, value } = req.body || {};
+    if (!id || !field) return res.json({ ok: false, message: 'Thiếu id hoặc field' });
+    const allowed = ['trang_thai', 'nhan_vien', 'ho_ten', 'sdt', 'dia_chi', 'so_luong', 'gia_thb', 'ghi_chu', 'ngay_ve'];
+    if (!allowed.includes(field)) return res.json({ ok: false, message: 'Field không hợp lệ' });
+    if (field === 'trang_thai' && !TRANG_THAI.includes(value)) return res.json({ ok: false, message: 'Trạng thái không hợp lệ' });
+    const p = await db();
+    await p.query(`UPDATE th_orders SET ${field} = ? WHERE id = ?`, [value, id]);
+    res.json({ ok: true });
+  }));
+
+  // Thêm đơn thủ công
+  app.post('/thailand/api/order/add', thaiAuth, express.json(), wrap(async (req, res) => {
+    const b = req.body || {};
+    const { soLuong, gia } = parseCombo(b.combo || '');
+    const p = await db();
+    await p.query(
+      `INSERT INTO th_orders (ngay_ve, ho_ten, sdt, dia_chi, combo, so_luong, gia_thb, nhan_vien, trang_thai)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      [b.ngay_ve || new Date().toISOString().slice(0, 10), b.ho_ten || '', b.sdt || '', b.dia_chi || '',
+       b.combo || '', b.so_luong || soLuong, b.gia_thb || gia, b.nhan_vien || '', b.trang_thai || 'Mới về']
+    );
+    res.json({ ok: true });
+  }));
+
+  // Xoá đơn
+  app.post('/thailand/api/order/delete', thaiAuth, express.json(), wrap(async (req, res) => {
+    const { id } = req.body || {};
+    if (!id) return res.json({ ok: false, message: 'Thiếu id' });
+    const p = await db();
+    await p.query(`DELETE FROM th_orders WHERE id = ?`, [id]);
+    res.json({ ok: true });
+  }));
+
+  // Thống kê doanh thu theo nhân viên
+  app.get('/thailand/api/stats', thaiAuth, wrap(async (req, res) => {
+    const p = await db();
+    const { tu, den } = req.query;
+    const where = [], args = [];
+    if (tu) { where.push('ngay_ve >= ?'); args.push(tu); }
+    if (den) { where.push('ngay_ve <= ?'); args.push(den); }
+    const wsql = where.length ? 'WHERE ' + where.join(' AND ') : '';
+    const [rows] = await p.query(`
+      SELECT nhan_vien,
+        COUNT(*) AS so_don,
+        SUM(CASE WHEN trang_thai='Thành công' THEN 1 ELSE 0 END) AS don_thanh_cong,
+        SUM(CASE WHEN trang_thai='Thành công' THEN gia_thb ELSE 0 END) AS doanh_thu_thb,
+        SUM(so_luong) AS tong_sl
+      FROM th_orders ${wsql}
+      GROUP BY nhan_vien ORDER BY doanh_thu_thb DESC`, args);
+    res.json({ ok: true, stats: rows });
+  }));
+
+  // Xuất CSV
+  app.get('/thailand/api/export', thaiAuth, wrap(async (req, res) => {
+    const p = await db();
+    const [rows] = await p.query(`SELECT * FROM th_orders ORDER BY id DESC LIMIT 10000`);
+    const head = ['ID', 'Ngày về', 'Họ tên', 'SĐT', 'Địa chỉ', 'Combo', 'Số lượng', 'Giá THB', 'Nhân viên', 'Trạng thái', 'Ghi chú'];
+    const esc = v => '"' + String(v == null ? '' : v).replace(/"/g, '""') + '"';
+    let csv = '\uFEFF' + head.map(esc).join(',') + '\n';
+    for (const r of rows) {
+      csv += [r.id, r.ngay_ve, r.ho_ten, r.sdt, r.dia_chi, r.combo, r.so_luong, r.gia_thb, r.nhan_vien, r.trang_thai, r.ghi_chu].map(esc).join(',') + '\n';
+    }
+    res.setHeader('Content-Type', 'text/csv; charset=utf-8');
+    res.setHeader('Content-Disposition', 'attachment; filename="don-thailand.csv"');
+    res.send(csv);
+  }));
+
+  // ====================== TRANG QUẢN LÝ (HTML) ======================
+  app.get('/thailand', thaiAuth, (req, res) => {
+    res.type('html').send(pageHtml());
+  });
+
+  console.log('[thailand] Đã gắn module quản lý đơn Thái Lan tại /thailand');
+}
+
+// ---- HTML trang đăng nhập ----
+function loginHtml(err) {
+  return `<!DOCTYPE html><html lang="vi"><head><meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Đăng nhập — Đơn Thái Lan</title>
+<style>body{margin:0;font-family:system-ui,sans-serif;background:#0B1322;color:#E7EEF8;display:grid;place-items:center;height:100vh;}
+.box{background:#101B2E;padding:32px;border-radius:16px;width:320px;border:1px solid rgba(255,255,255,.08);}
+h1{font-size:18px;margin:0 0 18px;}input{width:100%;padding:11px;margin-bottom:12px;border-radius:9px;border:1px solid rgba(255,255,255,.12);background:rgba(255,255,255,.06);color:#fff;font-size:14px;box-sizing:border-box;}
+button{width:100%;padding:12px;border:none;border-radius:9px;background:#3D5AFE;color:#fff;font-size:14px;font-weight:600;cursor:pointer;}
+.err{color:#ff9b8a;font-size:13px;margin-bottom:12px;}</style></head>
+<body><form class="box" method="POST" action="/thailand/login">
+<h1>🇹🇭 Đơn hàng Thái Lan</h1>
+${err ? `<div class="err">${err}</div>` : ''}
+<input name="user" placeholder="Tài khoản" autofocus>
+<input name="pass" type="password" placeholder="Mật khẩu">
+<button type="submit">Đăng nhập</button>
+</form></body></html>`;
+}
+
+// ---- HTML trang quản lý chính ----
+function pageHtml() {
+  return `<!DOCTYPE html><html lang="vi"><head><meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Quản lý đơn Thái Lan</title>
+<style>
+*{box-sizing:border-box;}body{margin:0;font-family:system-ui,sans-serif;background:#0B1322;color:#E7EEF8;}
+header{background:#10192B;border-bottom:1px solid rgba(255,255,255,.07);padding:14px 18px;display:flex;align-items:center;gap:12px;flex-wrap:wrap;}
+h1{font-size:17px;margin:0;flex:1;}
+.btn{font-size:13px;font-weight:600;color:#fff;background:#3D5AFE;border:none;padding:8px 14px;border-radius:9px;cursor:pointer;}
+.btn.g{background:#7BE3B5;color:#0B1322;}.btn.ghost{background:rgba(255,255,255,.06);border:1px solid rgba(255,255,255,.14);}
+.link{color:#C4D0E2;font-size:13px;text-decoration:none;border:1px solid rgba(255,255,255,.14);padding:7px 12px;border-radius:9px;}
+main{padding:16px;max-width:1400px;margin:0 auto;}
+.filters{display:flex;gap:8px;flex-wrap:wrap;margin-bottom:14px;align-items:center;}
+.filters input,.filters select{font-size:13px;color:#fff;background:rgba(255,255,255,.06);border:1px solid rgba(255,255,255,.12);padding:8px 10px;border-radius:8px;color-scheme:dark;}
+.tabs{display:flex;gap:8px;margin-bottom:14px;}
+.tab{padding:8px 14px;border-radius:9px;background:rgba(255,255,255,.06);border:1px solid rgba(255,255,255,.1);cursor:pointer;font-size:13px;}
+.tab.on{background:#3D5AFE;border-color:#3D5AFE;}
+.wrap{overflow-x:auto;border-radius:12px;}
+table{width:100%;border-collapse:collapse;background:#101B2E;min-width:1100px;}
+th,td{padding:10px 12px;text-align:left;font-size:13px;border-bottom:1px solid rgba(255,255,255,.05);white-space:nowrap;}
+th{background:#16233A;color:#9FB0C8;font-size:11.5px;text-transform:uppercase;}
+td.num{text-align:right;font-variant-numeric:tabular-nums;}
+select.st,input.ed{font-size:12.5px;color:#fff;background:rgba(255,255,255,.06);border:1px solid rgba(255,255,255,.12);border-radius:6px;padding:4px 6px;color-scheme:dark;}
+input.ed{width:100px;}.st-moi{color:#9DB2FF;}.st-tc{color:#7BE3B5;}.st-huy{color:#ff9b8a;}
+.muted{color:#6B7C97;}.empty{padding:36px;text-align:center;color:#6B7C97;}
+.stat-card{display:inline-block;background:#101B2E;border:1px solid rgba(255,255,255,.07);border-radius:12px;padding:14px 18px;margin:0 10px 10px 0;}
+.stat-card .nv{font-size:13px;color:#9DB2FF;font-weight:600;}.stat-card .big{font-size:20px;font-weight:700;color:#7BE3B5;margin-top:4px;}
+.stat-card .sub{font-size:11px;color:#9FB0C8;margin-top:2px;}
+.del{color:#ff9b8a;cursor:pointer;font-size:16px;}
+</style></head>
+<body>
+<header>
+  <h1>🇹🇭 Quản lý đơn Thái Lan</h1>
+  <button class="btn g" id="addBtn">+ Thêm đơn</button>
+  <a class="link" href="/thailand/api/export">⬇ Xuất CSV</a>
+  <a class="link" href="/">← Dashboard</a>
+  <a class="link" href="/thailand/logout">Đăng xuất</a>
+</header>
+<main>
+  <div class="tabs">
+    <div class="tab on" data-tab="orders" id="tabOrders">📋 Danh sách đơn</div>
+    <div class="tab" data-tab="stats" id="tabStats">📊 Thống kê doanh thu</div>
+  </div>
+
+  <div id="ordersView">
+    <div class="filters">
+      <input type="date" id="fTu"><span class="muted">→</span><input type="date" id="fDen">
+      <select id="fNv"><option value="">Mọi nhân viên</option></select>
+      <select id="fTt"><option value="">Mọi trạng thái</option></select>
+      <input id="fQ" placeholder="Tìm tên/SĐT/địa chỉ…">
+      <button class="btn" id="fBtn">Lọc</button>
+      <button class="btn ghost" id="fReset">Xoá lọc</button>
+    </div>
+    <div class="wrap"><div id="tbl"></div></div>
+  </div>
+
+  <div id="statsView" style="display:none;">
+    <div class="filters">
+      <input type="date" id="sTu"><span class="muted">→</span><input type="date" id="sDen">
+      <button class="btn" id="sBtn">Xem</button>
+    </div>
+    <div id="statsBox"></div>
+  </div>
+</main>
+
+<script>
+const $=id=>document.getElementById(id);
+const esc=s=>String(s==null?'':s).replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+const thb=n=>(Number(n)||0).toLocaleString('en-US');
+let TT=[], NV=[];
+
+function tabSwitch(t){
+  $('tabOrders').classList.toggle('on',t==='orders');
+  $('tabStats').classList.toggle('on',t==='stats');
+  $('ordersView').style.display=t==='orders'?'':'none';
+  $('statsView').style.display=t==='stats'?'':'none';
+  if(t==='stats') loadStats();
+}
+$('tabOrders').onclick=()=>tabSwitch('orders');
+$('tabStats').onclick=()=>tabSwitch('stats');
+
+async function loadOrders(){
+  const qs=new URLSearchParams();
+  if($('fTu').value)qs.set('tu',$('fTu').value);
+  if($('fDen').value)qs.set('den',$('fDen').value);
+  if($('fNv').value)qs.set('nv',$('fNv').value);
+  if($('fTt').value)qs.set('tt',$('fTt').value);
+  if($('fQ').value)qs.set('q',$('fQ').value);
+  $('tbl').innerHTML='<div class="empty">Đang tải…</div>';
+  try{
+    const r=await fetch('/thailand/api/orders?'+qs.toString());
+    if(r.status===401){location.href='/thailand/login';return;}
+    const d=await r.json();
+    if(!d.ok){$('tbl').innerHTML='<div class="empty">'+esc(d.message)+'</div>';return;}
+    TT=d.trangThais; NV=d.nhanViens;
+    // fill selects
+    if($('fNv').options.length<=1) NV.forEach(n=>$('fNv').insertAdjacentHTML('beforeend','<option>'+esc(n)+'</option>'));
+    if($('fTt').options.length<=1) TT.forEach(t=>$('fTt').insertAdjacentHTML('beforeend','<option>'+esc(t)+'</option>'));
+    render(d.orders);
+  }catch(e){$('tbl').innerHTML='<div class="empty">Lỗi tải dữ liệu</div>';}
+}
+
+function stCls(t){return t==='Thành công'?'st-tc':t==='Huỷ'||t==='Hoàn hàng'?'st-huy':t==='Mới về'?'st-moi':'';}
+
+function render(orders){
+  if(!orders.length){$('tbl').innerHTML='<div class="empty">Chưa có đơn nào.</div>';return;}
+  let h='<table><thead><tr><th>Ngày về</th><th>Họ tên</th><th>SĐT</th><th>Địa chỉ</th><th>Combo</th><th class="num">SL</th><th class="num">Giá THB</th><th>Nhân viên</th><th>Trạng thái</th><th></th></tr></thead><tbody>';
+  orders.forEach(o=>{
+    const ttOpts=TT.map(t=>'<option'+(t===o.trang_thai?' selected':'')+'>'+esc(t)+'</option>').join('');
+    h+='<tr>'
+      +'<td>'+esc((o.ngay_ve||'').slice(0,10))+'</td>'
+      +'<td>'+esc(o.ho_ten)+'</td>'
+      +'<td>'+esc(o.sdt)+'</td>'
+      +'<td class="muted">'+esc(o.dia_chi)+'</td>'
+      +'<td class="muted" style="max-width:200px;white-space:normal;font-size:11px;">'+esc(o.combo)+'</td>'
+      +'<td class="num">'+esc(o.so_luong)+'</td>'
+      +'<td class="num">'+thb(o.gia_thb)+'</td>'
+      +'<td><input class="ed" value="'+esc(o.nhan_vien||'')+'" onchange="upd('+o.id+',\\'nhan_vien\\',this.value)"></td>'
+      +'<td><select class="st '+stCls(o.trang_thai)+'" onchange="upd('+o.id+',\\'trang_thai\\',this.value)">'+ttOpts+'</select></td>'
+      +'<td><span class="del" onclick="del('+o.id+')">✕</span></td>'
+      +'</tr>';
+  });
+  h+='</tbody></table>';
+  $('tbl').innerHTML=h;
+}
+
+async function upd(id,field,value){
+  try{await fetch('/thailand/api/order/update',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({id,field,value})});}catch(e){}
+}
+async function del(id){
+  if(!confirm('Xoá đơn này?'))return;
+  try{await fetch('/thailand/api/order/delete',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({id})});loadOrders();}catch(e){}
+}
+
+$('addBtn').onclick=async()=>{
+  const ho_ten=prompt('Họ tên khách:');if(ho_ten===null)return;
+  const sdt=prompt('SĐT:')||'';
+  const dia_chi=prompt('Địa chỉ:')||'';
+  const combo=prompt('Combo (chuỗi tiếng Thái, để tự tách SL+giá):')||'';
+  const nhan_vien=prompt('Nhân viên marketing:')||'';
+  try{await fetch('/thailand/api/order/add',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({ho_ten,sdt,dia_chi,combo,nhan_vien})});loadOrders();}catch(e){alert('Lỗi thêm đơn');}
+};
+
+$('fBtn').onclick=loadOrders;
+$('fReset').onclick=()=>{['fTu','fDen','fNv','fTt','fQ'].forEach(id=>$(id).value='');loadOrders();};
+
+async function loadStats(){
+  const qs=new URLSearchParams();
+  if($('sTu').value)qs.set('tu',$('sTu').value);
+  if($('sDen').value)qs.set('den',$('sDen').value);
+  $('statsBox').innerHTML='<div class="empty">Đang tải…</div>';
+  try{
+    const r=await fetch('/thailand/api/stats?'+qs.toString());
+    const d=await r.json();
+    if(!d.ok){$('statsBox').innerHTML='<div class="empty">'+esc(d.message)+'</div>';return;}
+    if(!d.stats.length){$('statsBox').innerHTML='<div class="empty">Chưa có dữ liệu.</div>';return;}
+    let h='';
+    d.stats.forEach(s=>{
+      h+='<div class="stat-card"><div class="nv">'+esc(s.nhan_vien||'(chưa gán)')+'</div>'
+        +'<div class="big">'+thb(s.doanh_thu_thb)+' THB</div>'
+        +'<div class="sub">'+s.so_don+' đơn · '+s.don_thanh_cong+' thành công · '+(s.tong_sl||0)+' sp</div></div>';
+    });
+    $('statsBox').innerHTML=h;
+  }catch(e){$('statsBox').innerHTML='<div class="empty">Lỗi tải dữ liệu</div>';}
+}
+$('sBtn').onclick=loadStats;
+
+loadOrders();
+</script>
+</body></html>`;
+}
