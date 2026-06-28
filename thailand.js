@@ -609,19 +609,22 @@ function mauSelect(o){
 }
 function render(orders){
   if(!orders.length){$('tbl').innerHTML='<div class="empty">Chưa có đơn nào.</div>';return;}
-  let h='<table><thead><tr>'
+  let h='<div style="margin:0 0 10px;color:#9FB0C8;font-size:13px;">Tổng: <b style="color:#7BE3B5">'+orders.length+'</b> đơn</div>';
+  h+='<table><thead><tr>'
     +(IS_ADMIN?'<th><input type="checkbox" id="chkAll"></th>':'')
+    +'<th class="num">STT</th>'
     +'<th>Ngày về</th><th>Họ tên</th><th>SĐT</th><th>Địa chỉ</th><th>Combo</th>'
     +'<th class="num">SL</th><th class="num">Giá THB</th><th>Mã mẫu mã</th>'
     +'<th>Nhân viên</th><th>Trạng thái</th>'
     +(IS_ADMIN?'<th>Đẩy</th>':'')+'<th></th></tr></thead><tbody>';
-  orders.forEach(o=>{
+  orders.forEach((o,idx)=>{
     const ttOpts=TT.map(t=>'<option'+(t===o.trang_thai?' selected':'')+'>'+esc(t)+'</option>').join('');
     const dayBadge = o.da_day==1
       ? '<span style="color:#7BE3B5;font-size:12px;">✓ Đã đẩy</span>'
       : '<span style="color:#6B7C97;font-size:12px;">—</span>';
     h+='<tr>'
       +(IS_ADMIN?'<td><input type="checkbox" class="chk" data-id="'+o.id+'"'+(o.da_day==1?' disabled':'')+'></td>':'')
+      +'<td class="num" style="color:#6B7C97">'+(idx+1)+'</td>'
       +'<td>'+esc((o.ngay_ve||'').slice(0,10))+'</td>'
       +'<td>'+esc(o.ho_ten)+'</td>'
       +'<td>'+esc(o.sdt)+'</td>'
