@@ -43,11 +43,24 @@ async function ensureTable(pool) {
       nhan_vien VARCHAR(120) DEFAULT '',
       trang_thai VARCHAR(40) DEFAULT 'Mới về',
       ghi_chu TEXT,
+      ma_kh VARCHAR(60) DEFAULT '',
+      ma_mau VARCHAR(80) DEFAULT '',
+      da_day TINYINT DEFAULT 0,
+      ngay_day DATETIME NULL,
       INDEX idx_ngay (ngay_ve),
       INDEX idx_nv (nhan_vien),
       INDEX idx_tt (trang_thai)
     ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
   `);
+  // Tự thêm cột nếu bảng cũ chưa có (bỏ qua lỗi nếu cột đã tồn tại)
+  for (const col of [
+    "ma_kh VARCHAR(60) DEFAULT ''",
+    "ma_mau VARCHAR(80) DEFAULT ''",
+    "da_day TINYINT DEFAULT 0",
+    "ngay_day DATETIME NULL",
+  ]) {
+    try { await pool.query(`ALTER TABLE th_orders ADD COLUMN ${col}`); } catch (e) {}
+  }
 }
 
 // =====================================================================
@@ -59,6 +72,18 @@ async function ensureTable(pool) {
 export function mountThailand(app, { mysql, requireLogin, express }) {
   let pool = null;
   let tableReady = false;
+
+  // ===== Cấu hình ĐẨY ĐƠN SANG HẬU CẦN (tdffm.com) — qua biến môi trường =====
+  //   TDFFM_URL    = https://tdffm.com/api/v1/webhook/landingpage
+  //   TDFFM_KEY    = x-public-key bên hậu cần cấp
+  //   TDFFM_MA_KH  = mã khách hàng cố định (THA284)
+  //   TDFFM_MA_MAU = mã mẫu mã mặc định (THA284-GEL)
+  //   TDFFM_DS_MAU = danh sách mã mẫu cho dropdown, phân cách dấu phẩy (vd THA284-GEL,THA284-CREAM)
+  const TDFFM_URL = process.env.TDFFM_URL || 'https://tdffm.com/api/v1/webhook/landingpage';
+  const TDFFM_KEY = process.env.TDFFM_KEY || '';
+  const TDFFM_MA_KH = process.env.TDFFM_MA_KH || 'THA284';
+  const TDFFM_MA_MAU = process.env.TDFFM_MA_MAU || 'THA284-GEL';
+  const TDFFM_DS_MAU = (process.env.TDFFM_DS_MAU || TDFFM_MA_MAU).split(',').map(s => s.trim()).filter(Boolean);
 
   // Lazy: chỉ tạo pool khi cần, KHÔNG chạy lúc khởi động
   function getPool() {
@@ -196,7 +221,7 @@ export function mountThailand(app, { mysql, requireLogin, express }) {
     const [rows] = await p.query(`SELECT * FROM th_orders ${wsql} ORDER BY id DESC LIMIT 2000`, args);
     // Danh sách nhân viên (để lọc)
     const [nvRows] = await p.query(`SELECT DISTINCT nhan_vien FROM th_orders WHERE nhan_vien <> '' ORDER BY nhan_vien`);
-    res.json({ ok: true, orders: rows, nhanViens: nvRows.map(r => r.nhan_vien), trangThais: TRANG_THAI });
+    res.json({ ok: true, orders: rows, nhanViens: nvRows.map(r => r.nhan_vien), trangThais: TRANG_THAI, dsMau: TDFFM_DS_MAU, maMauDefault: TDFFM_MA_MAU });
   }));
 
   // Cập nhật 1 đơn (trạng thái, nhân viên, hoặc sửa thông tin)
@@ -232,6 +257,59 @@ export function mountThailand(app, { mysql, requireLogin, express }) {
     const p = await db();
     await p.query(`DELETE FROM th_orders WHERE id = ?`, [id]);
     res.json({ ok: true });
+  }));
+
+  // ====================== ĐẨY ĐƠN SANG HẬU CẦN (tdffm.com) ======================
+  function yyyymmdd(d) {
+    const x = d || new Date();
+    const vn = new Date(x.getTime() + 7 * 3600 * 1000);
+    return vn.toISOString().slice(0, 10).replace(/-/g, '');
+  }
+
+  // Đẩy 1 hoặc nhiều đơn (theo danh sách id) sang hậu cần
+  app.post('/thailand/api/push', thaiAuth, express.json(), wrap(async (req, res) => {
+    if (!TDFFM_KEY) return res.json({ ok: false, message: 'Chưa cấu hình TDFFM_KEY trên máy chủ' });
+    const { ids } = req.body || {};
+    if (!Array.isArray(ids) || !ids.length) return res.json({ ok: false, message: 'Chưa chọn đơn nào' });
+
+    const p = await db();
+    const placeholders = ids.map(() => '?').join(',');
+    const [rows] = await p.query(`SELECT * FROM th_orders WHERE id IN (${placeholders})`, ids);
+    if (!rows.length) return res.json({ ok: false, message: 'Không tìm thấy đơn' });
+
+    // Tạo payload đúng định dạng bên hậu cần yêu cầu (key trùng tên cột Google Sheet)
+    const exportData = rows.map(o => ({
+      '*Mã khách hàng': TDFFM_MA_KH,
+      '*Tên khách hàng': o.ho_ten || '',
+      '*SĐT khách hàng': o.sdt || '',
+      '*Địa chỉ giao hàng': o.dia_chi || '',
+      '*Tiền COD': o.gia_thb || 0,
+      '*Mã mẫu mã': o.ma_mau || TDFFM_MA_MAU,
+      '*Số lượng': o.so_luong || 0,
+      '*Cần sale bán hàng': 'NEED_SALE',
+      'Ghi chú': o.ghi_chu || '',
+      'Hình thức thanh toán': 'COD',
+    }));
+
+    let result;
+    try {
+      const resp = await fetch(TDFFM_URL, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'x-public-key': TDFFM_KEY },
+        body: JSON.stringify({ createDate: yyyymmdd(), exportData }),
+      });
+      result = await resp.json().catch(() => ({}));
+    } catch (e) {
+      return res.json({ ok: false, message: 'Lỗi gọi API hậu cần: ' + e.message });
+    }
+
+    if (result && result.errors) {
+      return res.json({ ok: false, message: 'Hậu cần báo lỗi: ' + JSON.stringify(result.errors) });
+    }
+
+    // Đánh dấu các đơn đã đẩy
+    await p.query(`UPDATE th_orders SET da_day = 1, ngay_day = NOW() WHERE id IN (${placeholders})`, ids);
+    res.json({ ok: true, count: rows.length, message: 'Đã đẩy ' + rows.length + ' đơn sang hậu cần' });
   }));
 
   // Thống kê doanh thu theo nhân viên
@@ -345,6 +423,7 @@ input.ed{width:100px;}.st-moi{color:#9DB2FF;}.st-tc{color:#7BE3B5;}.st-huy{color
 <header>
   <h1>🇹🇭 Quản lý đơn Thái Lan</h1>
   <button class="btn g" id="addBtn">+ Thêm đơn</button>
+  <button class="btn" id="pushBtn" style="background:#FF9F45;color:#0B1322;">🚚 Đẩy sang hậu cần</button>
   <a class="link" href="/thailand/api/export">⬇ Xuất CSV</a>
   <a class="link" href="/">← Dashboard</a>
   <a class="link" href="/thailand/logout">Đăng xuất</a>
@@ -405,7 +484,7 @@ input.ed{width:100px;}.st-moi{color:#9DB2FF;}.st-tc{color:#7BE3B5;}.st-huy{color
 const $=id=>document.getElementById(id);
 const esc=s=>String(s==null?'':s).replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
 const thb=n=>(Number(n)||0).toLocaleString('en-US');
-let TT=[], NV=[];
+let TT=[], NV=[], DSMAU=[], MAU_DEFAULT='';
 
 function tabSwitch(t){
   $('tabOrders').classList.toggle('on',t==='orders');
@@ -430,7 +509,7 @@ async function loadOrders(){
     if(r.status===401){location.href='/thailand/login';return;}
     const d=await r.json();
     if(!d.ok){$('tbl').innerHTML='<div class="empty">'+esc(d.message)+'</div>';return;}
-    TT=d.trangThais; NV=d.nhanViens;
+    TT=d.trangThais; NV=d.nhanViens; DSMAU=d.dsMau||[]; MAU_DEFAULT=d.maMauDefault||'';
     // fill selects
     if($('fNv').options.length<=1) NV.forEach(n=>$('fNv').insertAdjacentHTML('beforeend','<option>'+esc(n)+'</option>'));
     if($('fTt').options.length<=1) TT.forEach(t=>$('fTt').insertAdjacentHTML('beforeend','<option>'+esc(t)+'</option>'));
@@ -440,6 +519,13 @@ async function loadOrders(){
 
 function stCls(t){return t==='Thành công'?'st-tc':t==='Huỷ'||t==='Hoàn hàng'?'st-huy':t==='Mới về'?'st-moi':'';}
 
+function mauSelect(o){
+  const cur=o.ma_mau||MAU_DEFAULT;
+  // Đảm bảo mã hiện tại có trong danh sách (nếu là mã cũ chưa có trong env)
+  const list=[...new Set([cur, ...DSMAU].filter(Boolean))];
+  const opts=list.map(m=>'<option'+(m===cur?' selected':'')+'>'+esc(m)+'</option>').join('');
+  return '<select class="st" style="min-width:120px" onchange="upd('+o.id+',\'ma_mau\',this.value)">'+opts+'</select>';
+}
 function render(orders){
   if(!orders.length){$('tbl').innerHTML='<div class="empty">Chưa có đơn nào.</div>';return;}
   let h='<table><thead><tr><th>Ngày về</th><th>Họ tên</th><th>SĐT</th><th>Địa chỉ</th><th>Combo</th><th class="num">SL</th><th class="num">Giá THB</th><th>Nhân viên</th><th>Trạng thái</th><th></th></tr></thead><tbody>';
@@ -477,6 +563,7 @@ function openAddModal(){
 }
 function closeAddModal(){ $('addModal').classList.remove('show'); }
 $('addBtn').onclick=openAddModal;
+$('pushBtn').onclick=pushSelected;
 $('m_cancel').onclick=closeAddModal;
 // Bấm ra ngoài modal KHÔNG đóng (tránh mất dữ liệu khi lỡ tay) — chỉ đóng bằng nút
 $('m_save').onclick=async()=>{
