@@ -288,6 +288,21 @@ input.ed{width:100px;}.st-moi{color:#9DB2FF;}.st-tc{color:#7BE3B5;}.st-huy{color
 .stat-card .nv{font-size:13px;color:#9DB2FF;font-weight:600;}.stat-card .big{font-size:20px;font-weight:700;color:#7BE3B5;margin-top:4px;}
 .stat-card .sub{font-size:11px;color:#9FB0C8;margin-top:2px;}
 .del{color:#ff9b8a;cursor:pointer;font-size:16px;}
+.modal-bg{position:fixed;inset:0;background:rgba(0,0,0,.6);display:none;align-items:flex-start;justify-content:center;z-index:100;overflow-y:auto;padding:40px 16px;}
+.modal-bg.show{display:flex;}
+.modal{background:#101B2E;border:1px solid rgba(255,255,255,.1);border-radius:16px;padding:24px;width:480px;max-width:100%;}
+.modal h2{margin:0 0 18px;font-size:18px;}
+.modal label{display:block;font-size:12px;color:#9FB0C8;margin:12px 0 5px;font-weight:600;}
+.modal input,.modal select,.modal textarea{width:100%;font-family:inherit;font-size:14px;color:#fff;background:rgba(255,255,255,.06);border:1px solid rgba(255,255,255,.12);border-radius:9px;padding:10px 12px;box-sizing:border-box;color-scheme:dark;}
+.modal textarea{min-height:70px;resize:vertical;}
+.modal .row{display:flex;gap:10px;}
+.modal .row>div{flex:1;}
+.modal-actions{display:flex;gap:10px;margin-top:20px;}
+.modal-actions button{flex:1;padding:12px;border:none;border-radius:9px;font-size:14px;font-weight:600;cursor:pointer;}
+.modal-actions .save{background:#7BE3B5;color:#0B1322;}
+.modal-actions .cancel{background:rgba(255,255,255,.08);color:#E7EEF8;border:1px solid rgba(255,255,255,.14);}
+.hint{font-size:11px;color:#6B7C97;margin-top:4px;}
+
 </style></head>
 <body>
 <header>
@@ -321,6 +336,31 @@ input.ed{width:100px;}.st-moi{color:#9DB2FF;}.st-tc{color:#7BE3B5;}.st-huy{color
       <button class="btn" id="sBtn">Xem</button>
     </div>
     <div id="statsBox"></div>
+  </div>
+
+  <div class="modal-bg" id="addModal">
+    <div class="modal">
+      <h2>+ Thêm đơn mới</h2>
+      <label>Họ tên khách</label>
+      <input id="m_ten" placeholder="Tên khách hàng">
+      <label>Số điện thoại</label>
+      <input id="m_sdt" placeholder="SĐT">
+      <label>Địa chỉ</label>
+      <textarea id="m_diachi" placeholder="Địa chỉ giao hàng"></textarea>
+      <label>Combo (chuỗi tiếng Thái — tự tách SL + giá)</label>
+      <textarea id="m_combo" placeholder="VD: คอมโบ 2 กล่อง: 549 THB..."></textarea>
+      <div class="hint">Hoặc nhập tay SL + giá bên dưới (nếu để trống sẽ tự tách từ combo)</div>
+      <div class="row">
+        <div><label>Số lượng</label><input id="m_sl" inputmode="numeric" placeholder="tự tách"></div>
+        <div><label>Giá THB</label><input id="m_gia" inputmode="numeric" placeholder="tự tách"></div>
+      </div>
+      <label>Nhân viên marketing</label>
+      <input id="m_nv" placeholder="Tên nhân viên">
+      <div class="modal-actions">
+        <button class="cancel" id="m_cancel">Huỷ</button>
+        <button class="save" id="m_save">Lưu đơn</button>
+      </div>
+    </div>
   </div>
 </main>
 
@@ -393,13 +433,30 @@ async function del(id){
   try{await fetch('/thailand/api/order/delete',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({id})});loadOrders();}catch(e){}
 }
 
-$('addBtn').onclick=async()=>{
-  const ho_ten=prompt('Họ tên khách:');if(ho_ten===null)return;
-  const sdt=prompt('SĐT:')||'';
-  const dia_chi=prompt('Địa chỉ:')||'';
-  const combo=prompt('Combo (chuỗi tiếng Thái, để tự tách SL+giá):')||'';
-  const nhan_vien=prompt('Nhân viên marketing:')||'';
-  try{await fetch('/thailand/api/order/add',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({ho_ten,sdt,dia_chi,combo,nhan_vien})});loadOrders();}catch(e){alert('Lỗi thêm đơn');}
+function openAddModal(){
+  ['m_ten','m_sdt','m_diachi','m_combo','m_sl','m_gia','m_nv'].forEach(id=>$(id).value='');
+  $('addModal').classList.add('show');
+  $('m_ten').focus();
+}
+function closeAddModal(){ $('addModal').classList.remove('show'); }
+$('addBtn').onclick=openAddModal;
+$('m_cancel').onclick=closeAddModal;
+// Bấm ra ngoài modal KHÔNG đóng (tránh mất dữ liệu khi lỡ tay) — chỉ đóng bằng nút
+$('m_save').onclick=async()=>{
+  const ho_ten=$('m_ten').value.trim();
+  if(!ho_ten && !$('m_sdt').value.trim()){ alert('Cần ít nhất Tên hoặc SĐT'); return; }
+  const body={
+    ho_ten, sdt:$('m_sdt').value.trim(), dia_chi:$('m_diachi').value.trim(),
+    combo:$('m_combo').value.trim(), nhan_vien:$('m_nv').value.trim()
+  };
+  const sl=parseInt(($('m_sl').value||'').replace(/[^\d]/g,''),10);
+  const gia=parseInt(($('m_gia').value||'').replace(/[^\d]/g,''),10);
+  if(sl>0) body.so_luong=sl;
+  if(gia>0) body.gia_thb=gia;
+  try{
+    await fetch('/thailand/api/order/add',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});
+    closeAddModal(); loadOrders();
+  }catch(e){ alert('Lỗi thêm đơn'); }
 };
 
 $('fBtn').onclick=loadOrders;
