@@ -373,10 +373,13 @@ export function mountThailand(app, { mysql, requireLogin, express }) {
   // Thống kê doanh thu theo nhân viên
   app.get('/thailand/api/stats', thaiAuth, wrap(async (req, res) => {
     const p = await db();
+    const { isAdmin, myName } = thaiWho(req);
     const { tu, den } = req.query;
     const where = [], args = [];
     if (tu) { where.push('ngay_ve >= ?'); args.push(tu); }
     if (den) { where.push('ngay_ve <= ?'); args.push(den); }
+    // Nhân viên: chỉ thống kê đơn của mình
+    if (!isAdmin) { where.push('nhan_vien = ?'); args.push(myName || '\u0000'); }
     const wsql = where.length ? 'WHERE ' + where.join(' AND ') : '';
     const [rows] = await p.query(`
       SELECT nhan_vien,
@@ -391,13 +394,23 @@ export function mountThailand(app, { mysql, requireLogin, express }) {
 
   // Xuất CSV
   app.get('/thailand/api/export', thaiAuth, wrap(async (req, res) => {
+    const { isAdmin } = thaiWho(req);
+    // Chỉ admin được xuất CSV
+    if (!isAdmin) return res.status(403).send('Chỉ quản trị viên mới được xuất CSV');
     const p = await db();
     const [rows] = await p.query(`SELECT * FROM th_orders ORDER BY id DESC LIMIT 10000`);
     const head = ['ID', 'Ngày về', 'Họ tên', 'SĐT', 'Địa chỉ', 'Combo', 'Số lượng', 'Giá THB', 'Nhân viên', 'Trạng thái', 'Ghi chú'];
-    const esc = v => '"' + String(v == null ? '' : v).replace(/"/g, '""') + '"';
-    let csv = '\uFEFF' + head.map(esc).join(',') + '\n';
+    // Dùng dấu chấm phẩy (;) — Excel tiếng Việt tự tách thành từng cột
+    const SEP = ';';
+    const esc = v => {
+      let s = String(v == null ? '' : v);
+      // SĐT giữ nguyên dạng text (tránh Excel cắt số 0 đầu) bằng cách bọc nháy
+      s = s.replace(/"/g, '""');
+      return '"' + s + '"';
+    };
+    let csv = '\uFEFF' + head.map(esc).join(SEP) + '\n';
     for (const r of rows) {
-      csv += [r.id, r.ngay_ve, r.ho_ten, r.sdt, r.dia_chi, r.combo, r.so_luong, r.gia_thb, r.nhan_vien, r.trang_thai, r.ghi_chu].map(esc).join(',') + '\n';
+      csv += [r.id, (r.ngay_ve||'').toString().slice(0,10), r.ho_ten, r.sdt, r.dia_chi, r.combo, r.so_luong, r.gia_thb, r.nhan_vien, r.trang_thai, r.ghi_chu].map(esc).join(SEP) + '\n';
     }
     res.setHeader('Content-Type', 'text/csv; charset=utf-8');
     res.setHeader('Content-Disposition', 'attachment; filename="don-thailand.csv"');
@@ -482,7 +495,7 @@ input.ed{width:100px;}.st-moi{color:#9DB2FF;}.st-tc{color:#7BE3B5;}.st-huy{color
   <h1>🇹🇭 Quản lý đơn Thái Lan</h1>
   <button class="btn g" id="addBtn">+ Thêm đơn</button>
   <button class="btn" id="pushBtn" style="background:#FF9F45;color:#0B1322;">🚚 Đẩy sang hậu cần</button>
-  <a class="link" href="/thailand/api/export">⬇ Xuất CSV</a>
+  <a class="link" href="/thailand/api/export" id="csvBtn">⬇ Xuất CSV</a>
   <a class="link" href="/">← Dashboard</a>
   <a class="link" href="/thailand/logout">Đăng xuất</a>
 </header>
@@ -570,6 +583,7 @@ async function loadOrders(){
     TT=d.trangThais; NV=d.nhanViens; DSMAU=d.dsMau||[]; MAU_DEFAULT=d.maMauDefault||''; IS_ADMIN=d.isAdmin!==false;
     // Ẩn nút đẩy + bộ lọc nhân viên với nhân viên thường
     if($('pushBtn')) $('pushBtn').style.display = IS_ADMIN ? '' : 'none';
+    if($('csvBtn')) $('csvBtn').style.display = IS_ADMIN ? '' : 'none';
     if($('fNv')) $('fNv').style.display = IS_ADMIN ? '' : 'none';
     // fill selects
     if(IS_ADMIN && $('fNv').options.length<=1) NV.forEach(n=>$('fNv').insertAdjacentHTML('beforeend','<option>'+esc(n)+'</option>'));
