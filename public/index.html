@@ -202,6 +202,11 @@
   :focus-visible{outline:2px solid var(--accent);outline-offset:2px;border-radius:6px;}
   .user-badge{display:inline-flex;align-items:center;gap:6px;font-size:13px;color:#9DB2FF;background:rgba(157,178,255,.1);border:1px solid rgba(157,178,255,.2);padding:7px 12px;border-radius:9px;font-weight:600;white-space:nowrap;margin-right:6px;}
 </style>
+<style>
+/* Ẩn sẵn menu admin để tránh hiện nhấp nháy với nhân viên; JS sẽ hiện lại nếu là admin */
+#navProducts, #navSalary, #navSalaryProduct { display: none; }
+#navMySalary { display: none; }
+</style>
 </head>
 <body>
 
@@ -355,11 +360,12 @@ async function loadData(){
       const a=document.getElementById('avatar'); a.textContent=data.me.user.slice(0,2).toUpperCase(); a.title=data.me.user+(data.me.role==='admin'?' (admin)':'');
       const ub=document.getElementById('userBadge'); if(ub&&data.me.displayName) ub.textContent='👤 '+data.me.displayName;
       const isAdmin=data.me.role==='admin';
-      const np=document.getElementById('navProducts'); if(np&&!isAdmin) np.style.display='none';
-      const ns=document.getElementById('navSalary'); if(ns&&!isAdmin) ns.style.display='none';
-      const nsp=document.getElementById('navSalaryProduct'); if(nsp&&!isAdmin) nsp.style.display='none';
-      // "Lương của tôi": admin KHÔNG cần (đã có bảng đầy đủ), nhân viên thì HIỆN
-      const nms=document.getElementById('navMySalary'); if(nms&&isAdmin) nms.style.display='none';
+      // Menu admin: chỉ hiện khi là admin (mặc định CSS đã ẩn)
+      ['navProducts','navSalary','navSalaryProduct'].forEach(id=>{
+        const el=document.getElementById(id); if(el) el.style.display = isAdmin ? '' : 'none';
+      });
+      // "Lương của tôi": chỉ nhân viên cần (admin đã có bảng đầy đủ)
+      const nms=document.getElementById('navMySalary'); if(nms) nms.style.display = isAdmin ? 'none' : '';
     }
     DAYS=data.days; CAMPAIGNS=data.campaigns;
     /* dựng danh sách tài khoản từ dữ liệu */
