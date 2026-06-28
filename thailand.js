@@ -119,11 +119,22 @@ export function mountThailand(app, { mysql, requireLogin, express }) {
   function thaiAuth(req, res, next) {
     const u = req.session && req.session.user;
     if (u && u.role === 'admin') return next();
+    // Nhân viên đã đăng nhập dashboard chính cũng được vào (sẽ bị lọc theo tên)
+    if (u && u.user) return next();
     // Cho phép đăng nhập riêng bằng TH_ADMIN_USER/PASS qua session.thAuth
     if (req.session && req.session.thAuth) return next();
     // Chưa đăng nhập
     if (req.path.startsWith('/api/')) return res.status(401).json({ ok: false, message: 'Cần đăng nhập' });
     return res.redirect('/thailand/login');
+  }
+  // Xác định quyền: admin (xem tất cả + đẩy đơn) hay nhân viên (chỉ xem đơn của mình)
+  function thaiWho(req) {
+    const u = (req.session && req.session.user) || {};
+    // Admin: role admin HOẶC đăng nhập riêng bằng TH_ADMIN (thAuth)
+    const isAdmin = u.role === 'admin' || (req.session && req.session.thAuth) || false;
+    // Tên nhân viên để lọc đơn (ưu tiên salaryName, rồi manager, rồi tên đầu trong employees)
+    const myName = u.salaryName || u.manager || (u.employees && u.employees[0]) || '';
+    return { isAdmin, myName };
   }
 
   // ====================== WEBHOOK NHẬN ĐƠN TỪ LADIPAGE ======================
@@ -210,18 +221,28 @@ export function mountThailand(app, { mysql, requireLogin, express }) {
   // Danh sách đơn + lọc + tìm kiếm
   app.get('/thailand/api/orders', thaiAuth, wrap(async (req, res) => {
     const p = await db();
+    const { isAdmin, myName } = thaiWho(req);
     const { tu, den, nv, tt, q } = req.query;
     const where = [], args = [];
     if (tu) { where.push('ngay_ve >= ?'); args.push(tu); }
     if (den) { where.push('ngay_ve <= ?'); args.push(den); }
-    if (nv) { where.push('nhan_vien = ?'); args.push(nv); }
+    // Nhân viên: CHỈ xem đơn của chính mình (theo tên). Admin: xem tất cả + lọc tuỳ chọn.
+    if (!isAdmin) {
+      where.push('nhan_vien = ?'); args.push(myName || '\u0000'); // nếu không có tên → không thấy đơn nào
+    } else if (nv) {
+      where.push('nhan_vien = ?'); args.push(nv);
+    }
     if (tt) { where.push('trang_thai = ?'); args.push(tt); }
     if (q) { where.push('(ho_ten LIKE ? OR sdt LIKE ? OR dia_chi LIKE ?)'); const like = '%' + q + '%'; args.push(like, like, like); }
     const wsql = where.length ? 'WHERE ' + where.join(' AND ') : '';
     const [rows] = await p.query(`SELECT * FROM th_orders ${wsql} ORDER BY id DESC LIMIT 2000`, args);
-    // Danh sách nhân viên (để lọc)
-    const [nvRows] = await p.query(`SELECT DISTINCT nhan_vien FROM th_orders WHERE nhan_vien <> '' ORDER BY nhan_vien`);
-    res.json({ ok: true, orders: rows, nhanViens: nvRows.map(r => r.nhan_vien), trangThais: TRANG_THAI, dsMau: TDFFM_DS_MAU, maMauDefault: TDFFM_MA_MAU });
+    // Danh sách nhân viên (chỉ admin cần, để lọc)
+    let nhanViens = [];
+    if (isAdmin) {
+      const [nvRows] = await p.query(`SELECT DISTINCT nhan_vien FROM th_orders WHERE nhan_vien <> '' ORDER BY nhan_vien`);
+      nhanViens = nvRows.map(r => r.nhan_vien);
+    }
+    res.json({ ok: true, orders: rows, nhanViens, trangThais: TRANG_THAI, dsMau: TDFFM_DS_MAU, maMauDefault: TDFFM_MA_MAU, isAdmin, myName });
   }));
 
   // Cập nhật 1 đơn (trạng thái, nhân viên, hoặc sửa thông tin)
@@ -268,6 +289,8 @@ export function mountThailand(app, { mysql, requireLogin, express }) {
 
   // Đẩy 1 hoặc nhiều đơn (theo danh sách id) sang hậu cần
   app.post('/thailand/api/push', thaiAuth, express.json(), wrap(async (req, res) => {
+    const { isAdmin } = thaiWho(req);
+    if (!isAdmin) return res.json({ ok: false, message: 'Chỉ quản trị viên mới được đẩy đơn sang hậu cần' });
     if (!TDFFM_KEY) return res.json({ ok: false, message: 'Chưa cấu hình TDFFM_KEY trên máy chủ' });
     const { ids } = req.body || {};
     if (!Array.isArray(ids) || !ids.length) return res.json({ ok: false, message: 'Chưa chọn đơn nào' });
@@ -519,7 +542,7 @@ input.ed{width:100px;}.st-moi{color:#9DB2FF;}.st-tc{color:#7BE3B5;}.st-huy{color
 const $=id=>document.getElementById(id);
 const esc=s=>String(s==null?'':s).replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
 const thb=n=>(Number(n)||0).toLocaleString('en-US');
-let TT=[], NV=[], DSMAU=[], MAU_DEFAULT='';
+let TT=[], NV=[], DSMAU=[], MAU_DEFAULT='', IS_ADMIN=true;
 
 function tabSwitch(t){
   $('tabOrders').classList.toggle('on',t==='orders');
@@ -544,9 +567,12 @@ async function loadOrders(){
     if(r.status===401){location.href='/thailand/login';return;}
     const d=await r.json();
     if(!d.ok){$('tbl').innerHTML='<div class="empty">'+esc(d.message)+'</div>';return;}
-    TT=d.trangThais; NV=d.nhanViens; DSMAU=d.dsMau||[]; MAU_DEFAULT=d.maMauDefault||'';
+    TT=d.trangThais; NV=d.nhanViens; DSMAU=d.dsMau||[]; MAU_DEFAULT=d.maMauDefault||''; IS_ADMIN=d.isAdmin!==false;
+    // Ẩn nút đẩy + bộ lọc nhân viên với nhân viên thường
+    if($('pushBtn')) $('pushBtn').style.display = IS_ADMIN ? '' : 'none';
+    if($('fNv')) $('fNv').style.display = IS_ADMIN ? '' : 'none';
     // fill selects
-    if($('fNv').options.length<=1) NV.forEach(n=>$('fNv').insertAdjacentHTML('beforeend','<option>'+esc(n)+'</option>'));
+    if(IS_ADMIN && $('fNv').options.length<=1) NV.forEach(n=>$('fNv').insertAdjacentHTML('beforeend','<option>'+esc(n)+'</option>'));
     if($('fTt').options.length<=1) TT.forEach(t=>$('fTt').insertAdjacentHTML('beforeend','<option>'+esc(t)+'</option>'));
     render(d.orders);
   }catch(e){$('tbl').innerHTML='<div class="empty">Lỗi tải dữ liệu</div>';}
@@ -563,17 +589,18 @@ function mauSelect(o){
 function render(orders){
   if(!orders.length){$('tbl').innerHTML='<div class="empty">Chưa có đơn nào.</div>';return;}
   let h='<table><thead><tr>'
-    +'<th><input type="checkbox" id="chkAll" onchange="toggleAll(this)"></th>'
+    +(IS_ADMIN?'<th><input type="checkbox" id="chkAll"></th>':'')
     +'<th>Ngày về</th><th>Họ tên</th><th>SĐT</th><th>Địa chỉ</th><th>Combo</th>'
     +'<th class="num">SL</th><th class="num">Giá THB</th><th>Mã mẫu mã</th>'
-    +'<th>Nhân viên</th><th>Trạng thái</th><th>Đẩy</th><th></th></tr></thead><tbody>';
+    +'<th>Nhân viên</th><th>Trạng thái</th>'
+    +(IS_ADMIN?'<th>Đẩy</th>':'')+'<th></th></tr></thead><tbody>';
   orders.forEach(o=>{
     const ttOpts=TT.map(t=>'<option'+(t===o.trang_thai?' selected':'')+'>'+esc(t)+'</option>').join('');
     const dayBadge = o.da_day==1
       ? '<span style="color:#7BE3B5;font-size:12px;">✓ Đã đẩy</span>'
       : '<span style="color:#6B7C97;font-size:12px;">—</span>';
     h+='<tr>'
-      +'<td><input type="checkbox" class="chk" data-id="'+o.id+'"'+(o.da_day==1?' disabled':'')+'></td>'
+      +(IS_ADMIN?'<td><input type="checkbox" class="chk" data-id="'+o.id+'"'+(o.da_day==1?' disabled':'')+'></td>':'')
       +'<td>'+esc((o.ngay_ve||'').slice(0,10))+'</td>'
       +'<td>'+esc(o.ho_ten)+'</td>'
       +'<td>'+esc(o.sdt)+'</td>'
@@ -584,7 +611,7 @@ function render(orders){
       +'<td>'+mauSelect(o)+'</td>'
       +'<td><input class="ed ednv" data-id="'+o.id+'" value="'+esc(o.nhan_vien||'')+'"></td>'
       +'<td><select class="st sttt" data-id="'+o.id+'" data-cls="'+stCls(o.trang_thai)+'">'+ttOpts+'</select></td>'
-      +'<td>'+dayBadge+'</td>'
+      +(IS_ADMIN?'<td>'+dayBadge+'</td>':'')
       +'<td><span class="del delbtn" data-id="'+o.id+'">✕</span></td>'
       +'</tr>';
   });
@@ -595,6 +622,7 @@ function render(orders){
   document.querySelectorAll('.ednv').forEach(el=>el.onchange=()=>upd(+el.dataset.id,'nhan_vien',el.value));
   document.querySelectorAll('.sttt').forEach(el=>{ if(el.dataset.cls) el.classList.add(el.dataset.cls); el.onchange=()=>upd(+el.dataset.id,'trang_thai',el.value); });
   document.querySelectorAll('.delbtn').forEach(el=>el.onclick=()=>del(+el.dataset.id));
+  if($('chkAll')) $('chkAll').onchange=function(){ toggleAll(this); };
 }
 function toggleAll(box){
   document.querySelectorAll('.chk:not(:disabled)').forEach(c=>c.checked=box.checked);
