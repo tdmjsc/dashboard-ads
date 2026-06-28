@@ -119,7 +119,18 @@ if (SOURCES.length === 0 && process.env.META_ACCESS_TOKEN) {
 }
 
 const ACCOUNT_NAMES = {
-  // '513728869887825': 'TK Thời Trang',
+  // Tên hiển thị cho từng tài khoản quảng cáo: 'ID': 'Tên'
+  // (sửa tên bên phải dấu : nếu cần, GIỮ nguyên ID bên trái)
+  '513728869887825': 'BM TD2.11',
+  '635675708897994': 'BM TD2.22',
+  '1297945788377836': 'BM 3.1',
+  '3313861842124068': 'BM 3.2',
+  '1343265570424604': 'BM 3.3',
+  '932875756194538': 'BM 1.1',
+  '1257974532611757': 'BM 1.2',
+  '1460178049143518': 'BM 1.3',
+  '927174399921442': 'BM 1.4',
+  '4353143571590707': 'BM 1.5',
 };
 
 const RESULT_RULES = [
@@ -354,6 +365,25 @@ app.post('/login', (req, res) => {
   res.redirect(u.role === 'product' ? '/products.html' : (u.role === 'staff' ? '/my-salary.html' : '/'));
 });
 app.get('/logout', (req, res) => req.session.destroy(() => res.redirect('/login')));
+
+// ===================================================================
+//  GẮN MODULE THÁI LAN (an toàn — lỗi ở đây KHÔNG làm sập app chính)
+//  Đặt TRƯỚC middleware bắt buộc đăng nhập để webhook Ladipage gọi được.
+//  Import động mysql2 + module thailand, bọc try/catch toàn bộ.
+// ===================================================================
+(async () => {
+  try {
+    const [{ mountThailand }, mysqlMod] = await Promise.all([
+      import('./thailand.js'),
+      import('mysql2/promise'),
+    ]);
+    const mysql = mysqlMod.default || mysqlMod;
+    mountThailand(app, { mysql, express });
+  } catch (e) {
+    console.error('[thailand] KHÔNG gắn được module (app chính vẫn chạy bình thường):', e.message);
+  }
+})();
+
 
 // Từ đây trở xuống yêu cầu đăng nhập
 app.use((req, res, next) => {
