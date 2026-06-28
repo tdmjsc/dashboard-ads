@@ -280,14 +280,25 @@ export function mountThailand(app, { mysql, requireLogin, express }) {
     // Tạo payload đúng định dạng bên hậu cần yêu cầu (key trùng tên cột Google Sheet)
     const exportData = rows.map(o => ({
       '*Mã khách hàng': TDFFM_MA_KH,
-      '*Tên khách hàng': o.ho_ten || '',
-      '*SĐT khách hàng': o.sdt || '',
-      '*Địa chỉ giao hàng': o.dia_chi || '',
+      '*Tên khách hàng ': o.ho_ten || '',
+      '*SĐT khách hàng ': o.sdt || '',
+      '*Địa chỉ giao hàng ': o.dia_chi || '',
       '*Tiền COD': Number(o.gia_thb) || 0,
       '*Mã mẫu mã': o.ma_mau || TDFFM_MA_MAU,
-      '*Số lượng': Number(o.so_luong) || 0,
+      '*Số lượng ': Number(o.so_luong) || 0,
       '*Cần sale bán hàng': 'NEED_SALE',
+      'Ghi chú': '',
       'Hình thức thanh toán': 'COD',
+      'Tiền cọc từ khách ': '',
+      'Tỉnh thành': '',
+      'Quận huyện': '',
+      'Phường xã': '',
+      'Mã bưu chính': '',
+      'Sale khách hàng': '',
+      'Nguồn data': '',
+      'Marketing': o.nhan_vien || '',
+      'Sale chốt đơn': '',
+      '': '',
     }));
 
     const payloadObj = { createDate: yyyymmdd(), exportData };
