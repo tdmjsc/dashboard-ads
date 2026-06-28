@@ -521,10 +521,9 @@ function stCls(t){return t==='Thành công'?'st-tc':t==='Huỷ'||t==='Hoàn hàn
 
 function mauSelect(o){
   const cur=o.ma_mau||MAU_DEFAULT;
-  // Đảm bảo mã hiện tại có trong danh sách (nếu là mã cũ chưa có trong env)
   const list=[...new Set([cur, ...DSMAU].filter(Boolean))];
   const opts=list.map(m=>'<option'+(m===cur?' selected':'')+'>'+esc(m)+'</option>').join('');
-  return '<select class="st" style="min-width:120px" onchange="upd('+o.id+',\'ma_mau\',this.value)">'+opts+'</select>';
+  return '<select class="st mausel" style="min-width:120px" data-id="'+o.id+'">'+opts+'</select>';
 }
 function render(orders){
   if(!orders.length){$('tbl').innerHTML='<div class="empty">Chưa có đơn nào.</div>';return;}
@@ -548,14 +547,19 @@ function render(orders){
       +'<td class="num">'+esc(o.so_luong)+'</td>'
       +'<td class="num">'+thb(o.gia_thb)+'</td>'
       +'<td>'+mauSelect(o)+'</td>'
-      +'<td><input class="ed" value="'+esc(o.nhan_vien||'')+'" onchange="upd('+o.id+',\'nhan_vien\',this.value)"></td>'
-      +'<td><select class="st '+stCls(o.trang_thai)+'" onchange="upd('+o.id+',\'trang_thai\',this.value)">'+ttOpts+'</select></td>'
+      +'<td><input class="ed ednv" data-id="'+o.id+'" value="'+esc(o.nhan_vien||'')+'"></td>'
+      +'<td><select class="st sttt" data-id="'+o.id+'" data-cls="'+stCls(o.trang_thai)+'">'+ttOpts+'</select></td>'
       +'<td>'+dayBadge+'</td>'
-      +'<td><span class="del" onclick="del('+o.id+')">✕</span></td>'
+      +'<td><span class="del delbtn" data-id="'+o.id+'">✕</span></td>'
       +'</tr>';
   });
   h+='</tbody></table>';
   $('tbl').innerHTML=h;
+  // Gắn sự kiện (tránh onchange inline để không lỗi escape)
+  document.querySelectorAll('.mausel').forEach(el=>el.onchange=()=>upd(+el.dataset.id,'ma_mau',el.value));
+  document.querySelectorAll('.ednv').forEach(el=>el.onchange=()=>upd(+el.dataset.id,'nhan_vien',el.value));
+  document.querySelectorAll('.sttt').forEach(el=>{ if(el.dataset.cls) el.classList.add(el.dataset.cls); el.onchange=()=>upd(+el.dataset.id,'trang_thai',el.value); });
+  document.querySelectorAll('.delbtn').forEach(el=>el.onclick=()=>del(+el.dataset.id));
 }
 function toggleAll(box){
   document.querySelectorAll('.chk:not(:disabled)').forEach(c=>c.checked=box.checked);
