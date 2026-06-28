@@ -387,6 +387,9 @@ app.get('/logout', (req, res) => req.session.destroy(() => res.redirect('/login'
 
 // Từ đây trở xuống yêu cầu đăng nhập
 app.use((req, res, next) => {
+  // BỎ QUA mọi đường dẫn /thailand — module Thailand TỰ LO auth riêng (webhook + login riêng)
+  // (mountThailand chạy async nên route /thailand đăng ký SAU middleware này → phải loại trừ ở đây)
+  if (req.path === '/thailand' || req.path.startsWith('/thailand/')) return next();
   if (req.session && req.session.user) return next();
   if (req.path.startsWith('/api/')) return res.status(401).json({ error: 'Chưa đăng nhập' });
   res.redirect('/login');

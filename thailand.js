@@ -104,15 +104,17 @@ export function mountThailand(app, { mysql, requireLogin, express }) {
   // ====================== WEBHOOK NHẬN ĐƠN TỪ LADIPAGE ======================
   // POST /thailand/webhook  — KHÔNG cần đăng nhập (Ladipage gọi tự động)
   // Nhận CẢ JSON lẫn form-urlencoded. Ghi log mọi request để chẩn đoán.
-  const webhookParsers = [express.json({ type: () => true }), express.urlencoded({ extended: true, type: () => true })];
-  // Lấy giá trị từ nhiều khả năng key, kể cả dữ liệu lồng (Ladipage có thể bọc trong .data hoặc .form)
+  // Hai middleware parse riêng biệt, gắn tuần tự (an toàn hơn spread mảng)
+  const jsonParser = express.json({ limit: '1mb' });
+  const formParser = express.urlencoded({ extended: true, limit: '1mb' });
+  // Lấy giá trị từ nhiều khả năng key
   function pick(obj, keys) {
     for (const k of keys) {
       if (obj && obj[k] != null && String(obj[k]).trim() !== '') return String(obj[k]).trim();
     }
     return '';
   }
-  app.post('/thailand/webhook', ...webhookParsers, wrap(async (req, res) => {
+  app.post('/thailand/webhook', jsonParser, formParser, wrap(async (req, res) => {
     // Ghi log raw để xem Ladipage gửi gì (xem qua /thailand/api/webhook-log)
     try {
       const logLine = JSON.stringify({ at: new Date().toISOString(), body: req.body, query: req.query }) + '\n';
@@ -167,7 +169,8 @@ export function mountThailand(app, { mysql, requireLogin, express }) {
     const okPass = process.env.TH_ADMIN_PASS || '';
     if (user === okUser && pass === okPass && okPass) {
       req.session.thAuth = true;
-      return res.redirect('/thailand');
+      // Lưu session XONG rồi mới chuyển trang (tránh mất phiên do redirect quá sớm)
+      return req.session.save(() => res.redirect('/thailand'));
     }
     res.type('html').send(loginHtml('Sai tài khoản hoặc mật khẩu'));
   });
