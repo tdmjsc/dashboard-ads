@@ -290,14 +290,27 @@ export function mountThailand(app, { mysql, requireLogin, express }) {
       'Hình thức thanh toán': 'COD',
     }));
 
-    let result;
+    const payloadObj = { createDate: yyyymmdd(), exportData };
+    // Ghi log payload để chẩn đoán (xem qua /thailand/api/push-log)
+    try {
+      const logFile = (process.env.DATA_DIR || '.') + '/thailand-push.log';
+      fs.appendFileSync(logFile, JSON.stringify({ at: new Date().toISOString(), sent: payloadObj }) + '\n');
+    } catch (e) {}
+
+    let result, rawResp = '';
     try {
       const resp = await fetch(TDFFM_URL, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', 'x-public-key': TDFFM_KEY },
-        body: JSON.stringify({ createDate: yyyymmdd(), exportData }),
+        body: JSON.stringify(payloadObj),
       });
-      result = await resp.json().catch(() => ({}));
+      rawResp = await resp.text();
+      try { result = JSON.parse(rawResp); } catch { result = {}; }
+      // Ghi cả phản hồi
+      try {
+        const logFile = (process.env.DATA_DIR || '.') + '/thailand-push.log';
+        fs.appendFileSync(logFile, JSON.stringify({ at: new Date().toISOString(), response: rawResp }) + '\n');
+      } catch (e) {}
     } catch (e) {
       return res.json({ ok: false, message: 'Lỗi gọi API hậu cần: ' + e.message });
     }
@@ -310,6 +323,18 @@ export function mountThailand(app, { mysql, requireLogin, express }) {
     await p.query(`UPDATE th_orders SET da_day = 1, ngay_day = NOW() WHERE id IN (${placeholders})`, ids);
     res.json({ ok: true, count: rows.length, message: 'Đã đẩy ' + rows.length + ' đơn sang hậu cần' });
   }));
+
+  // Xem log đẩy đơn (admin) — chẩn đoán payload gửi đi + phản hồi
+  app.get('/thailand/api/push-log', thaiAuth, (req, res) => {
+    try {
+      const logFile = (process.env.DATA_DIR || '.') + '/thailand-push.log';
+      const data = fs.readFileSync(logFile, 'utf8');
+      const lines = data.trim().split('\n').slice(-6).map(l => { try { return JSON.parse(l); } catch { return l; } });
+      res.json({ ok: true, logs: lines });
+    } catch (e) {
+      res.json({ ok: true, logs: [], message: 'Chưa có log' });
+    }
+  });
 
   // Thống kê doanh thu theo nhân viên
   app.get('/thailand/api/stats', thaiAuth, wrap(async (req, res) => {
