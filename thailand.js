@@ -1,3 +1,4 @@
+import fs from 'node:fs';
 // =====================================================================
 //  MODULE QUẢN LÝ ĐƠN HÀNG THÁI LAN  —  thailand.js
 //  Thiết kế AN TOÀN TUYỆT ĐỐI: nếu phần này lỗi, KHÔNG làm sập app chính.
@@ -102,19 +103,38 @@ export function mountThailand(app, { mysql, requireLogin, express }) {
 
   // ====================== WEBHOOK NHẬN ĐƠN TỪ LADIPAGE ======================
   // POST /thailand/webhook  — KHÔNG cần đăng nhập (Ladipage gọi tự động)
-  // Bọc try/catch, lỗi DB không làm sập gì, chỉ trả lỗi JSON.
-  app.post('/thailand/webhook', express.json(), wrap(async (req, res) => {
-    const b = req.body || {};
-    const name = String(b.name || b.ho_ten || '').trim();
-    const phone = String(b.phone || b.sdt || '').trim();
-    const address = String(b.address || b.dia_chi || '').trim();
-    const message = String(b.message || b.combo || '').trim();
-    if (!name && !phone) return res.json({ ok: false, message: 'Thiếu tên và SĐT' });
+  // Nhận CẢ JSON lẫn form-urlencoded. Ghi log mọi request để chẩn đoán.
+  const webhookParsers = [express.json({ type: () => true }), express.urlencoded({ extended: true, type: () => true })];
+  // Lấy giá trị từ nhiều khả năng key, kể cả dữ liệu lồng (Ladipage có thể bọc trong .data hoặc .form)
+  function pick(obj, keys) {
+    for (const k of keys) {
+      if (obj && obj[k] != null && String(obj[k]).trim() !== '') return String(obj[k]).trim();
+    }
+    return '';
+  }
+  app.post('/thailand/webhook', ...webhookParsers, wrap(async (req, res) => {
+    // Ghi log raw để xem Ladipage gửi gì (xem qua /thailand/api/webhook-log)
+    try {
+      const logLine = JSON.stringify({ at: new Date().toISOString(), body: req.body, query: req.query }) + '\n';
+      const logFile = (process.env.DATA_DIR || '.') + '/thailand-webhook.log';
+      fs.appendFileSync(logFile, logLine);
+    } catch (e) {}
+
+    // Bóc dữ liệu — thử cả cấp ngoài và cấp lồng (.data, .form, .fields)
+    let b = req.body || {};
+    if (b.data && typeof b.data === 'object') b = { ...b, ...b.data };
+    if (b.form && typeof b.form === 'object') b = { ...b, ...b.form };
+    if (b.fields && typeof b.fields === 'object') b = { ...b, ...b.fields };
+
+    const name = pick(b, ['name', 'ho_ten', 'fullname', 'full_name', 'ten', 'Name']);
+    const phone = pick(b, ['phone', 'sdt', 'tel', 'mobile', 'Phone', 'phone_number']);
+    const address = pick(b, ['address', 'dia_chi', 'diachi', 'Address', 'add']);
+    const message = pick(b, ['message', 'combo', 'note', 'content', 'Message', 'product']);
+    const nhanVien = pick(b, ['nhan_vien', 'marketing', 'utm_source', 'ref', 'staff', 'sale']);
+
+    if (!name && !phone) return res.json({ ok: false, message: 'Thiếu tên và SĐT', received: b });
 
     const { soLuong, gia } = parseCombo(message);
-    // Nhân viên marketing: Ladipage có thể gửi qua utm/ref — lấy nếu có
-    const nhanVien = String(b.nhan_vien || b.marketing || b.utm_source || '').trim();
-
     const p = await db();
     const today = new Date().toISOString().slice(0, 10);
     await p.query(
@@ -124,6 +144,18 @@ export function mountThailand(app, { mysql, requireLogin, express }) {
     );
     res.json({ ok: true, message: 'Đã nhận đơn', parsed: { soLuong, gia } });
   }));
+
+  // Xem log webhook (admin) — để chẩn đoán Ladipage gửi gì
+  app.get('/thailand/api/webhook-log', thaiAuth, (req, res) => {
+    try {
+      const logFile = (process.env.DATA_DIR || '.') + '/thailand-webhook.log';
+      const data = fs.readFileSync(logFile, 'utf8');
+      const lines = data.trim().split('\n').slice(-20).map(l => { try { return JSON.parse(l); } catch { return l; } });
+      res.json({ ok: true, count: lines.length, logs: lines });
+    } catch (e) {
+      res.json({ ok: true, count: 0, logs: [], message: 'Chưa có log nào (Ladipage chưa gọi webhook lần nào)' });
+    }
+  });
 
   // ====================== ĐĂNG NHẬP RIÊNG CHO THAILAND ======================
   app.get('/thailand/login', (req, res) => {
