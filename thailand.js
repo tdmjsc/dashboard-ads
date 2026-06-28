@@ -131,8 +131,10 @@ export function mountThailand(app, { mysql, requireLogin, express }) {
     const name = pick(b, ['name', 'ho_ten', 'fullname', 'full_name', 'ten', 'Name']);
     const phone = pick(b, ['phone', 'sdt', 'tel', 'mobile', 'Phone', 'phone_number']);
     const address = pick(b, ['address', 'dia_chi', 'diachi', 'Address', 'add']);
-    const message = pick(b, ['message', 'combo', 'note', 'content', 'Message', 'product']);
-    const nhanVien = pick(b, ['nhan_vien', 'marketing', 'utm_source', 'ref', 'staff', 'sale']);
+    const message = pick(b, ['combo', 'message', 'form_item11', 'note', 'content', 'Message', 'product']);
+    const nhanVien = pick(b, ['user', 'nhan_vien', 'marketing', 'form_item12', 'ref', 'staff', 'sale', 'utm_source']);
+    // Link landing page nguồn (để biết đơn từ trang nào) — lưu vào ghi_chu
+    const nguon = pick(b, ['url_page', 'link', 'page_url']);
 
     if (!name && !phone) return res.json({ ok: false, message: 'Thiếu tên và SĐT', received: b });
 
@@ -140,9 +142,9 @@ export function mountThailand(app, { mysql, requireLogin, express }) {
     const p = await db();
     const today = new Date().toISOString().slice(0, 10);
     await p.query(
-      `INSERT INTO th_orders (ngay_ve, ho_ten, sdt, dia_chi, combo, so_luong, gia_thb, nhan_vien, trang_thai)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'Mới về')`,
-      [today, name, phone, address, message, soLuong, gia, nhanVien]
+      `INSERT INTO th_orders (ngay_ve, ho_ten, sdt, dia_chi, combo, so_luong, gia_thb, nhan_vien, trang_thai, ghi_chu)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'Mới về', ?)`,
+      [today, name, phone, address, message, soLuong, gia, nhanVien, nguon]
     );
     res.json({ ok: true, message: 'Đã nhận đơn', parsed: { soLuong, gia } });
   }));
