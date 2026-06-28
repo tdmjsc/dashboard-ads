@@ -528,24 +528,48 @@ function mauSelect(o){
 }
 function render(orders){
   if(!orders.length){$('tbl').innerHTML='<div class="empty">Chưa có đơn nào.</div>';return;}
-  let h='<table><thead><tr><th>Ngày về</th><th>Họ tên</th><th>SĐT</th><th>Địa chỉ</th><th>Combo</th><th class="num">SL</th><th class="num">Giá THB</th><th>Nhân viên</th><th>Trạng thái</th><th></th></tr></thead><tbody>';
+  let h='<table><thead><tr>'
+    +'<th><input type="checkbox" id="chkAll" onchange="toggleAll(this)"></th>'
+    +'<th>Ngày về</th><th>Họ tên</th><th>SĐT</th><th>Địa chỉ</th><th>Combo</th>'
+    +'<th class="num">SL</th><th class="num">Giá THB</th><th>Mã mẫu mã</th>'
+    +'<th>Nhân viên</th><th>Trạng thái</th><th>Đẩy</th><th></th></tr></thead><tbody>';
   orders.forEach(o=>{
     const ttOpts=TT.map(t=>'<option'+(t===o.trang_thai?' selected':'')+'>'+esc(t)+'</option>').join('');
+    const dayBadge = o.da_day==1
+      ? '<span style="color:#7BE3B5;font-size:12px;">✓ Đã đẩy</span>'
+      : '<span style="color:#6B7C97;font-size:12px;">—</span>';
     h+='<tr>'
+      +'<td><input type="checkbox" class="chk" data-id="'+o.id+'"'+(o.da_day==1?' disabled':'')+'></td>'
       +'<td>'+esc((o.ngay_ve||'').slice(0,10))+'</td>'
       +'<td>'+esc(o.ho_ten)+'</td>'
       +'<td>'+esc(o.sdt)+'</td>'
       +'<td class="muted">'+esc(o.dia_chi)+'</td>'
-      +'<td class="muted" style="max-width:200px;white-space:normal;font-size:11px;">'+esc(o.combo)+'</td>'
+      +'<td class="muted" style="max-width:180px;white-space:normal;font-size:11px;">'+esc(o.combo)+'</td>'
       +'<td class="num">'+esc(o.so_luong)+'</td>'
       +'<td class="num">'+thb(o.gia_thb)+'</td>'
+      +'<td>'+mauSelect(o)+'</td>'
       +'<td><input class="ed" value="'+esc(o.nhan_vien||'')+'" onchange="upd('+o.id+',\'nhan_vien\',this.value)"></td>'
       +'<td><select class="st '+stCls(o.trang_thai)+'" onchange="upd('+o.id+',\'trang_thai\',this.value)">'+ttOpts+'</select></td>'
+      +'<td>'+dayBadge+'</td>'
       +'<td><span class="del" onclick="del('+o.id+')">✕</span></td>'
       +'</tr>';
   });
   h+='</tbody></table>';
   $('tbl').innerHTML=h;
+}
+function toggleAll(box){
+  document.querySelectorAll('.chk:not(:disabled)').forEach(c=>c.checked=box.checked);
+}
+async function pushSelected(){
+  const ids=[...document.querySelectorAll('.chk:checked')].map(c=>+c.dataset.id);
+  if(!ids.length){ alert('Chưa chọn đơn nào để đẩy'); return; }
+  if(!confirm('Đẩy '+ids.length+' đơn sang hệ thống hậu cần?')) return;
+  try{
+    const r=await fetch('/thailand/api/push',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({ids})});
+    const d=await r.json();
+    if(d.ok){ alert('✅ '+d.message); loadOrders(); }
+    else alert('❌ '+(d.message||'Lỗi đẩy đơn'));
+  }catch(e){ alert('Lỗi kết nối khi đẩy đơn'); }
 }
 
 async function upd(id,field,value){
