@@ -17,9 +17,16 @@ function parseCombo(message) {
   // Tìm "X กล่อง" để biết số hộp mua (combo)
   const mBox = s.match(/(\d+)\s*กล่อง/);
   const boxes = mBox ? parseInt(mBox[1], 10) : 0;
-  // Tìm giá: số đứng trước "THB" (có thể có dấu phẩy ngăn nghìn)
-  const mPrice = s.match(/([\d,]+)\s*THB/);
-  const gia = mPrice ? parseInt(mPrice[1].replace(/,/g, ''), 10) : 0;
+  // Tìm TẤT CẢ số đứng trước "THB" rồi CỘNG lại (tiền hàng + phí ship)
+  // VD "549 THB + ค่าส่ง 49 THB" → 549 + 49 = 598
+  let gia = 0;
+  const all = s.match(/([\d,]+)\s*THB/g);
+  if (all) {
+    for (const m of all) {
+      const n = parseInt(m.replace(/[^\d]/g, ''), 10);
+      if (!isNaN(n)) gia += n;
+    }
+  }
 
   // Số lượng gel thực nhận theo bảng (mua 3 tặng 1 = 4, mua 4 tặng 1 = 5, mua 5 tặng 1 = 6)
   let soLuong = boxes;
@@ -249,7 +256,7 @@ export function mountThailand(app, { mysql, requireLogin, express }) {
   app.post('/thailand/api/order/update', thaiAuth, express.json(), wrap(async (req, res) => {
     const { id, field, value } = req.body || {};
     if (!id || !field) return res.json({ ok: false, message: 'Thiếu id hoặc field' });
-    const allowed = ['trang_thai', 'nhan_vien', 'ho_ten', 'sdt', 'dia_chi', 'so_luong', 'gia_thb', 'ghi_chu', 'ngay_ve'];
+    const allowed = ['trang_thai', 'nhan_vien', 'ho_ten', 'sdt', 'dia_chi', 'so_luong', 'gia_thb', 'ghi_chu', 'ngay_ve', 'ma_mau', 'ma_kh'];
     if (!allowed.includes(field)) return res.json({ ok: false, message: 'Field không hợp lệ' });
     if (field === 'trang_thai' && !TRANG_THAI.includes(value)) return res.json({ ok: false, message: 'Trạng thái không hợp lệ' });
     const p = await db();
@@ -620,8 +627,8 @@ function render(orders){
       +'<td>'+esc(o.sdt)+'</td>'
       +'<td class="muted">'+esc(o.dia_chi)+'</td>'
       +'<td class="muted" style="max-width:180px;white-space:normal;font-size:11px;">'+esc(o.combo)+'</td>'
-      +'<td class="num">'+esc(o.so_luong)+'</td>'
-      +'<td class="num">'+thb(o.gia_thb)+'</td>'
+      +'<td class="num"><input class="ed ednum edsl" data-id="'+o.id+'" value="'+esc(o.so_luong||0)+'" style="width:55px;text-align:right"></td>'
+      +'<td class="num"><input class="ed ednum edgia" data-id="'+o.id+'" value="'+esc(o.gia_thb||0)+'" style="width:75px;text-align:right"></td>'
       +'<td>'+mauSelect(o)+'</td>'
       +'<td><input class="ed ednv" data-id="'+o.id+'" value="'+esc(o.nhan_vien||'')+'"></td>'
       +'<td><select class="st sttt" data-id="'+o.id+'" data-cls="'+stCls(o.trang_thai)+'">'+ttOpts+'</select></td>'
@@ -635,6 +642,8 @@ function render(orders){
   document.querySelectorAll('.mausel').forEach(el=>el.onchange=()=>upd(+el.dataset.id,'ma_mau',el.value));
   document.querySelectorAll('.ednv').forEach(el=>el.onchange=()=>upd(+el.dataset.id,'nhan_vien',el.value));
   document.querySelectorAll('.sttt').forEach(el=>{ if(el.dataset.cls) el.classList.add(el.dataset.cls); el.onchange=()=>upd(+el.dataset.id,'trang_thai',el.value); });
+  document.querySelectorAll('.edsl').forEach(el=>el.onchange=()=>upd(+el.dataset.id,'so_luong',parseInt(el.value.replace(/[^0-9]/g,''),10)||0));
+  document.querySelectorAll('.edgia').forEach(el=>el.onchange=()=>upd(+el.dataset.id,'gia_thb',parseInt(el.value.replace(/[^0-9]/g,''),10)||0));
   document.querySelectorAll('.delbtn').forEach(el=>el.onclick=()=>del(+el.dataset.id));
   if($('chkAll')) $('chkAll').onchange=function(){ toggleAll(this); };
 }
