@@ -283,11 +283,10 @@ export function mountThailand(app, { mysql, requireLogin, express }) {
       '*Tên khách hàng': o.ho_ten || '',
       '*SĐT khách hàng': o.sdt || '',
       '*Địa chỉ giao hàng': o.dia_chi || '',
-      '*Tiền COD': o.gia_thb || 0,
+      '*Tiền COD': Number(o.gia_thb) || 0,
       '*Mã mẫu mã': o.ma_mau || TDFFM_MA_MAU,
-      '*Số lượng': o.so_luong || 0,
+      '*Số lượng': Number(o.so_luong) || 0,
       '*Cần sale bán hàng': 'NEED_SALE',
-      'Ghi chú': o.ghi_chu || '',
       'Hình thức thanh toán': 'COD',
     }));
 
