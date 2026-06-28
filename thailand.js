@@ -539,8 +539,8 @@ function render(orders){
       +'<td class="muted" style="max-width:200px;white-space:normal;font-size:11px;">'+esc(o.combo)+'</td>'
       +'<td class="num">'+esc(o.so_luong)+'</td>'
       +'<td class="num">'+thb(o.gia_thb)+'</td>'
-      +'<td><input class="ed" value="'+esc(o.nhan_vien||'')+'" onchange="upd('+o.id+',\\'nhan_vien\\',this.value)"></td>'
-      +'<td><select class="st '+stCls(o.trang_thai)+'" onchange="upd('+o.id+',\\'trang_thai\\',this.value)">'+ttOpts+'</select></td>'
+      +'<td><input class="ed" value="'+esc(o.nhan_vien||'')+'" onchange="upd('+o.id+',\'nhan_vien\',this.value)"></td>'
+      +'<td><select class="st '+stCls(o.trang_thai)+'" onchange="upd('+o.id+',\'trang_thai\',this.value)">'+ttOpts+'</select></td>'
       +'<td><span class="del" onclick="del('+o.id+')">✕</span></td>'
       +'</tr>';
   });
