@@ -199,7 +199,7 @@ export function mountThailand(app, { mysql, requireLogin, express, getCampaigns,
 
     const { soLuong, gia } = parseCombo(message);
     const p = await db();
-    const today = new Date().toISOString().slice(0, 10);
+    const today = todayVN();
     await p.query(
       `INSERT INTO th_orders (ngay_ve, ho_ten, sdt, dia_chi, combo, so_luong, gia_thb, nhan_vien, trang_thai, ghi_chu)
        VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'Mới về', ?)`,
@@ -288,7 +288,7 @@ export function mountThailand(app, { mysql, requireLogin, express, getCampaigns,
     await p.query(
       `INSERT INTO th_orders (ngay_ve, ho_ten, sdt, dia_chi, combo, so_luong, gia_thb, nhan_vien, trang_thai)
        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-      [b.ngay_ve || new Date().toISOString().slice(0, 10), b.ho_ten || '', b.sdt || '', b.dia_chi || '',
+      [b.ngay_ve || todayVN(), b.ho_ten || '', b.sdt || '', b.dia_chi || '',
        b.combo || '', b.so_luong || soLuong, b.gia_thb || gia, b.nhan_vien || '', b.trang_thai || 'Mới về']
     );
     res.json({ ok: true });
@@ -304,6 +304,11 @@ export function mountThailand(app, { mysql, requireLogin, express, getCampaigns,
     await p.query(`DELETE FROM th_orders WHERE id = ?`, [id]);
     res.json({ ok: true });
   }));
+
+  // Ngày hôm nay theo giờ Việt Nam (UTC+7), dạng YYYY-MM-DD
+  function todayVN() {
+    return new Date(Date.now() + 7 * 3600 * 1000).toISOString().slice(0, 10);
+  }
 
   // ====================== ĐẨY ĐƠN SANG HẬU CẦN (tdffm.com) ======================
   function yyyymmdd(d) {
@@ -420,7 +425,7 @@ export function mountThailand(app, { mysql, requireLogin, express, getCampaigns,
   // ====== MARKETING THÁI LAN: chi tiêu QC (chiến dịch có "Thái Lan") + số đơn/doanh thu từ th_orders ======
   app.get('/thailand/api/mkt-report', thaiAuth, wrap(async (req, res) => {
     const { isAdmin, myName } = thaiWho(req);
-    const today = new Date().toISOString().slice(0, 10);
+    const today = todayVN();
     const since = req.query.since || today;
     const until = req.query.until || since;
     const norm = s => String(s == null ? '' : s).trim().toLowerCase().replace(/\s+/g, ' ');
