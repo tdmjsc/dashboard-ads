@@ -667,6 +667,8 @@ async function sandboxReport(since, until) {
 }
 
 // Chuyển dữ liệu báo cáo -> dạng bảng cho dashboard
+// DEBUG: xem TẤT CẢ trường thật của 1 nhân viên từ Sandbox (xoá sau khi xong)
+//  Mở: /api/marketing/raw-fields?since=2026-06-29&until=2026-06-29
 function mapReport(j) {
   const d = (j && j.data) || {};
   const rows = (d.reportLeadByNhanSuMktDtos || []).map(r => ({
@@ -864,8 +866,8 @@ app.get('/api/marketing/report', async (req, res) => {
       const chiTieu = Math.round((metaSpend[norm(r.name)] || 0) * TAX);
       const giaContact = (chiTieu > 0 && r.contact > 0) ? Math.round(chiTieu / r.contact) : 0;
       const donThai = thaiCounts[norm(r.name)] || 0;
-      const tongDon = (Number(r.chot) || 0) + donThai;  // đơn chốt Sandbox + đơn Thái
-      const cpa = (chiTieu > 0 && tongDon > 0) ? Math.round(chiTieu / tongDon) : 0;  // CPA = chi tiêu / tổng đơn
+      const tongDon = (Number(r.contact) || 0) + donThai;  // TỔNG ĐƠN = số contact + đơn Thái
+      const cpa = (chiTieu > 0 && tongDon > 0) ? Math.round(chiTieu / tongDon) : 0;  // CPA = chi tiêu / (contact + đơn Thái)
       return { ...r, chiTieu, giaContact, donThai, tongDon, cpa };
     });
 
@@ -884,8 +886,7 @@ app.get('/api/marketing/report', async (req, res) => {
       doanhthu: a.doanhthu + (+r.doanhthu || 0),
       chiTieu:  a.chiTieu  + (+r.chiTieu  || 0),
       donThai:  a.donThai  + (+r.donThai  || 0),
-      tongDon:  a.tongDon  + (+r.tongDon  || 0),
-    }), { contact: 0, chot: 0, soSP: 0, doanhthu: 0, chiTieu: 0, donThai: 0, tongDon: 0 });
+    }), { contact: 0, chot: 0, soSP: 0, doanhthu: 0, chiTieu: 0, donThai: 0 });
 
     const total = {
       contact:    s.contact,
@@ -894,16 +895,34 @@ app.get('/api/marketing/report', async (req, res) => {
       doanhthu:   s.doanhthu,
       chiTieu:    s.chiTieu,
       donThai:    s.donThai,
-      tongDon:    s.tongDon,
+      tongDon:    s.contact + s.donThai,
       tyLe:       s.contact ? (s.chot / s.contact * 100) : 0,
       giaContact: s.contact ? Math.round(s.chiTieu / s.contact) : 0,
-      cpa:        s.tongDon ? Math.round(s.chiTieu / s.tongDon) : 0,
+      cpa:        (s.contact + s.donThai) ? Math.round(s.chiTieu / (s.contact + s.donThai)) : 0,
     };
 
     rows.sort((a, b) => (b.doanhthu || 0) - (a.doanhthu || 0));
     res.json({ ok: true, ver: 'mkt-2026-06-23-v13', since, until, rows, total, lastUpdated: new Date().toISOString() });
   } catch (e) {
     res.json({ ok: false, since, until, message: e.message });
+  }
+});
+
+// DEBUG: trả raw trường gốc Sandbox cho 1-2 nhân viên (để tìm vì sao chốt > contact)
+app.get('/api/marketing/raw-fields', async (req, res) => {
+  const today = new Date().toISOString().slice(0, 10);
+  const since = req.query.since || today;
+  const until = req.query.until || since;
+  try {
+    const rp = await sandboxReport(since, until);
+    const d = (rp.json && rp.json.data) || {};
+    const dtos = d.reportLeadByNhanSuMktDtos || [];
+    // Trả nguyên 2 dòng đầu + tên tất cả các trường
+    const sample = dtos.slice(0, 3);
+    const allKeys = dtos.length ? Object.keys(dtos[0]) : [];
+    res.json({ ok: true, since, until, soNhanVien: dtos.length, allKeys, sample, totalRaw: d.reportLeadByNhanSuMktTotalDto || {} });
+  } catch (e) {
+    res.json({ ok: false, message: e.message });
   }
 });
 
