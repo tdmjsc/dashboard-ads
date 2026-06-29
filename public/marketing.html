@@ -74,11 +74,9 @@
         <th>Nhân viên marketing</th>
         <th class="num">Số contact</th>
         <th class="num">Giá/contact</th>
-        <th class="num">Đơn chốt</th>
         <th class="num">Đơn Thái</th>
         <th class="num">Tổng đơn</th>
-        <th class="num">CPA</th>
-        <th class="num">Tỷ lệ chốt</th>
+        <th class="num">CPA (cả đơn Thái)</th>
         <th class="num">Số SP</th>
         <th class="num">Chi tiêu QC</th>
         <th class="num">Doanh số (VND)</th>
@@ -111,18 +109,16 @@ function esc(s){ return String(s==null?'':s).replace(/[&<>"]/g, c=>({'&':'&amp;'
 function render(d){
   const tb = $('rows');
   const rows = (d.rows||[]).slice().sort((a,b)=>(b.doanhthu||0)-(a.doanhthu||0));
-  if(!rows.length){ tb.innerHTML = '<tr><td colspan="12" class="empty">Không có dữ liệu trong khoảng ngày này.</td></tr>'; return; }
+  if(!rows.length){ tb.innerHTML = '<tr><td colspan="10" class="empty">Không có dữ liệu trong khoảng ngày này.</td></tr>'; return; }
   let html='';
   rows.forEach(r=>{
     html += `<tr>
       <td>${esc(r.name)||'<span class="muted">(không tên)</span>'}</td>
       <td class="num">${vnd(r.contact)}</td>
       <td class="num cpa">${vnd(r.giaContact)}</td>
-      <td class="num">${vnd(r.chot)}</td>
       <td class="num" style="color:#9DB2FF">${vnd(r.donThai)}</td>
       <td class="num" style="font-weight:600">${vnd(r.tongDon)}</td>
       <td class="num cpa">${vnd(r.cpa)}</td>
-      <td class="num">${pctf(r.tyLe)}</td>
       <td class="num">${vnd(r.soSP)}</td>
       <td class="num">${vnd(r.chiTieu)}</td>
       <td class="num rev">${vnd(r.doanhthu)}</td>
@@ -134,11 +130,9 @@ function render(d){
     <td>Tổng cộng</td>
     <td class="num">${vnd(t.contact)}</td>
     <td class="num">${vnd(t.giaContact)}</td>
-    <td class="num">${vnd(t.chot)}</td>
     <td class="num" style="color:#9DB2FF">${vnd(t.donThai)}</td>
     <td class="num" style="font-weight:600">${vnd(t.tongDon)}</td>
     <td class="num cpa">${vnd(t.cpa)}</td>
-    <td class="num">${pctf(t.tyLe)}</td>
     <td class="num">${vnd(t.soSP)}</td>
     <td class="num">${vnd(t.chiTieu)}</td>
     <td class="num rev">${vnd(t.doanhthu)}</td>
