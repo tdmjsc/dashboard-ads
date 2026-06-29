@@ -296,6 +296,8 @@ export function mountThailand(app, { mysql, requireLogin, express, getCampaigns,
 
   // Xoá đơn
   app.post('/thailand/api/order/delete', thaiAuth, express.json(), wrap(async (req, res) => {
+    const { isAdmin } = thaiWho(req);
+    if (!isAdmin) return res.status(403).json({ ok: false, message: 'Chỉ quản trị viên mới được xoá đơn' });
     const { id } = req.body || {};
     if (!id) return res.json({ ok: false, message: 'Thiếu id' });
     const p = await db();
@@ -985,7 +987,7 @@ function render(orders){
     +'<th>Ngày về</th><th>Họ tên</th><th>SĐT</th><th>Địa chỉ</th><th>Combo</th>'
     +'<th class="num">SL</th><th class="num">Giá THB</th><th>Mã mẫu mã</th>'
     +'<th>Nhân viên</th><th>Trạng thái</th>'
-    +(IS_ADMIN?'<th>Đẩy</th>':'')+'<th></th></tr></thead><tbody>';
+    +(IS_ADMIN?'<th>Đẩy</th>':'')+(IS_ADMIN?'<th></th>':'')+'</tr></thead><tbody>';
   orders.forEach((o,idx)=>{
     const ttList = (o.trang_thai && !TT.includes(o.trang_thai)) ? [o.trang_thai, ...TT] : TT;
     const ttOpts=ttList.map(t=>'<option'+(t===o.trang_thai?' selected':'')+'>'+esc(t)+'</option>').join('');
@@ -1006,7 +1008,7 @@ function render(orders){
       +'<td><input class="ed ednv" data-id="'+o.id+'" value="'+esc(o.nhan_vien||'')+'"></td>'
       +'<td><select class="st sttt" data-id="'+o.id+'" data-cls="'+stCls(o.trang_thai)+'">'+ttOpts+'</select></td>'
       +(IS_ADMIN?'<td>'+dayBadge+'</td>':'')
-      +'<td><span class="del delbtn" data-id="'+o.id+'">✕</span></td>'
+      +(IS_ADMIN?'<td><span class="del delbtn" data-id="'+o.id+'">✕</span></td>':'')
       +'</tr>';
   });
   h+='</tbody></table>';
