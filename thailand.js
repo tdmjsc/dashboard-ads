@@ -9,7 +9,7 @@ import fs from 'node:fs';
 
 // Trạng thái đơn hợp lệ
 const TRANG_THAI = [
-  'Mới về', 'Nháp', 'Đã xác nhận', 'Sale xác nhận', 'Chờ hàng', 'Đang xử lý',
+  'Mới về', 'Chưa xử lý', 'Đã xác nhận', 'Sale xác nhận', 'Chờ hàng', 'Đang xử lý',
   'Đã đóng gói', 'Có vấn đề', 'Từ chối', 'Đang giao', 'Đã giao', 'Giao thành công',
   'Đang hoàn', 'Hoàn hàng', 'Hoàn tất', 'Thành công', 'Huỷ',
 ];
@@ -583,7 +583,7 @@ export function mountThailand(app, { mysql, requireLogin, express, getCampaigns,
 
   // Map trạng thái TDFFM (tiếng Anh) → nhãn tiếng Việt
   const TDFFM_STATUS_MAP = {
-    DRAFT: 'Nháp',
+    DRAFT: 'Chưa xử lý',
     SALE_CONFIRM: 'Sale xác nhận',
     WAITING_GOODS: 'Chờ hàng',
     IS_BEING_PROCESSED: 'Đang xử lý',
@@ -966,7 +966,7 @@ async function loadOrders(){
 function stCls(t){
   if(['Thành công','Hoàn tất','Giao thành công','Đã giao'].includes(t))return 'st-tc';
   if(['Huỷ','Hoàn hàng','Từ chối','Có vấn đề','Đang hoàn'].includes(t))return 'st-huy';
-  if(['Mới về','Nháp'].includes(t))return 'st-moi';
+  if(['Mới về','Chưa xử lý'].includes(t))return 'st-moi';
   return '';
 }
 
