@@ -1,0 +1,164 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Marketing Thái Lan — TDMJSC</title>
+<style>
+  *{box-sizing:border-box;}
+  body{margin:0;font-family:'Inter',system-ui,sans-serif;background:#0B1322;color:#E7EEF8;}
+  header{background:#10192B;border-bottom:1px solid rgba(255,255,255,.07);padding:14px 18px;}
+  .top{display:flex;align-items:center;gap:12px;flex-wrap:wrap;}
+  h1{font-size:17px;margin:0;}
+  .sub{color:#9FB0C8;font-size:12px;margin:2px 0 0;font-weight:400;}
+  .daterange{display:flex;align-items:center;gap:8px;background:rgba(255,255,255,.06);border:1px solid rgba(255,255,255,.10);padding:7px 11px;border-radius:9px;}
+  .daterange label{font-size:11px;color:#9FB0C8;}
+  .daterange input[type=date]{font-family:'Inter';font-size:12.5px;color:#fff;background:transparent;border:none;outline:none;color-scheme:dark;}
+  .quick{display:flex;gap:6px;}
+  .quick button{font-family:'Inter';font-size:11.5px;color:#C4D0E2;background:rgba(255,255,255,.05);border:1px solid rgba(255,255,255,.10);padding:6px 9px;border-radius:8px;cursor:pointer;}
+  .quick button:hover{background:rgba(255,255,255,.12);color:#fff;}
+  .btn{font-family:'Inter';font-size:13px;font-weight:600;color:#fff;background:#3D5AFE;border:none;padding:8px 16px;border-radius:9px;cursor:pointer;white-space:nowrap;}
+  .btn:hover{background:#2f49d6;} .btn:disabled{opacity:.5;cursor:not-allowed;}
+  .link{color:#C4D0E2;font-size:13px;text-decoration:none;border:1px solid rgba(255,255,255,.14);padding:7px 12px;border-radius:9px;white-space:nowrap;}
+  .link:hover{background:rgba(255,255,255,.08);color:#fff;}
+  main{padding:18px;max-width:1100px;margin:0 auto;}
+  .status{font-size:13px;color:#9FB0C8;margin:4px 0 16px;min-height:18px;}
+  .status .warn{color:#ffc56b;} .status .err{color:#ff9b8a;}
+  table{width:100%;border-collapse:collapse;background:#101B2E;border-radius:12px;overflow:hidden;}
+  th,td{padding:12px 14px;text-align:left;font-size:13.5px;border-bottom:1px solid rgba(255,255,255,.05);}
+  th{background:#16233A;color:#9FB0C8;font-weight:600;font-size:12px;text-transform:uppercase;letter-spacing:.03em;}
+  td.num,th.num{text-align:right;font-variant-numeric:tabular-nums;}
+  tr:last-child td{border-bottom:none;}
+  tr.total td{background:#16233A;font-weight:700;color:#fff;}
+  .rev{color:#7BE3B5;font-weight:600;}
+  .cpa{color:#ffc56b;}
+  .muted{color:#6B7C97;}
+  .empty{padding:30px;text-align:center;color:#6B7C97;font-size:14px;}
+  @media(max-width:680px){ h1{font-size:15px;} th,td{padding:9px 7px;font-size:12px;} .daterange{flex:1 1 100%;} }
+  .user-badge{display:inline-flex;align-items:center;gap:6px;font-size:13px;color:#9DB2FF;background:rgba(157,178,255,.1);border:1px solid rgba(157,178,255,.2);padding:7px 12px;border-radius:9px;font-weight:600;white-space:nowrap;}
+</style>
+</head>
+<body>
+<header>
+  <div class="top">
+    <div style="flex:1;min-width:180px;">
+      <h1>🇹🇭 Marketing Thái Lan · theo nhân viên</h1>
+      <p class="sub">Chi tiêu QC (chiến dịch có "Thái Lan") + số đơn & doanh thu từ đơn Thái</p>
+    </div>
+    <div class="quick">
+      <button data-range="today">Hôm nay</button>
+      <button data-range="yesterday">Hôm qua</button>
+      <button data-range="month">Tháng này</button>
+    </div>
+    <div class="daterange">
+      <label>Từ</label><input type="date" id="from">
+      <span style="color:#5C6E8C;">→</span>
+      <label>Đến</label><input type="date" id="to">
+    </div>
+    <button class="btn" id="refreshBtn">Xem</button>
+    <a href="/" class="link">← Dashboard</a>
+    <a href="/thailand" class="link">🇹🇭 Đơn Thái Lan</a>
+    <span class="user-badge" id="userBadge"></span>
+    <a href="/logout" class="link">Đăng xuất</a>
+  </div>
+</header>
+
+<main>
+  <div class="status" id="status">Đang tải…</div>
+  <table id="tbl">
+    <thead>
+      <tr>
+        <th>Nhân viên marketing</th>
+        <th class="num">Chi tiêu QC (VND)</th>
+        <th class="num">Số đơn</th>
+        <th class="num">Giá/đơn (VND)</th>
+        <th class="num">Đơn thành công</th>
+        <th class="num">Tổng SL</th>
+        <th class="num">Doanh thu (THB)</th>
+      </tr>
+    </thead>
+    <tbody id="rows"></tbody>
+  </table>
+</main>
+
+<script>
+const vnd = n => (Number(n)||0).toLocaleString('vi-VN');
+const thb = n => (Number(n)||0).toLocaleString('vi-VN');
+const $ = id => document.getElementById(id);
+const fmt = d => `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`;
+
+function setRange(kind){
+  const t = new Date();
+  if(kind==='today'){ $('from').value=fmt(t); $('to').value=fmt(t); }
+  else if(kind==='yesterday'){ const y=new Date(t); y.setDate(t.getDate()-1); $('from').value=fmt(y); $('to').value=fmt(y); }
+  else { $('from').value=fmt(new Date(t.getFullYear(),t.getMonth(),1)); $('to').value=fmt(t); }
+}
+setRange('month');
+
+function esc(s){ return String(s==null?'':s).replace(/[&<>"]/g, c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c])); }
+
+function render(d){
+  const tb = $('rows');
+  const rows = (d.rows||[]).slice();
+  if(!rows.length){ tb.innerHTML = '<tr><td colspan="7" class="empty">Không có dữ liệu trong khoảng ngày này.</td></tr>'; return; }
+  let html='';
+  rows.forEach(r=>{
+    html += `<tr>
+      <td>${esc(r.name)||'<span class="muted">(không tên)</span>'}</td>
+      <td class="num cpa">${vnd(r.chiTieu)}</td>
+      <td class="num">${vnd(r.soDon)}</td>
+      <td class="num">${vnd(r.giaDon)}</td>
+      <td class="num">${vnd(r.donThanhCong)}</td>
+      <td class="num">${vnd(r.tongSL)}</td>
+      <td class="num rev">${thb(r.doanhThu)}</td>
+    </tr>`;
+  });
+  const t = d.total||{};
+  html += `<tr class="total">
+    <td>Tổng cộng</td>
+    <td class="num">${vnd(t.chiTieu)}</td>
+    <td class="num">${vnd(t.soDon)}</td>
+    <td class="num">${vnd(t.giaDon)}</td>
+    <td class="num">${vnd(t.donThanhCong)}</td>
+    <td class="num">${vnd(t.tongSL)}</td>
+    <td class="num rev">${thb(t.doanhThu)}</td>
+  </tr>`;
+  tb.innerHTML = html;
+}
+
+async function load(){
+  const since=$('from').value, until=$('to').value;
+  if(!since||!until) return;
+  $('refreshBtn').disabled = true;
+  $('status').innerHTML = '<span class="warn">Đang tải dữ liệu…</span>';
+  try{
+    const res = await fetch('/thailand/api/mkt-report?since='+since+'&until='+until);
+    if(res.status===401){ location.href='/login'; return; }
+    const d = await res.json();
+    if(!d.ok){
+      $('status').innerHTML = '<span class="err">Lỗi: '+esc(d.message||'không lấy được báo cáo')+'</span>';
+      $('rows').innerHTML='';
+    } else {
+      render(d);
+      const t = new Date(d.lastUpdated||Date.now());
+      const same = since===until;
+      $('status').textContent = 'Cập nhật lúc ' + t.toLocaleString('vi-VN') + '  ·  ' + (same ? ('ngày '+since) : (since+' → '+until));
+    }
+  }catch(e){ $('status').innerHTML = '<span class="err">Không kết nối được máy chủ: '+esc(e.message)+'</span>'; }
+  finally{ $('refreshBtn').disabled = false; }
+}
+
+document.querySelectorAll('.quick button').forEach(b=>{
+  b.addEventListener('click', ()=>{ setRange(b.dataset.range); load(); });
+});
+$('refreshBtn').addEventListener('click', load);
+
+// Hiện tên người đăng nhập
+fetch('/api/me').then(r=>r.json()).then(me=>{
+  if(me && me.displayName) $('userBadge').textContent = '👤 ' + me.displayName;
+}).catch(()=>{});
+
+load();
+</script>
+</body>
+</html>
