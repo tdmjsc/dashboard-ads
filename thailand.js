@@ -76,7 +76,7 @@ async function ensureTable(pool) {
 //   - mysql: module 'mysql2/promise' (truyền từ server.js sau khi import động)
 //   - requireLogin: middleware đăng nhập của dashboard (tái dùng phiên admin)
 // =====================================================================
-export function mountThailand(app, { mysql, requireLogin, express }) {
+export function mountThailand(app, { mysql, requireLogin, express, getCampaigns, QC_TAX }) {
   let pool = null;
   let tableReady = false;
 
@@ -399,6 +399,79 @@ export function mountThailand(app, { mysql, requireLogin, express }) {
     res.json({ ok: true, stats: rows });
   }));
 
+  // ====== MARKETING THÁI LAN: chi tiêu QC (chiến dịch có "Thái Lan") + số đơn/doanh thu từ th_orders ======
+  app.get('/thailand/api/mkt-report', thaiAuth, wrap(async (req, res) => {
+    const { isAdmin, myName } = thaiWho(req);
+    const today = new Date().toISOString().slice(0, 10);
+    const since = req.query.since || today;
+    const until = req.query.until || since;
+    const norm = s => String(s == null ? '' : s).trim().toLowerCase().replace(/\s+/g, ' ');
+
+    // (A) Chi tiêu QC Meta — lọc chiến dịch có chữ "thái lan" / "thailand" trong tên
+    const spend = {}; // { tênNV: tổng chi tiêu }
+    try {
+      if (typeof getCampaigns === 'function') {
+        const campaigns = await getCampaigns(since, until);
+        for (const c of campaigns) {
+          const ten = norm(c.name);
+          if (!ten.includes('thái lan') && !ten.includes('thai lan') && !ten.includes('thailand')) continue;
+          const emp = c.employee || '';
+          if (!emp || norm(emp) === 'chưa xác định') continue;
+          const s = (c.daily || []).reduce((t, d) => t + (Number(d.spent) || 0), 0);
+          spend[emp] = (spend[emp] || 0) + s;
+        }
+      }
+    } catch (e) {}
+    const TAX = 1 + (typeof QC_TAX === 'number' ? QC_TAX : 0.11);
+
+    // (B) Số đơn + doanh thu từ th_orders, gom theo nhân viên (trong khoảng ngày)
+    const p = await db();
+    const [orderRows] = await p.query(`
+      SELECT nhan_vien,
+        COUNT(*) AS so_don,
+        SUM(CASE WHEN trang_thai='Thành công' THEN 1 ELSE 0 END) AS don_thanh_cong,
+        SUM(CASE WHEN trang_thai='Thành công' THEN gia_thb ELSE 0 END) AS doanh_thu,
+        SUM(so_luong) AS tong_sl
+      FROM th_orders
+      WHERE ngay_ve >= ? AND ngay_ve <= ?
+      GROUP BY nhan_vien`, [since, until]);
+
+    // Gộp 2 nguồn theo tên nhân viên
+    const map = {}; // tênNV -> dòng
+    function ensure(name) {
+      const key = norm(name);
+      if (!map[key]) map[key] = { name: name || '(không tên)', chiTieu: 0, soDon: 0, donThanhCong: 0, doanhThu: 0, tongSL: 0 };
+      return map[key];
+    }
+    for (const [emp, sp] of Object.entries(spend)) {
+      ensure(emp).chiTieu += Math.round(sp * TAX);
+    }
+    for (const r of orderRows) {
+      const row = ensure(r.nhan_vien || '');
+      row.soDon += Number(r.so_don) || 0;
+      row.donThanhCong += Number(r.don_thanh_cong) || 0;
+      row.doanhThu += Number(r.doanh_thu) || 0;
+      row.tongSL += Number(r.tong_sl) || 0;
+    }
+
+    let rows = Object.values(map);
+    // Lọc theo quyền: nhân viên chỉ thấy mình
+    if (!isAdmin) rows = rows.filter(r => norm(r.name) === norm(myName));
+
+    // Tính giá đơn (chi tiêu / số đơn) cho mỗi người
+    rows.forEach(r => { r.giaDon = r.soDon > 0 ? Math.round(r.chiTieu / r.soDon) : 0; });
+    rows.sort((a, b) => (b.doanhThu || 0) - (a.doanhThu || 0));
+
+    // Tổng
+    const total = rows.reduce((a, r) => ({
+      chiTieu: a.chiTieu + r.chiTieu, soDon: a.soDon + r.soDon,
+      donThanhCong: a.donThanhCong + r.donThanhCong, doanhThu: a.doanhThu + r.doanhThu, tongSL: a.tongSL + r.tongSL,
+    }), { chiTieu: 0, soDon: 0, donThanhCong: 0, doanhThu: 0, tongSL: 0 });
+    total.giaDon = total.soDon > 0 ? Math.round(total.chiTieu / total.soDon) : 0;
+
+    res.json({ ok: true, since, until, rows, total, isAdmin, lastUpdated: new Date().toISOString() });
+  }));
+
   // Xuất CSV
   app.get('/thailand/api/export', thaiAuth, wrap(async (req, res) => {
     const { isAdmin } = thaiWho(req);
@@ -503,6 +576,7 @@ input.ed{width:100px;}.st-moi{color:#9DB2FF;}.st-tc{color:#7BE3B5;}.st-huy{color
   <button class="btn g" id="addBtn">+ Thêm đơn</button>
   <button class="btn" id="pushBtn" style="background:#FF9F45;color:#0B1322;">🚚 Đẩy sang hậu cần</button>
   <a class="link" href="/thailand/api/export" id="csvBtn">⬇ Xuất CSV</a>
+  <a class="link" href="/marketing-thailand.html">📊 MKT Thái Lan</a>
   <a class="link" href="/">← Dashboard</a>
   <a class="link" href="/thailand/logout">Đăng xuất</a>
 </header>
