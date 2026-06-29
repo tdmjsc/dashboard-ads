@@ -667,8 +667,6 @@ async function sandboxReport(since, until) {
 }
 
 // Chuyển dữ liệu báo cáo -> dạng bảng cho dashboard
-// DEBUG: xem TẤT CẢ trường thật của 1 nhân viên từ Sandbox (xoá sau khi xong)
-//  Mở: /api/marketing/raw-fields?since=2026-06-29&until=2026-06-29
 function mapReport(j) {
   const d = (j && j.data) || {};
   const rows = (d.reportLeadByNhanSuMktDtos || []).map(r => ({
@@ -905,24 +903,6 @@ app.get('/api/marketing/report', async (req, res) => {
     res.json({ ok: true, ver: 'mkt-2026-06-23-v13', since, until, rows, total, lastUpdated: new Date().toISOString() });
   } catch (e) {
     res.json({ ok: false, since, until, message: e.message });
-  }
-});
-
-// DEBUG: trả raw trường gốc Sandbox cho 1-2 nhân viên (để tìm vì sao chốt > contact)
-app.get('/api/marketing/raw-fields', async (req, res) => {
-  const today = new Date().toISOString().slice(0, 10);
-  const since = req.query.since || today;
-  const until = req.query.until || since;
-  try {
-    const rp = await sandboxReport(since, until);
-    const d = (rp.json && rp.json.data) || {};
-    const dtos = d.reportLeadByNhanSuMktDtos || [];
-    // Trả nguyên 2 dòng đầu + tên tất cả các trường
-    const sample = dtos.slice(0, 3);
-    const allKeys = dtos.length ? Object.keys(dtos[0]) : [];
-    res.json({ ok: true, since, until, soNhanVien: dtos.length, allKeys, sample, totalRaw: d.reportLeadByNhanSuMktTotalDto || {} });
-  } catch (e) {
-    res.json({ ok: false, message: e.message });
   }
 });
 
