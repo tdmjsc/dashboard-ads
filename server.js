@@ -378,7 +378,7 @@ app.get('/logout', (req, res) => req.session.destroy(() => res.redirect('/login'
       import('mysql2/promise'),
     ]);
     const mysql = mysqlMod.default || mysqlMod;
-    mountThailand(app, { mysql, express });
+    mountThailand(app, { mysql, express, getCampaigns, QC_TAX });
   } catch (e) {
     console.error('[thailand] KHÔNG gắn được module (app chính vẫn chạy bình thường):', e.message);
   }
