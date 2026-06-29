@@ -76,7 +76,7 @@ async function ensureTable(pool) {
 //   - mysql: module 'mysql2/promise' (truyền từ server.js sau khi import động)
 //   - requireLogin: middleware đăng nhập của dashboard (tái dùng phiên admin)
 // =====================================================================
-export function mountThailand(app, { mysql, requireLogin, express, getCampaigns, QC_TAX }) {
+export function mountThailand(app, { mysql, requireLogin, express, getCampaigns, QC_TAX, exposeCounter }) {
   let pool = null;
   let tableReady = false;
 
@@ -109,6 +109,26 @@ export function mountThailand(app, { mysql, requireLogin, express, getCampaigns,
   }
 
   // Đảm bảo có pool + bảng, gọi đầu mỗi request DB
+  // Đếm số đơn Thái theo nhân viên (mọi trạng thái) trong khoảng ngày — cho marketing/dashboard gộp
+  async function getThaiOrderCounts(since, until) {
+    try {
+      const p = await db();
+      const args = [];
+      let wsql = '';
+      if (since && until) { wsql = 'WHERE ngay_ve >= ? AND ngay_ve <= ?'; args.push(since, until); }
+      const [rows] = await p.query(
+        `SELECT nhan_vien, COUNT(*) AS so_don FROM th_orders ${wsql} GROUP BY nhan_vien`, args);
+      const map = {};
+      for (const r of rows) {
+        const key = String(r.nhan_vien || '').trim().toLowerCase().replace(/\s+/g, ' ');
+        if (key) map[key] = (map[key] || 0) + (Number(r.so_don) || 0);
+      }
+      return map;
+    } catch (e) { return {}; }
+  }
+  // Đưa hàm này ra ngoài để server.js gọi được
+  if (typeof exposeCounter === 'function') exposeCounter(getThaiOrderCounts);
+
   async function db() {
     const p = getPool();
     if (!tableReady) { await ensureTable(p); tableReady = true; }

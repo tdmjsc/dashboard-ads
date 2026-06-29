@@ -378,7 +378,8 @@ app.get('/logout', (req, res) => req.session.destroy(() => res.redirect('/login'
       import('mysql2/promise'),
     ]);
     const mysql = mysqlMod.default || mysqlMod;
-    mountThailand(app, { mysql, express, getCampaigns, QC_TAX });
+    mountThailand(app, { mysql, express, getCampaigns, QC_TAX: Number(process.env.QC_TAX || 0.11),
+      exposeCounter: (fn) => { global.__thaiOrderCounts = fn; } });
   } catch (e) {
     console.error('[thailand] KHÔNG gắn được module (app chính vẫn chạy bình thường):', e.message);
   }
@@ -824,8 +825,8 @@ app.get('/api/marketing/report', async (req, res) => {
   const since = req.query.since || today;
   const until = req.query.until || since;
   try {
-    // Chạy song song: Sandbox report + Meta spend
-    const [rp, metaSpend] = await Promise.all([
+    // Chạy song song: Sandbox report + Meta spend + đơn Thái
+    const [rp, metaSpend, thaiCounts] = await Promise.all([
       sandboxReport(since, until),
       (async () => {
         try {
@@ -844,6 +845,10 @@ app.get('/api/marketing/report', async (req, res) => {
           return {}; // nếu Meta lỗi vẫn trả Sandbox bình thường
         }
       })(),
+      (async () => {
+        try { return (typeof global.__thaiOrderCounts === 'function') ? await global.__thaiOrderCounts(since, until) : {}; }
+        catch (e) { return {}; }
+      })(),
     ]);
 
     if (!(rp.json && (rp.json.success ?? rp.json.Success)))
@@ -858,7 +863,10 @@ app.get('/api/marketing/report', async (req, res) => {
       const TAX = 1 + QC_TAX;
       const chiTieu = Math.round((metaSpend[norm(r.name)] || 0) * TAX);
       const giaContact = (chiTieu > 0 && r.contact > 0) ? Math.round(chiTieu / r.contact) : 0;
-      return { ...r, chiTieu, giaContact };
+      const donThai = thaiCounts[norm(r.name)] || 0;
+      const tongDon = (Number(r.chot) || 0) + donThai;  // đơn chốt Sandbox + đơn Thái
+      const cpa = (chiTieu > 0 && tongDon > 0) ? Math.round(chiTieu / tongDon) : 0;  // CPA = chi tiêu / tổng đơn
+      return { ...r, chiTieu, giaContact, donThai, tongDon, cpa };
     });
 
     // Lọc theo quyền
@@ -875,7 +883,9 @@ app.get('/api/marketing/report', async (req, res) => {
       soSP:     a.soSP     + (+r.soSP     || 0),
       doanhthu: a.doanhthu + (+r.doanhthu || 0),
       chiTieu:  a.chiTieu  + (+r.chiTieu  || 0),
-    }), { contact: 0, chot: 0, soSP: 0, doanhthu: 0, chiTieu: 0 });
+      donThai:  a.donThai  + (+r.donThai  || 0),
+      tongDon:  a.tongDon  + (+r.tongDon  || 0),
+    }), { contact: 0, chot: 0, soSP: 0, doanhthu: 0, chiTieu: 0, donThai: 0, tongDon: 0 });
 
     const total = {
       contact:    s.contact,
@@ -883,8 +893,11 @@ app.get('/api/marketing/report', async (req, res) => {
       soSP:       s.soSP,
       doanhthu:   s.doanhthu,
       chiTieu:    s.chiTieu,
+      donThai:    s.donThai,
+      tongDon:    s.tongDon,
       tyLe:       s.contact ? (s.chot / s.contact * 100) : 0,
       giaContact: s.contact ? Math.round(s.chiTieu / s.contact) : 0,
+      cpa:        s.tongDon ? Math.round(s.chiTieu / s.tongDon) : 0,
     };
 
     rows.sort((a, b) => (b.doanhthu || 0) - (a.doanhthu || 0));
