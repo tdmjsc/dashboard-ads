@@ -362,10 +362,10 @@ async function loadData(){
       const isAdmin=data.me.role==='admin';
       // Menu admin: chỉ hiện khi là admin (mặc định CSS đã ẩn)
       ['navProducts','navSalary','navSalaryProduct'].forEach(id=>{
-        const el=document.getElementById(id); if(el) el.style.display = isAdmin ? '' : 'none';
+        const el=document.getElementById(id); if(el) el.style.display = isAdmin ? 'inline-block' : 'none';
       });
       // "Lương của tôi": chỉ nhân viên cần (admin đã có bảng đầy đủ)
-      const nms=document.getElementById('navMySalary'); if(nms) nms.style.display = isAdmin ? 'none' : '';
+      const nms=document.getElementById('navMySalary'); if(nms) nms.style.display = isAdmin ? 'none' : 'inline-block';
     }
     DAYS=data.days; CAMPAIGNS=data.campaigns;
     /* dựng danh sách tài khoản từ dữ liệu */
@@ -561,9 +561,9 @@ async function setupMenu(){
     if(!me) return;
     const isAdmin = me.role==='admin';
     ['navProducts','navSalary','navSalaryProduct'].forEach(id=>{
-      const el=document.getElementById(id); if(el) el.style.display = isAdmin ? '' : 'none';
+      const el=document.getElementById(id); if(el) el.style.display = isAdmin ? 'inline-block' : 'none';
     });
-    const nms=document.getElementById('navMySalary'); if(nms) nms.style.display = isAdmin ? 'none' : '';
+    const nms=document.getElementById('navMySalary'); if(nms) nms.style.display = isAdmin ? 'none' : 'inline-block';
     const ub=document.getElementById('userBadge'); if(ub&&me.displayName) ub.textContent='👤 '+me.displayName;
   }catch(e){}
 }
