@@ -65,6 +65,8 @@ async function ensureTable(pool) {
     "ma_mau VARCHAR(80) DEFAULT ''",
     "da_day TINYINT DEFAULT 0",
     "ngay_day DATETIME NULL",
+    "tdffm_uid VARCHAR(120) DEFAULT ''",
+    "tdffm_sync_at DATETIME NULL",
   ]) {
     try { await pool.query(`ALTER TABLE th_orders ADD COLUMN ${col}`); } catch (e) {}
   }
@@ -76,7 +78,7 @@ async function ensureTable(pool) {
 //   - mysql: module 'mysql2/promise' (truyền từ server.js sau khi import động)
 //   - requireLogin: middleware đăng nhập của dashboard (tái dùng phiên admin)
 // =====================================================================
-export function mountThailand(app, { mysql, requireLogin, express, getCampaigns, QC_TAX, exposeCounter }) {
+export function mountThailand(app, { mysql, requireLogin, express, getCampaigns, QC_TAX }) {
   let pool = null;
   let tableReady = false;
 
@@ -88,6 +90,8 @@ export function mountThailand(app, { mysql, requireLogin, express, getCampaigns,
   //   TDFFM_DS_MAU = danh sách mã mẫu cho dropdown, phân cách dấu phẩy (vd THA284-GEL,THA284-CREAM)
   const TDFFM_URL = process.env.TDFFM_URL || 'https://tdffm.com/api/v1/webhook/landingpage';
   const TDFFM_KEY = process.env.TDFFM_KEY || '';
+  const TDFFM_PRIVATE_KEY = process.env.TDFFM_PRIVATE_KEY || TDFFM_KEY; // dùng cùng key nếu không cấu hình riêng
+  const TDFFM_BASE_URL = 'https://tdffm.com/api/v1/public';
   const TDFFM_MA_KH = process.env.TDFFM_MA_KH || 'THA284';
   const TDFFM_MA_MAU = process.env.TDFFM_MA_MAU || 'THA284-GEL';
   const TDFFM_DS_MAU = (process.env.TDFFM_DS_MAU || TDFFM_MA_MAU).split(',').map(s => s.trim()).filter(Boolean);
@@ -109,26 +113,6 @@ export function mountThailand(app, { mysql, requireLogin, express, getCampaigns,
   }
 
   // Đảm bảo có pool + bảng, gọi đầu mỗi request DB
-  // Đếm số đơn Thái theo nhân viên (mọi trạng thái) trong khoảng ngày — cho marketing/dashboard gộp
-  async function getThaiOrderCounts(since, until) {
-    try {
-      const p = await db();
-      const args = [];
-      let wsql = '';
-      if (since && until) { wsql = 'WHERE ngay_ve >= ? AND ngay_ve <= ?'; args.push(since, until); }
-      const [rows] = await p.query(
-        `SELECT nhan_vien, COUNT(*) AS so_don FROM th_orders ${wsql} GROUP BY nhan_vien`, args);
-      const map = {};
-      for (const r of rows) {
-        const key = String(r.nhan_vien || '').trim().toLowerCase().replace(/\s+/g, ' ');
-        if (key) map[key] = (map[key] || 0) + (Number(r.so_don) || 0);
-      }
-      return map;
-    } catch (e) { return {}; }
-  }
-  // Đưa hàm này ra ngoài để server.js gọi được
-  if (typeof exposeCounter === 'function') exposeCounter(getThaiOrderCounts);
-
   async function db() {
     const p = getPool();
     if (!tableReady) { await ensureTable(p); tableReady = true; }
@@ -249,7 +233,7 @@ export function mountThailand(app, { mysql, requireLogin, express, getCampaigns,
   app.get('/thailand/api/orders', thaiAuth, wrap(async (req, res) => {
     const p = await db();
     const { isAdmin, myName } = thaiWho(req);
-    const { tu, den, nv, tt, q, day } = req.query;
+    const { tu, den, nv, tt, q } = req.query;
     const where = [], args = [];
     if (tu) { where.push('ngay_ve >= ?'); args.push(tu); }
     if (den) { where.push('ngay_ve <= ?'); args.push(den); }
@@ -260,8 +244,6 @@ export function mountThailand(app, { mysql, requireLogin, express, getCampaigns,
       where.push('nhan_vien = ?'); args.push(nv);
     }
     if (tt) { where.push('trang_thai = ?'); args.push(tt); }
-    if (day === '0') { where.push('(da_day = 0 OR da_day IS NULL)'); }
-    else if (day === '1') { where.push('da_day = 1'); }
     if (q) { where.push('(ho_ten LIKE ? OR sdt LIKE ? OR dia_chi LIKE ?)'); const like = '%' + q + '%'; args.push(like, like, like); }
     const wsql = where.length ? 'WHERE ' + where.join(' AND ') : '';
     const [rows] = await p.query(`SELECT * FROM th_orders ${wsql} ORDER BY id DESC LIMIT 2000`, args);
@@ -444,9 +426,7 @@ export function mountThailand(app, { mysql, requireLogin, express, getCampaigns,
         }
       }
     } catch (e) {}
-    // QC_TAX: ưu tiên giá trị truyền vào, nếu không có thì tự đọc từ env (mặc định 11%)
-    const qcTax = (typeof QC_TAX === 'number') ? QC_TAX : Number(process.env.QC_TAX || 0.11);
-    const TAX = 1 + qcTax;
+    const TAX = 1 + (typeof QC_TAX === 'number' ? QC_TAX : 0.11);
 
     // (B) Số đơn + doanh thu từ th_orders, gom theo nhân viên (trong khoảng ngày)
     const p = await db();
@@ -525,6 +505,194 @@ export function mountThailand(app, { mysql, requireLogin, express, getCampaigns,
   app.get('/thailand', thaiAuth, (req, res) => {
     res.type('html').send(pageHtml());
   });
+
+  // ====================== ĐỒNG BỘ TRẠNG THÁI TỪ HẬU CẦN (TDFFM) ======================
+  // Import crypto để tạo HMAC signature
+  let cryptoMod = null;
+  async function getCrypto() {
+    if (!cryptoMod) cryptoMod = await import('node:crypto');
+    return cryptoMod;
+  }
+
+  // Tạo HMAC-SHA256 signature theo format TDFFM: "timestamp:body"
+  async function signTdffm(body, timestamp) {
+    const { createHmac } = await getCrypto();
+    const data = typeof body === 'string' ? body : JSON.stringify(body);
+    const payload = `${timestamp}:${data}`;
+    return createHmac('sha256', TDFFM_PRIVATE_KEY).update(payload).digest('hex');
+  }
+
+  // Gọi POST API TDFFM (có signature)
+  async function tdffmPost(path, body) {
+    const timestamp = Math.floor(Date.now() / 1000).toString();
+    const signature = await signTdffm(body, timestamp);
+    const resp = await fetch(`${TDFFM_BASE_URL}${path}`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'x-public-key': TDFFM_KEY,
+        'x-timestamp': timestamp,
+        'x-signature': signature,
+      },
+      body: JSON.stringify(body),
+    });
+    return resp.json();
+  }
+
+  // Log sync (lưu file để xem sau)
+  const SYNC_LOG_FILE = (process.env.DATA_DIR || '.') + '/thailand-sync.log';
+  let lastSyncResult = null;
+
+  function writeSyncLog(entry) {
+    try { fs.appendFileSync(SYNC_LOG_FILE, JSON.stringify(entry) + '\n'); } catch (e) {}
+  }
+
+  // Chuẩn hoá SĐT: bỏ prefix +66 (Thái) hoặc +84 (VN), chỉ giữ số
+  function normPhone(s) {
+    let p = String(s || '').replace(/\D/g, '');
+    if (p.startsWith('66') && p.length >= 10) p = p.slice(2);
+    if (p.startsWith('84') && p.length >= 11) p = p.slice(2);
+    if (p.startsWith('0')) p = p.slice(1);
+    return p;
+  }
+
+  // Hàm đồng bộ chính: lấy đơn từ TDFFM, match SĐT, cập nhật trang_thai
+  async function syncFromTdffm() {
+    if (!TDFFM_KEY) {
+      const msg = 'Bỏ qua sync: chưa cấu hình TDFFM_KEY';
+      console.log('[thailand-sync]', msg);
+      lastSyncResult = { ok: false, message: msg, at: new Date().toISOString() };
+      return;
+    }
+    const startAt = new Date().toISOString();
+    console.log('[thailand-sync] Bắt đầu đồng bộ trạng thái từ TDFFM...');
+
+    try {
+      const p = await db();
+
+      // Lấy đơn từ TDFFM (phân trang, tối đa 10 trang x 50 = 500 đơn)
+      const allTdffmOrders = [];
+      let page = 1;
+      while (true) {
+        const data = await tdffmPost('/order/list', {
+          page, limit: 50,
+          sort: { orderBy: 'createdAt', order: 'desc' },
+        });
+        const orders = data && data.data ? data.data : [];
+        allTdffmOrders.push(...orders);
+        if (!data || !data.hasNextPage || orders.length === 0 || page >= 10) break;
+        page++;
+      }
+
+      if (!allTdffmOrders.length) {
+        const msg = 'TDFFM trả về 0 đơn (có thể lỗi auth hoặc chưa có đơn nào)';
+        console.log('[thailand-sync]', msg);
+        lastSyncResult = { ok: false, message: msg, at: startAt, finishedAt: new Date().toISOString() };
+        writeSyncLog(lastSyncResult);
+        return;
+      }
+
+      // Build map: normPhone → { uid, status } — ưu tiên đơn mới nhất (sort desc)
+      const tdffmMap = new Map();
+      for (const o of allTdffmOrders) {
+        const phone = normPhone(o.buyerPhone || '');
+        if (phone && !tdffmMap.has(phone)) {
+          tdffmMap.set(phone, { uid: o.orderUID, status: o.orderStatus });
+        }
+      }
+
+      // Lấy đơn DB chưa kết thúc (cần check cập nhật)
+      const [dbOrders] = await p.query(
+        `SELECT id, sdt, trang_thai, tdffm_uid FROM th_orders WHERE trang_thai NOT IN ('Huỷ', 'Thành công')`
+      );
+
+      let updated = 0, notFound = 0;
+      const now = new Date();
+
+      for (const row of dbOrders) {
+        const phone = normPhone(row.sdt || '');
+        if (!phone) { notFound++; continue; }
+        const match = tdffmMap.get(phone);
+        if (!match) { notFound++; continue; }
+
+        if (match.status && match.status !== row.trang_thai) {
+          await p.query(
+            `UPDATE th_orders SET trang_thai = ?, tdffm_uid = ?, tdffm_sync_at = ? WHERE id = ?`,
+            [match.status, match.uid || '', now, row.id]
+          );
+          updated++;
+        } else {
+          // Lưu uid nếu chưa có
+          await p.query(
+            `UPDATE th_orders SET tdffm_uid = ?, tdffm_sync_at = ? WHERE id = ? AND (tdffm_uid = '' OR tdffm_uid IS NULL)`,
+            [match.uid || '', now, row.id]
+          );
+        }
+      }
+
+      // Thêm status mới từ TDFFM vào danh sách TRANG_THAI nếu chưa có
+      for (const o of allTdffmOrders) {
+        if (o.orderStatus && !TRANG_THAI.includes(o.orderStatus)) {
+          TRANG_THAI.push(o.orderStatus);
+        }
+      }
+
+      const result = {
+        ok: true, at: startAt, finishedAt: new Date().toISOString(),
+        tdffmOrders: allTdffmOrders.length, dbOrders: dbOrders.length,
+        updated, notFound,
+        message: `Đồng bộ thành công: ${updated} đơn cập nhật trạng thái`,
+      };
+      lastSyncResult = result;
+      writeSyncLog(result);
+      console.log('[thailand-sync]', result.message,
+        `(${allTdffmOrders.length} đơn từ TDFFM, ${dbOrders.length} đơn DB cần check)`);
+    } catch (e) {
+      const result = { ok: false, at: startAt, finishedAt: new Date().toISOString(), message: 'Lỗi: ' + e.message };
+      lastSyncResult = result;
+      writeSyncLog(result);
+      console.error('[thailand-sync] Lỗi đồng bộ:', e.message);
+    }
+  }
+
+  // ---- CRON: chạy mỗi ngày lúc 6:00 sáng giờ VN (UTC+7 = 23:00 UTC) ----
+  function scheduleDailySync() {
+    function msToNext6amVN() {
+      const now = new Date();
+      // Tính thời điểm 23:00 UTC hôm nay (= 06:00 VN)
+      const next = new Date(now);
+      next.setUTCHours(23, 0, 0, 0);
+      if (next <= now) next.setUTCDate(next.getUTCDate() + 1);
+      return next.getTime() - now.getTime();
+    }
+    function loop() {
+      const ms = msToNext6amVN();
+      console.log(`[thailand-sync] Sync tiếp theo sau ${(ms/3600000).toFixed(1)} giờ (6:00 VN)`);
+      setTimeout(() => { syncFromTdffm().finally(() => loop()); }, ms);
+    }
+    loop();
+  }
+  scheduleDailySync();
+
+  // ---- Route xem trạng thái sync (admin) ----
+  app.get('/thailand/api/sync-status', thaiAuth, wrap(async (req, res) => {
+    const { isAdmin } = thaiWho(req);
+    if (!isAdmin) return res.status(403).json({ ok: false, message: 'Chỉ admin' });
+    let logs = [];
+    try {
+      const raw = fs.readFileSync(SYNC_LOG_FILE, 'utf8');
+      logs = raw.trim().split('\n').slice(-5).map(l => { try { return JSON.parse(l); } catch { return l; } });
+    } catch (e) {}
+    res.json({ ok: true, last: lastSyncResult, logs });
+  }));
+
+  // ---- Route trigger sync thủ công ngay lập tức (admin) ----
+  app.post('/thailand/api/sync-now', thaiAuth, express.json(), wrap(async (req, res) => {
+    const { isAdmin } = thaiWho(req);
+    if (!isAdmin) return res.status(403).json({ ok: false, message: 'Chỉ admin' });
+    syncFromTdffm().catch(e => console.error('[thailand-sync] lỗi manual:', e.message));
+    res.json({ ok: true, message: 'Đang đồng bộ, kiểm tra /thailand/api/sync-status sau vài giây' });
+  }));
 
   console.log('[thailand] Đã gắn module quản lý đơn Thái Lan tại /thailand');
 }
@@ -615,7 +783,6 @@ input.ed{width:100px;}.st-moi{color:#9DB2FF;}.st-tc{color:#7BE3B5;}.st-huy{color
       <input type="date" id="fTu"><span class="muted">→</span><input type="date" id="fDen">
       <select id="fNv"><option value="">Mọi nhân viên</option></select>
       <select id="fTt"><option value="">Mọi trạng thái</option></select>
-      <select id="fDay" style="display:none"><option value="">Đẩy: tất cả</option><option value="0">Chưa đẩy</option><option value="1">Đã đẩy</option></select>
       <input id="fQ" placeholder="Tìm tên/SĐT/địa chỉ…">
       <button class="btn" id="fBtn">Lọc</button>
       <button class="btn ghost" id="fReset">Xoá lọc</button>
@@ -680,7 +847,6 @@ async function loadOrders(){
   if($('fNv').value)qs.set('nv',$('fNv').value);
   if($('fTt').value)qs.set('tt',$('fTt').value);
   if($('fQ').value)qs.set('q',$('fQ').value);
-  if($('fDay')&&$('fDay').value)qs.set('day',$('fDay').value);
   $('tbl').innerHTML='<div class="empty">Đang tải…</div>';
   try{
     const r=await fetch('/thailand/api/orders?'+qs.toString());
@@ -692,7 +858,6 @@ async function loadOrders(){
     if($('pushBtn')) $('pushBtn').style.display = IS_ADMIN ? '' : 'none';
     if($('csvBtn')) $('csvBtn').style.display = IS_ADMIN ? '' : 'none';
     if($('fNv')) $('fNv').style.display = IS_ADMIN ? '' : 'none';
-    if($('fDay')) $('fDay').style.display = IS_ADMIN ? '' : 'none';
     // fill selects
     if(IS_ADMIN && $('fNv').options.length<=1) NV.forEach(n=>$('fNv').insertAdjacentHTML('beforeend','<option>'+esc(n)+'</option>'));
     if($('fTt').options.length<=1) TT.forEach(t=>$('fTt').insertAdjacentHTML('beforeend','<option>'+esc(t)+'</option>'));
@@ -802,7 +967,7 @@ $('m_save').onclick=async()=>{
 };
 
 $('fBtn').onclick=loadOrders;
-$('fReset').onclick=()=>{['fTu','fDen','fNv','fTt','fQ','fDay'].forEach(id=>{if($(id))$(id).value='';});loadOrders();};
+$('fReset').onclick=()=>{['fTu','fDen','fNv','fTt','fQ'].forEach(id=>$(id).value='');loadOrders();};
 
 async function loadStats(){
   const qs=new URLSearchParams();
