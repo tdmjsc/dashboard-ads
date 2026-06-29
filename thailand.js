@@ -522,11 +522,22 @@ export function mountThailand(app, { mysql, requireLogin, express, getCampaigns,
     return createHmac('sha256', TDFFM_PRIVATE_KEY).update(payload).digest('hex');
   }
 
-  // Gọi POST API TDFFM (có signature)
+  // Gọi POST API TDFFM — thử không signature trước, nếu 401 thì thử có signature
   async function tdffmPost(path, body) {
+    // Thử 1: chỉ x-public-key (không signature)
+    const resp1 = await fetch(`${TDFFM_BASE_URL}${path}`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'x-public-key': TDFFM_KEY },
+      body: JSON.stringify(body),
+    });
+    const data1 = await resp1.json();
+    if (data1 && data1.statusCode !== 401) return data1;
+
+    // Thử 2: có timestamp + signature
+    console.log('[thailand-sync] Thử với signature...');
     const timestamp = Math.floor(Date.now() / 1000).toString();
     const signature = await signTdffm(body, timestamp);
-    const resp = await fetch(`${TDFFM_BASE_URL}${path}`, {
+    const resp2 = await fetch(`${TDFFM_BASE_URL}${path}`, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
@@ -536,7 +547,7 @@ export function mountThailand(app, { mysql, requireLogin, express, getCampaigns,
       },
       body: JSON.stringify(body),
     });
-    return resp.json();
+    return resp2.json();
   }
 
   // Log sync (lưu file để xem sau)
