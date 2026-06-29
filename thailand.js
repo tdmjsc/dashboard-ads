@@ -422,7 +422,9 @@ export function mountThailand(app, { mysql, requireLogin, express, getCampaigns,
         }
       }
     } catch (e) {}
-    const TAX = 1 + (typeof QC_TAX === 'number' ? QC_TAX : 0.11);
+    // QC_TAX: ưu tiên giá trị truyền vào, nếu không có thì tự đọc từ env (mặc định 11%)
+    const qcTax = (typeof QC_TAX === 'number') ? QC_TAX : Number(process.env.QC_TAX || 0.11);
+    const TAX = 1 + qcTax;
 
     // (B) Số đơn + doanh thu từ th_orders, gom theo nhân viên (trong khoảng ngày)
     const p = await db();
