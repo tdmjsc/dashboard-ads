@@ -8,7 +8,11 @@ import fs from 'node:fs';
 // =====================================================================
 
 // Trạng thái đơn hợp lệ
-const TRANG_THAI = ['Mới về', 'Đã xác nhận', 'Đang giao', 'Thành công', 'Huỷ', 'Hoàn hàng'];
+const TRANG_THAI = [
+  'Mới về', 'Nháp', 'Đã xác nhận', 'Sale xác nhận', 'Chờ hàng', 'Đang xử lý',
+  'Đã đóng gói', 'Có vấn đề', 'Từ chối', 'Đang giao', 'Đã giao', 'Giao thành công',
+  'Đang hoàn', 'Hoàn hàng', 'Hoàn tất', 'Thành công', 'Huỷ',
+];
 
 // ---- Tách Số lượng + Giá từ combo (chuỗi tiếng Thái) ----
 // Quy tắc theo bảng người dùng cung cấp. Nếu không khớp mẫu nào → trả 0.
@@ -703,11 +707,7 @@ export function mountThailand(app, { mysql, requireLogin, express, getCampaigns,
         }
       }
 
-      // Thêm nhãn trạng thái (đã map) vào danh sách TRANG_THAI nếu chưa có
-      for (const o of allTdffmOrders) {
-        const label = mapTdffmStatus(o.orderStatus);
-        if (label && !TRANG_THAI.includes(label)) TRANG_THAI.push(label);
-      }
+      // (Các nhãn trạng thái đã được khai báo cố định trong TRANG_THAI nên không cần thêm động)
 
       const result = {
         ok: true, at: startAt, finishedAt: new Date().toISOString(),
@@ -963,7 +963,12 @@ async function loadOrders(){
   }catch(e){$('tbl').innerHTML='<div class="empty">Lỗi tải dữ liệu</div>';}
 }
 
-function stCls(t){return t==='Thành công'?'st-tc':t==='Huỷ'||t==='Hoàn hàng'?'st-huy':t==='Mới về'?'st-moi':'';}
+function stCls(t){
+  if(['Thành công','Hoàn tất','Giao thành công','Đã giao'].includes(t))return 'st-tc';
+  if(['Huỷ','Hoàn hàng','Từ chối','Có vấn đề','Đang hoàn'].includes(t))return 'st-huy';
+  if(['Mới về','Nháp'].includes(t))return 'st-moi';
+  return '';
+}
 
 function mauSelect(o){
   const cur=o.ma_mau||MAU_DEFAULT;
@@ -982,7 +987,8 @@ function render(orders){
     +'<th>Nhân viên</th><th>Trạng thái</th>'
     +(IS_ADMIN?'<th>Đẩy</th>':'')+'<th></th></tr></thead><tbody>';
   orders.forEach((o,idx)=>{
-    const ttOpts=TT.map(t=>'<option'+(t===o.trang_thai?' selected':'')+'>'+esc(t)+'</option>').join('');
+    const ttList = (o.trang_thai && !TT.includes(o.trang_thai)) ? [o.trang_thai, ...TT] : TT;
+    const ttOpts=ttList.map(t=>'<option'+(t===o.trang_thai?' selected':'')+'>'+esc(t)+'</option>').join('');
     const dayBadge = o.da_day==1
       ? '<span style="color:#7BE3B5;font-size:12px;">✓ Đã đẩy</span>'
       : '<span style="color:#6B7C97;font-size:12px;">—</span>';
