@@ -229,7 +229,7 @@ export function mountThailand(app, { mysql, requireLogin, express, getCampaigns,
   app.get('/thailand/api/orders', thaiAuth, wrap(async (req, res) => {
     const p = await db();
     const { isAdmin, myName } = thaiWho(req);
-    const { tu, den, nv, tt, q } = req.query;
+    const { tu, den, nv, tt, q, day } = req.query;
     const where = [], args = [];
     if (tu) { where.push('ngay_ve >= ?'); args.push(tu); }
     if (den) { where.push('ngay_ve <= ?'); args.push(den); }
@@ -240,6 +240,8 @@ export function mountThailand(app, { mysql, requireLogin, express, getCampaigns,
       where.push('nhan_vien = ?'); args.push(nv);
     }
     if (tt) { where.push('trang_thai = ?'); args.push(tt); }
+    if (day === '0') { where.push('(da_day = 0 OR da_day IS NULL)'); }
+    else if (day === '1') { where.push('da_day = 1'); }
     if (q) { where.push('(ho_ten LIKE ? OR sdt LIKE ? OR dia_chi LIKE ?)'); const like = '%' + q + '%'; args.push(like, like, like); }
     const wsql = where.length ? 'WHERE ' + where.join(' AND ') : '';
     const [rows] = await p.query(`SELECT * FROM th_orders ${wsql} ORDER BY id DESC LIMIT 2000`, args);
@@ -593,6 +595,7 @@ input.ed{width:100px;}.st-moi{color:#9DB2FF;}.st-tc{color:#7BE3B5;}.st-huy{color
       <input type="date" id="fTu"><span class="muted">→</span><input type="date" id="fDen">
       <select id="fNv"><option value="">Mọi nhân viên</option></select>
       <select id="fTt"><option value="">Mọi trạng thái</option></select>
+      <select id="fDay" style="display:none"><option value="">Đẩy: tất cả</option><option value="0">Chưa đẩy</option><option value="1">Đã đẩy</option></select>
       <input id="fQ" placeholder="Tìm tên/SĐT/địa chỉ…">
       <button class="btn" id="fBtn">Lọc</button>
       <button class="btn ghost" id="fReset">Xoá lọc</button>
@@ -657,6 +660,7 @@ async function loadOrders(){
   if($('fNv').value)qs.set('nv',$('fNv').value);
   if($('fTt').value)qs.set('tt',$('fTt').value);
   if($('fQ').value)qs.set('q',$('fQ').value);
+  if($('fDay')&&$('fDay').value)qs.set('day',$('fDay').value);
   $('tbl').innerHTML='<div class="empty">Đang tải…</div>';
   try{
     const r=await fetch('/thailand/api/orders?'+qs.toString());
@@ -668,6 +672,7 @@ async function loadOrders(){
     if($('pushBtn')) $('pushBtn').style.display = IS_ADMIN ? '' : 'none';
     if($('csvBtn')) $('csvBtn').style.display = IS_ADMIN ? '' : 'none';
     if($('fNv')) $('fNv').style.display = IS_ADMIN ? '' : 'none';
+    if($('fDay')) $('fDay').style.display = IS_ADMIN ? '' : 'none';
     // fill selects
     if(IS_ADMIN && $('fNv').options.length<=1) NV.forEach(n=>$('fNv').insertAdjacentHTML('beforeend','<option>'+esc(n)+'</option>'));
     if($('fTt').options.length<=1) TT.forEach(t=>$('fTt').insertAdjacentHTML('beforeend','<option>'+esc(t)+'</option>'));
@@ -777,7 +782,7 @@ $('m_save').onclick=async()=>{
 };
 
 $('fBtn').onclick=loadOrders;
-$('fReset').onclick=()=>{['fTu','fDen','fNv','fTt','fQ'].forEach(id=>$(id).value='');loadOrders();};
+$('fReset').onclick=()=>{['fTu','fDen','fNv','fTt','fQ','fDay'].forEach(id=>{if($(id))$(id).value='';});loadOrders();};
 
 async function loadStats(){
   const qs=new URLSearchParams();
