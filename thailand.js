@@ -760,6 +760,13 @@ input.ed{width:100px;}.st-moi{color:#9DB2FF;}.st-tc{color:#7BE3B5;}.st-huy{color
 .modal-actions .save{background:#7BE3B5;color:#0B1322;}
 .modal-actions .cancel{background:rgba(255,255,255,.08);color:#E7EEF8;border:1px solid rgba(255,255,255,.14);}
 .hint{font-size:11px;color:#6B7C97;margin-top:4px;}
+.sync-badge{font-size:12px;padding:5px 10px;border-radius:7px;background:rgba(255,255,255,.06);border:1px solid rgba(255,255,255,.12);color:#9FB0C8;display:inline-flex;align-items:center;gap:6px;}
+.sync-badge.ok{border-color:#7BE3B5;color:#7BE3B5;}.sync-badge.err{border-color:#ff9b8a;color:#ff9b8a;}
+.sync-badge.loading{opacity:.7;}
+#syncModal .row{display:flex;gap:10px;margin-bottom:10px;}
+#syncLog{font-size:12px;color:#9FB0C8;margin-top:12px;max-height:200px;overflow-y:auto;}
+#syncLog .log-row{padding:6px 8px;border-radius:6px;background:rgba(255,255,255,.04);margin-bottom:4px;}
+#syncLog .log-row.ok{border-left:3px solid #7BE3B5;}.log-row.err{border-left:3px solid #ff9b8a;}
 
 </style></head>
 <body>
@@ -770,8 +777,26 @@ input.ed{width:100px;}.st-moi{color:#9DB2FF;}.st-tc{color:#7BE3B5;}.st-huy{color
   <a class="link" href="/thailand/api/export" id="csvBtn">⬇ Xuất CSV</a>
   <a class="link" href="/marketing-thailand.html">📊 MKT Thái Lan</a>
   <a class="link" href="/">← Dashboard</a>
+  <button class="btn ghost" id="syncBtn" style="display:none;">🔄 Đồng bộ HC</button>
+  <span class="sync-badge" id="syncBadge" style="display:none;"></span>
   <a class="link" href="/thailand/logout">Đăng xuất</a>
 </header>
+<!-- Modal đồng bộ -->
+<div class="modal-bg" id="syncModal">
+  <div class="modal" style="width:520px;">
+    <h2>🔄 Đồng bộ trạng thái từ hậu cần</h2>
+    <p style="font-size:13px;color:#9FB0C8;margin:0 0 14px;">Kéo trạng thái đơn từ TDFFM về hệ thống, khớp theo số điện thoại.</p>
+    <div style="display:flex;gap:10px;margin-bottom:14px;">
+      <button class="btn g" id="syncNowBtn" style="flex:1;">▶ Bắt đầu đồng bộ ngay</button>
+      <button class="btn ghost" id="syncRefreshBtn">↻ Refresh</button>
+    </div>
+    <div id="syncStatus" style="font-size:13px;padding:10px;background:rgba(255,255,255,.04);border-radius:8px;min-height:40px;"></div>
+    <div id="syncLog"></div>
+    <div class="modal-actions" style="margin-top:14px;">
+      <button class="cancel modal-actions" style="flex:1;padding:10px;border:none;border-radius:9px;background:rgba(255,255,255,.08);color:#E7EEF8;font-size:14px;cursor:pointer;" id="syncClose">Đóng</button>
+    </div>
+  </div>
+</div>
 <main>
   <div class="tabs">
     <div class="tab on" data-tab="orders" id="tabOrders">📋 Danh sách đơn</div>
@@ -857,6 +882,7 @@ async function loadOrders(){
     // Ẩn nút đẩy + bộ lọc nhân viên với nhân viên thường
     if($('pushBtn')) $('pushBtn').style.display = IS_ADMIN ? '' : 'none';
     if($('csvBtn')) $('csvBtn').style.display = IS_ADMIN ? '' : 'none';
+    if($('syncBtn')) $('syncBtn').style.display = IS_ADMIN ? '' : 'none';
     if($('fNv')) $('fNv').style.display = IS_ADMIN ? '' : 'none';
     // fill selects
     if(IS_ADMIN && $('fNv').options.length<=1) NV.forEach(n=>$('fNv').insertAdjacentHTML('beforeend','<option>'+esc(n)+'</option>'));
@@ -964,6 +990,101 @@ $('m_save').onclick=async()=>{
     await fetch('/thailand/api/order/add',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});
     closeAddModal(); loadOrders();
   }catch(e){ alert('Lỗi thêm đơn'); }
+};
+
+// ===== SYNC =====
+async function fetchSyncStatus(){
+  try{
+    const r=await fetch('/thailand/api/sync-status');
+    if(r.status===401||r.status===403)return null;
+    return await r.json();
+  }catch(e){return null;}
+}
+
+function fmtTime(iso){
+  if(!iso)return '—';
+  const d=new Date(iso);
+  return d.toLocaleDateString('vi-VN')+' '+d.toLocaleTimeString('vi-VN',{hour:'2-digit',minute:'2-digit'});
+}
+
+function renderSyncStatus(data){
+  if(!data){$('syncStatus').innerHTML='<span style="color:#6B7C97">Không lấy được trạng thái</span>';return;}
+  const last=data.last;
+  if(!last){$('syncStatus').innerHTML='<span style="color:#6B7C97">Chưa đồng bộ lần nào</span>';return;}
+  const ok=last.ok;
+  const color=ok?'#7BE3B5':'#ff9b8a';
+  $('syncStatus').innerHTML=`<span style="color:${color};font-weight:600;">${ok?'✅':'❌'} ${esc(last.message||'')}</span>`
+    +`<div style="margin-top:6px;font-size:11px;color:#6B7C97;">`
+    +(last.tdffmOrders!=null?`TDFFM: <b style="color:#E7EEF8">${last.tdffmOrders}</b> đơn · `:'')
+    +(last.dbOrders!=null?`DB: <b style="color:#E7EEF8">${last.dbOrders}</b> đơn · `:'')
+    +(last.updated!=null?`Cập nhật: <b style="color:#7BE3B5">${last.updated}</b> · `:'')
+    +`Lúc: ${fmtTime(last.finishedAt||last.at)}</div>`;
+
+  // Cập nhật badge trên header
+  const badge=$('syncBadge');
+  badge.style.display='inline-flex';
+  if(ok){badge.className='sync-badge ok';badge.textContent='✓ Sync '+fmtTime(last.finishedAt||last.at);}
+  else{badge.className='sync-badge err';badge.textContent='⚠ Sync lỗi';}
+
+  // Log lịch sử
+  if(data.logs&&data.logs.length){
+    let h='<div style="font-size:11px;color:#6B7C97;margin:10px 0 5px;">Lịch sử 5 lần gần nhất:</div>';
+    [...data.logs].reverse().forEach(l=>{
+      if(typeof l!=='object')return;
+      const c=l.ok?'ok':'err';
+      h+=`<div class="log-row ${c}">${l.ok?'✅':'❌'} ${esc(l.message||'')} <span style="float:right;color:#6B7C97">${fmtTime(l.finishedAt||l.at)}</span></div>`;
+    });
+    $('syncLog').innerHTML=h;
+  }
+}
+
+async function openSyncModal(){
+  $('syncModal').classList.add('show');
+  $('syncStatus').innerHTML='<span style="color:#6B7C97">Đang tải...</span>';
+  $('syncLog').innerHTML='';
+  const data=await fetchSyncStatus();
+  renderSyncStatus(data);
+}
+
+$('syncClose').onclick=()=>$('syncModal').classList.remove('show');
+$('syncBtn').onclick=openSyncModal;
+
+$('syncRefreshBtn').onclick=async()=>{
+  $('syncStatus').innerHTML='<span style="color:#6B7C97">Đang tải...</span>';
+  const data=await fetchSyncStatus();
+  renderSyncStatus(data);
+};
+
+$('syncNowBtn').onclick=async()=>{
+  $('syncNowBtn').disabled=true;
+  $('syncNowBtn').textContent='⏳ Đang đồng bộ...';
+  $('syncStatus').innerHTML='<span style="color:#9FB0C8">Đang gọi API TDFFM, vui lòng chờ...</span>';
+  try{
+    await fetch('/thailand/api/sync-now',{method:'POST',headers:{'Content-Type':'application/json'}});
+    // Poll mỗi 2s trong tối đa 30s để chờ kết quả
+    let tries=0;
+    const poll=setInterval(async()=>{
+      tries++;
+      const data=await fetchSyncStatus();
+      if(data&&data.last&&data.last.finishedAt){
+        clearInterval(poll);
+        renderSyncStatus(data);
+        $('syncNowBtn').disabled=false;
+        $('syncNowBtn').textContent='▶ Bắt đầu đồng bộ ngay';
+        loadOrders(); // refresh bảng đơn
+      }
+      if(tries>=15){
+        clearInterval(poll);
+        $('syncStatus').innerHTML='<span style="color:#ff9b8a">Quá thời gian chờ, thử refresh lại</span>';
+        $('syncNowBtn').disabled=false;
+        $('syncNowBtn').textContent='▶ Bắt đầu đồng bộ ngay';
+      }
+    },2000);
+  }catch(e){
+    $('syncStatus').innerHTML='<span style="color:#ff9b8a">Lỗi kết nối: '+esc(e.message)+'</span>';
+    $('syncNowBtn').disabled=false;
+    $('syncNowBtn').textContent='▶ Bắt đầu đồng bộ ngay';
+  }
 };
 
 $('fBtn').onclick=loadOrders;
