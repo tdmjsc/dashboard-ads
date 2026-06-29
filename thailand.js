@@ -1013,12 +1013,12 @@ function renderSyncStatus(data){
   if(!last){$('syncStatus').innerHTML='<span style="color:#6B7C97">Chưa đồng bộ lần nào</span>';return;}
   const ok=last.ok;
   const color=ok?'#7BE3B5':'#ff9b8a';
-  $('syncStatus').innerHTML=`<span style="color:${color};font-weight:600;">${ok?'✅':'❌'} ${esc(last.message||'')}</span>`
-    +`<div style="margin-top:6px;font-size:11px;color:#6B7C97;">`
-    +(last.tdffmOrders!=null?`TDFFM: <b style="color:#E7EEF8">${last.tdffmOrders}</b> đơn · `:'')
-    +(last.dbOrders!=null?`DB: <b style="color:#E7EEF8">${last.dbOrders}</b> đơn · `:'')
-    +(last.updated!=null?`Cập nhật: <b style="color:#7BE3B5">${last.updated}</b> · `:'')
-    +`Lúc: ${fmtTime(last.finishedAt||last.at)}</div>`;
+  $('syncStatus').innerHTML='<span style="color:'+color+';font-weight:600;">'+(ok?'✅':'❌')+' '+esc(last.message||'')+'</span>'
+    +'<div style="margin-top:6px;font-size:11px;color:#6B7C97;">'
+    +(last.tdffmOrders!=null?'TDFFM: <b style="color:#E7EEF8">'+last.tdffmOrders+'</b> đơn · ':'')
+    +(last.dbOrders!=null?'DB: <b style="color:#E7EEF8">'+last.dbOrders+'</b> đơn · ':'')
+    +(last.updated!=null?'Cập nhật: <b style="color:#7BE3B5">'+last.updated+'</b> · ':'')
+    +'Lúc: '+fmtTime(last.finishedAt||last.at)+'</div>';
 
   // Cập nhật badge trên header
   const badge=$('syncBadge');
@@ -1032,7 +1032,7 @@ function renderSyncStatus(data){
     [...data.logs].reverse().forEach(l=>{
       if(typeof l!=='object')return;
       const c=l.ok?'ok':'err';
-      h+=`<div class="log-row ${c}">${l.ok?'✅':'❌'} ${esc(l.message||'')} <span style="float:right;color:#6B7C97">${fmtTime(l.finishedAt||l.at)}</span></div>`;
+      h+='<div class="log-row '+c+'">'+(l.ok?'✅':'❌')+' '+esc(l.message||'')+' <span style="float:right;color:#6B7C97">'+fmtTime(l.finishedAt||l.at)+'</span></div>';
     });
     $('syncLog').innerHTML=h;
   }
