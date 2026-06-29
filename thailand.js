@@ -578,6 +578,7 @@ export function mountThailand(app, { mysql, requireLogin, express, getCampaigns,
           page, limit: 50,
           sort: { orderBy: 'createdAt', order: 'desc' },
         });
+        console.log('[thailand-sync] TDFFM response page', page, ':', JSON.stringify(data).slice(0, 300));
         const orders = data && data.data ? data.data : [];
         allTdffmOrders.push(...orders);
         if (!data || !data.hasNextPage || orders.length === 0 || page >= 10) break;
@@ -587,7 +588,8 @@ export function mountThailand(app, { mysql, requireLogin, express, getCampaigns,
       if (!allTdffmOrders.length) {
         const msg = 'TDFFM trả về 0 đơn (có thể lỗi auth hoặc chưa có đơn nào)';
         console.log('[thailand-sync]', msg);
-        lastSyncResult = { ok: false, message: msg, at: startAt, finishedAt: new Date().toISOString() };
+        lastSyncResult = { ok: false, message: msg, at: startAt, finishedAt: new Date().toISOString(),
+          _debug: 'Xem stderr.log để biết response thật từ TDFFM' };
         writeSyncLog(lastSyncResult);
         return;
       }
