@@ -93,6 +93,14 @@ export function mountThailand(app, { mysql, requireLogin, express, getCampaigns,
   const TDFFM_PRIVATE_KEY = process.env.TDFFM_PRIVATE_KEY || TDFFM_KEY; // dùng cùng key nếu không cấu hình riêng
   const TDFFM_BASE_URL = 'https://tdffm.com/api/v1/public';
   const TDFFM_MA_KH = process.env.TDFFM_MA_KH || 'THA284';
+  // ===== Đăng nhập nội bộ TDFFM (để đồng bộ trạng thái đơn qua API web) =====
+  //   TDFFM_USER     = tên đăng nhập tdffm.com (vd THA284) — cũng chấp nhận TDFFM_EMAIL
+  //   TDFFM_PASSWORD = mật khẩu đăng nhập tdffm.com
+  const TDFFM_USER = process.env.TDFFM_USER || process.env.TDFFM_EMAIL || '';
+  const TDFFM_PASSWORD = process.env.TDFFM_PASSWORD || '';
+  const TDFFM_INTERNAL_BASE = 'https://tdffm.com/api/v1';
+  // Chỉ đồng bộ đơn tạo từ ngày này trở đi (YYYY-MM-DD). Mặc định 01/06/2026.
+  const TDFFM_SYNC_FROM = process.env.TDFFM_SYNC_FROM || '2026-06-01';
   const TDFFM_MA_MAU = process.env.TDFFM_MA_MAU || 'THA284-GEL';
   const TDFFM_DS_MAU = (process.env.TDFFM_DS_MAU || TDFFM_MA_MAU).split(',').map(s => s.trim()).filter(Boolean);
 
@@ -514,40 +522,80 @@ export function mountThailand(app, { mysql, requireLogin, express, getCampaigns,
     return cryptoMod;
   }
 
-  // Tạo HMAC-SHA256 signature theo format TDFFM: "timestamp:body"
-  async function signTdffm(body, timestamp) {
-    const { createHmac } = await getCrypto();
-    const data = typeof body === 'string' ? body : JSON.stringify(body);
-    const payload = `${timestamp}:${data}`;
-    return createHmac('sha256', TDFFM_PRIVATE_KEY).update(payload).digest('hex');
+  // ===== ĐĂNG NHẬP NỘI BỘ TDFFM (lấy cookie/token để gọi API web) =====
+  // Lưu phiên đăng nhập trong bộ nhớ, tự đăng nhập lại khi hết hạn
+  let tdffmSession = { cookie: '', token: '', at: 0 };
+
+  async function tdffmLogin() {
+    const resp = await fetch(`${TDFFM_INTERNAL_BASE}/auth/login`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', 'accept': 'application/json' },
+      body: JSON.stringify({ email: TDFFM_USER, password: TDFFM_PASSWORD }),
+    });
+    // Đọc Set-Cookie (Node 18+ fetch: getSetCookie)
+    let cookie = '';
+    try {
+      const sc = typeof resp.headers.getSetCookie === 'function' ? resp.headers.getSetCookie() : [];
+      cookie = sc.map(c => c.split(';')[0]).join('; ');
+    } catch (e) {}
+    let body = {};
+    try { body = await resp.json(); } catch (e) {}
+    // Tìm token trong body (phòng trường hợp dùng bearer thay vì cookie)
+    const token = (body && (body.accessToken || (body.data && (body.data.accessToken || body.data.token)) || body.token)) || '';
+    tdffmSession = { cookie, token, at: Date.now() };
+    const ok = resp.status >= 200 && resp.status < 400 && (!!cookie || !!token);
+    if (!ok) console.log('[thailand-sync] Login TDFFM thất bại:', resp.status, JSON.stringify(body).slice(0, 200));
+    return { ok, status: resp.status };
   }
 
-  // Gọi POST API TDFFM — thử không signature trước, nếu 401 thì thử có signature
-  async function tdffmPost(path, body) {
-    // Thử 1: chỉ x-public-key (không signature)
-    const resp1 = await fetch(`${TDFFM_BASE_URL}${path}`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json', 'x-public-key': TDFFM_KEY },
-      body: JSON.stringify(body),
-    });
-    const data1 = await resp1.json();
-    if (data1 && data1.statusCode !== 401) return data1;
+  // Đảm bảo có phiên đăng nhập hợp lệ (đăng nhập lại nếu quá 30 phút)
+  async function tdffmEnsureAuth() {
+    const expired = Date.now() - tdffmSession.at > 30 * 60 * 1000;
+    if ((!tdffmSession.cookie && !tdffmSession.token) || expired) {
+      await tdffmLogin();
+    }
+  }
 
-    // Thử 2: có timestamp + signature
-    console.log('[thailand-sync] Thử với signature...');
-    const timestamp = Math.floor(Date.now() / 1000).toString();
-    const signature = await signTdffm(body, timestamp);
-    const resp2 = await fetch(`${TDFFM_BASE_URL}${path}`, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'x-public-key': TDFFM_KEY,
-        'x-timestamp': timestamp,
-        'x-signature': signature,
-      },
-      body: JSON.stringify(body),
+  // Gọi POST orders/list (API nội bộ, xác thực bằng cookie/token)
+  async function tdffmListOrders(page, limit) {
+    await tdffmEnsureAuth();
+    const headers = { 'content-type': 'application/json', 'accept': 'application/json' };
+    if (tdffmSession.cookie) headers['Cookie'] = tdffmSession.cookie;
+    if (tdffmSession.token) headers['Authorization'] = 'Bearer ' + tdffmSession.token;
+    const doFetch = () => fetch(`${TDFFM_INTERNAL_BASE}/orders/list`, {
+      method: 'POST', headers,
+      body: JSON.stringify({ page, limit, filters: { customerCode: TDFFM_MA_KH, country: 'THAILAND' } }),
     });
-    return resp2.json();
+    let resp = await doFetch();
+    // Nếu 401/403 (phiên hết hạn) → đăng nhập lại 1 lần rồi thử lại
+    if (resp.status === 401 || resp.status === 403) {
+      await tdffmLogin();
+      if (tdffmSession.cookie) headers['Cookie'] = tdffmSession.cookie;
+      if (tdffmSession.token) headers['Authorization'] = 'Bearer ' + tdffmSession.token;
+      resp = await doFetch();
+    }
+    return resp.json();
+  }
+
+  // Map trạng thái TDFFM (tiếng Anh) → nhãn tiếng Việt
+  const TDFFM_STATUS_MAP = {
+    DRAFT: 'Nháp',
+    SALE_CONFIRM: 'Sale xác nhận',
+    WAITING_GOODS: 'Chờ hàng',
+    IS_BEING_PROCESSED: 'Đang xử lý',
+    PACKAGED: 'Đã đóng gói',
+    HAVE_ISSUE: 'Có vấn đề',
+    REJECT: 'Từ chối',
+    CANCEL: 'Huỷ',
+    SHIPPING: 'Đang giao',
+    DELIVERED: 'Đã giao',
+    DELIVERED_SUCCESS: 'Giao thành công',
+    RETURNING: 'Đang hoàn',
+    RETURNED: 'Hoàn hàng',
+    COMPLETED: 'Hoàn tất',
+  };
+  function mapTdffmStatus(s) {
+    return TDFFM_STATUS_MAP[s] || s || '';
   }
 
   // Log sync (lưu file để xem sau)
@@ -569,8 +617,8 @@ export function mountThailand(app, { mysql, requireLogin, express, getCampaigns,
 
   // Hàm đồng bộ chính: lấy đơn từ TDFFM, match SĐT, cập nhật trang_thai
   async function syncFromTdffm() {
-    if (!TDFFM_KEY) {
-      const msg = 'Bỏ qua sync: chưa cấu hình TDFFM_KEY';
+    if (!TDFFM_USER || !TDFFM_PASSWORD) {
+      const msg = 'Bỏ qua sync: chưa cấu hình TDFFM_USER / TDFFM_PASSWORD';
       console.log('[thailand-sync]', msg);
       lastSyncResult = { ok: false, message: msg, at: new Date().toISOString() };
       return;
@@ -581,42 +629,54 @@ export function mountThailand(app, { mysql, requireLogin, express, getCampaigns,
     try {
       const p = await db();
 
-      // Lấy đơn từ TDFFM (phân trang, tối đa 10 trang x 50 = 500 đơn)
+      // Lấy đơn từ TDFFM qua API nội bộ orders/list (phân trang)
+      // Đơn sắp xếp mới nhất trước → lọc giữ đơn tạo >= TDFFM_SYNC_FROM, dừng sớm khi gặp đơn cũ hơn
+      const fromTime = new Date(TDFFM_SYNC_FROM + 'T00:00:00Z').getTime();
       const allTdffmOrders = [];
       let page = 1;
-      while (true) {
-        const data = await tdffmPost('/order/list', {
-          page, limit: 50,
-          sort: { orderBy: 'createdAt', order: 'desc' },
-        });
-        console.log('[thailand-sync] TDFFM response page', page, ':', JSON.stringify(data).slice(0, 300));
-        const orders = data && data.data ? data.data : [];
-        allTdffmOrders.push(...orders);
-        if (!data || !data.hasNextPage || orders.length === 0 || page >= 10) break;
+      const LIMIT = 100;
+      let stop = false;
+      while (page <= 50 && !stop) {
+        const data = await tdffmListOrders(page, LIMIT);
+        const inner = data && data.data ? data.data : null;
+        const orders = inner && Array.isArray(inner.data) ? inner.data : [];
+        if (page === 1) {
+          console.log('[thailand-sync] TDFFM orders/list: total =', inner ? inner.total : '?',
+            ', lọc từ', TDFFM_SYNC_FROM);
+        }
+        for (const o of orders) {
+          const t = new Date(o.createdAt).getTime();
+          if (isNaN(t) || t >= fromTime) {
+            allTdffmOrders.push(o);
+          } else {
+            // Gặp đơn cũ hơn ngưỡng — vì đã sort mới→cũ nên dừng luôn
+            stop = true;
+          }
+        }
+        if (!inner || !inner.hasNextPage || orders.length === 0) break;
         page++;
       }
 
       if (!allTdffmOrders.length) {
-        const msg = 'TDFFM trả về 0 đơn (có thể lỗi auth hoặc chưa có đơn nào)';
+        const msg = 'TDFFM trả về 0 đơn (kiểm tra email/mật khẩu đăng nhập)';
         console.log('[thailand-sync]', msg);
-        lastSyncResult = { ok: false, message: msg, at: startAt, finishedAt: new Date().toISOString(),
-          _debug: 'Xem stderr.log để biết response thật từ TDFFM' };
+        lastSyncResult = { ok: false, message: msg, at: startAt, finishedAt: new Date().toISOString() };
         writeSyncLog(lastSyncResult);
         return;
       }
 
-      // Build map: normPhone → { uid, status } — ưu tiên đơn mới nhất (sort desc)
+      // Build map: normPhone → { uid, status } — đơn đầu tiên (mới nhất) thắng
       const tdffmMap = new Map();
       for (const o of allTdffmOrders) {
         const phone = normPhone(o.buyerPhone || '');
         if (phone && !tdffmMap.has(phone)) {
-          tdffmMap.set(phone, { uid: o.orderUID, status: o.orderStatus });
+          tdffmMap.set(phone, { uid: o.orderUID, status: mapTdffmStatus(o.orderStatus), rawStatus: o.orderStatus });
         }
       }
 
-      // Lấy đơn DB chưa kết thúc (cần check cập nhật)
+      // Lấy tất cả đơn có SĐT để đối chiếu (TDFFM là nguồn trạng thái chuẩn)
       const [dbOrders] = await p.query(
-        `SELECT id, sdt, trang_thai, tdffm_uid FROM th_orders WHERE trang_thai NOT IN ('Huỷ', 'Thành công')`
+        `SELECT id, sdt, trang_thai, tdffm_uid FROM th_orders WHERE sdt IS NOT NULL AND sdt <> ''`
       );
 
       let updated = 0, notFound = 0;
@@ -643,11 +703,10 @@ export function mountThailand(app, { mysql, requireLogin, express, getCampaigns,
         }
       }
 
-      // Thêm status mới từ TDFFM vào danh sách TRANG_THAI nếu chưa có
+      // Thêm nhãn trạng thái (đã map) vào danh sách TRANG_THAI nếu chưa có
       for (const o of allTdffmOrders) {
-        if (o.orderStatus && !TRANG_THAI.includes(o.orderStatus)) {
-          TRANG_THAI.push(o.orderStatus);
-        }
+        const label = mapTdffmStatus(o.orderStatus);
+        if (label && !TRANG_THAI.includes(label)) TRANG_THAI.push(label);
       }
 
       const result = {
