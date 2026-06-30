@@ -82,7 +82,7 @@ async function ensureTable(pool) {
 //   - mysql: module 'mysql2/promise' (truyền từ server.js sau khi import động)
 //   - requireLogin: middleware đăng nhập của dashboard (tái dùng phiên admin)
 // =====================================================================
-export function mountThailand(app, { mysql, requireLogin, express, getCampaigns, QC_TAX }) {
+export function mountThailand(app, { mysql, requireLogin, express, getCampaigns, QC_TAX, exposeCounter }) {
   let pool = null;
   let tableReady = false;
 
@@ -421,6 +421,31 @@ export function mountThailand(app, { mysql, requireLogin, express, getCampaigns,
       GROUP BY nhan_vien ORDER BY doanh_thu_thb DESC`, args);
     res.json({ ok: true, stats: rows });
   }));
+
+  // ====== Đếm số đơn Thái Lan theo nhân viên (cho trang Marketing chính server.js gọi) ======
+  // Đếm tất cả đơn phát sinh trong kỳ, chỉ trừ đơn Huỷ.
+  async function countThaiOrdersByEmployee(since, until) {
+    const p = await db();
+    const [rows] = await p.query(
+      `SELECT nhan_vien, COUNT(*) AS so_don
+       FROM th_orders
+       WHERE ngay_ve >= ? AND ngay_ve <= ?
+         AND trang_thai NOT IN ('Huỷ','CANCEL')
+       GROUP BY nhan_vien`,
+      [since, until]
+    );
+    const norm = s => String(s == null ? '' : s).trim().toLowerCase().replace(/\s+/g, ' ');
+    const out = {};
+    for (const r of rows) {
+      const key = norm(r.nhan_vien || '');
+      if (!key) continue;
+      out[key] = (out[key] || 0) + (Number(r.so_don) || 0);
+    }
+    return out;
+  }
+  if (typeof exposeCounter === 'function') {
+    exposeCounter(countThaiOrdersByEmployee);
+  }
 
   // ====== MARKETING THÁI LAN: chi tiêu QC (chiến dịch có "Thái Lan") + số đơn/doanh thu từ th_orders ======
   app.get('/thailand/api/mkt-report', thaiAuth, wrap(async (req, res) => {
