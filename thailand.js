@@ -452,18 +452,18 @@ export function mountThailand(app, { mysql, requireLogin, express, getCampaigns,
     const [orderRows] = await p.query(`
       SELECT nhan_vien,
         COUNT(*) AS so_don,
-        SUM(CASE WHEN trang_thai='Thành công' THEN 1 ELSE 0 END) AS don_thanh_cong,
-        SUM(CASE WHEN trang_thai='Thành công' THEN gia_thb ELSE 0 END) AS doanh_thu,
-        SUM(so_luong) AS tong_sl
+        SUM(so_luong) AS tong_sl,
+        SUM(gia_thb) AS doanh_thu
       FROM th_orders
       WHERE ngay_ve >= ? AND ngay_ve <= ?
+        AND trang_thai NOT IN ('Huỷ','CANCEL')
       GROUP BY nhan_vien`, [since, until]);
 
     // Gộp 2 nguồn theo tên nhân viên
     const map = {}; // tênNV -> dòng
     function ensure(name) {
       const key = norm(name);
-      if (!map[key]) map[key] = { name: name || '(không tên)', chiTieu: 0, soDon: 0, donThanhCong: 0, doanhThu: 0, tongSL: 0 };
+      if (!map[key]) map[key] = { name: name || '(không tên)', chiTieu: 0, soDon: 0, doanhThu: 0, tongSL: 0 };
       return map[key];
     }
     for (const [emp, sp] of Object.entries(spend)) {
@@ -472,7 +472,6 @@ export function mountThailand(app, { mysql, requireLogin, express, getCampaigns,
     for (const r of orderRows) {
       const row = ensure(r.nhan_vien || '');
       row.soDon += Number(r.so_don) || 0;
-      row.donThanhCong += Number(r.don_thanh_cong) || 0;
       row.doanhThu += Number(r.doanh_thu) || 0;
       row.tongSL += Number(r.tong_sl) || 0;
     }
@@ -488,8 +487,8 @@ export function mountThailand(app, { mysql, requireLogin, express, getCampaigns,
     // Tổng
     const total = rows.reduce((a, r) => ({
       chiTieu: a.chiTieu + r.chiTieu, soDon: a.soDon + r.soDon,
-      donThanhCong: a.donThanhCong + r.donThanhCong, doanhThu: a.doanhThu + r.doanhThu, tongSL: a.tongSL + r.tongSL,
-    }), { chiTieu: 0, soDon: 0, donThanhCong: 0, doanhThu: 0, tongSL: 0 });
+      doanhThu: a.doanhThu + r.doanhThu, tongSL: a.tongSL + r.tongSL,
+    }), { chiTieu: 0, soDon: 0, doanhThu: 0, tongSL: 0 });
     total.giaDon = total.soDon > 0 ? Math.round(total.chiTieu / total.soDon) : 0;
 
     res.json({ ok: true, since, until, rows, total, isAdmin, lastUpdated: new Date().toISOString() });
