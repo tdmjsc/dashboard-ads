@@ -4,6 +4,12 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Marketing — Check ADS TDMJSC</title>
+<link rel="manifest" href="/manifest.json">
+<meta name="theme-color" content="#0B1322">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="TDM Ads">
+<link rel="apple-touch-icon" href="/icons/icon-192.png">
 <style>
   *{box-sizing:border-box;}
   body{margin:0;font-family:'Inter',system-ui,sans-serif;background:#0B1322;color:#E7EEF8;}
@@ -179,6 +185,13 @@ fetch('/api/me').then(r=>r.ok?r.json():null).then(me=>{
   if(me&&me.displayName){ const b=document.getElementById('userBadge'); if(b) b.textContent='👤 '+me.displayName; }
 }).catch(()=>{});
 
+</script>
+<script>
+if ('serviceWorker' in navigator) {
+  window.addEventListener('load', () => {
+    navigator.serviceWorker.register('/service-worker.js').catch(() => {});
+  });
+}
 </script>
 </body>
 </html>
