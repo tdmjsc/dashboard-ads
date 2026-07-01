@@ -4,6 +4,7 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Marketing Thái Lan — TDMJSC</title>
+<script src="https://telegram.org/js/telegram-web-app.js"></script>
 <link rel="manifest" href="/manifest.json">
 <meta name="theme-color" content="#0B1322">
 <meta name="apple-mobile-web-app-capable" content="yes">
@@ -172,6 +173,24 @@ if ('serviceWorker' in navigator) {
     navigator.serviceWorker.register('/service-worker.js').catch(() => {});
   });
 }
+</script>
+<script>
+(function () {
+  if (typeof window.Telegram === 'undefined' || !window.Telegram.WebApp) return;
+  var tg = window.Telegram.WebApp;
+  try {
+    tg.ready();
+    tg.expand();
+    tg.setHeaderColor('#0B1322');
+    tg.setBackgroundColor('#0B1322');
+    window.__TG_USER__ = tg.initDataUnsafe && tg.initDataUnsafe.user ? tg.initDataUnsafe.user : null;
+    window.__IS_TELEGRAM__ = true;
+    if (location.pathname !== '/' && location.pathname !== '/index.html') {
+      tg.BackButton.show();
+      tg.BackButton.onClick(function () { location.href = '/index.html'; });
+    }
+  } catch (e) {}
+})();
 </script>
 </body>
 </html>
