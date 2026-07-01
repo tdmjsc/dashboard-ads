@@ -1033,7 +1033,7 @@ function render(orders){
     h+='<tr>'
       +(IS_ADMIN?'<td><input type="checkbox" class="chk" data-id="'+o.id+'"'+(o.da_day==1?' disabled':'')+'></td>':'')
       +'<td class="num" style="color:#6B7C97">'+(idx+1)+'</td>'
-      +'<td>'+esc((o.ngay_ve||'').slice(0,10))+'</td>'
+      +'<td>'+esc((o.ngay_ve||'').toString().slice(0,10))+'</td>'
       +'<td>'+esc(o.ho_ten)+'</td>'
       +'<td>'+esc(o.sdt)+'</td>'
       +'<td class="muted">'+esc(o.dia_chi)+'</td>'
