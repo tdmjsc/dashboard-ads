@@ -40,6 +40,7 @@ export const USERS = [
   { user: 'mkt.giang', pass: 'Giang@1737', role: 'viewer', employees: ['Vũ Hà Giang'],       salaryName: 'Vũ Hà Giang' },
   { user: 'mkt.ha',    pass: 'Ha@3597',    role: 'viewer', employees: ['Đoàn Việt Hà'],       salaryName: 'Đoàn Việt Hà' },
   { user: 'mkt.thuyan',    pass: 'An@2578',    role: 'viewer', employees: ['Vũ Thuý An'],         salaryName: 'Vũ Thuý An' },
+  { user: 'mkt.anhtuyet',    pass: 'Tuyet@2278',    role: 'viewer', employees: ['Lê Thị Ánh Tuyết'],         salaryName: 'Lê Thị Ánh Tuyết' },
 
   // ----- NHÂN VIÊN PHÁT TRIỂN SẢN PHẨM (xem trang SP của mình + lương của mình) -----
   //  manager = tên ở cột "Quản Lý" trong Google Sheet (để lọc SP + xem lương)
