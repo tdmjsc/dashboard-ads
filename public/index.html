@@ -214,10 +214,11 @@
   .navlinks{display:flex;align-items:center;gap:14px;}
   @media (max-width:880px){
     .navtoggle{display:inline-flex;}
-    .navlinks{display:none;position:fixed;top:0;right:0;bottom:0;width:78vw;max-width:300px;
+    .navlinks{display:flex;position:fixed;top:0;right:0;bottom:0;width:78vw;max-width:300px;
       background:var(--ink);flex-direction:column;align-items:stretch;gap:0;padding:18px 16px;
-      box-shadow:-8px 0 30px rgba(0,0,0,.35);overflow-y:auto;z-index:200;}
-    .navlinks.open{display:flex;}
+      box-shadow:-8px 0 30px rgba(0,0,0,.35);overflow-y:auto;z-index:200;
+      transform:translateX(105%);transition:transform .25s ease;pointer-events:none;}
+    .navlinks.open{transform:translateX(0);pointer-events:auto;}
     .navlinks .logout{width:100%;text-align:left;box-sizing:border-box;padding:13px 14px;margin-bottom:6px;border-radius:9px;}
     .navlinks .user-badge{width:100%;box-sizing:border-box;justify-content:flex-start;margin:0 0 10px;}
     .navlinks .avatar{display:none;}
@@ -228,7 +229,7 @@
   }
   @media (min-width:881px){
     .navclose{display:none;}
-    .navlinks{visibility:visible !important;} /* Desktop: luôn hiện dù JS chưa chạy */
+    .navlinks{transform:none !important;pointer-events:auto !important;}
   }
 </style>
 <style>
@@ -249,7 +250,7 @@
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><line x1="3" y1="6" x2="21" y2="6"/><line x1="3" y1="12" x2="21" y2="12"/><line x1="3" y1="18" x2="21" y2="18"/></svg>
     </button>
     <div class="navoverlay" id="navOverlay"></div>
-    <div class="right navlinks" id="navLinks" style="visibility:hidden;">
+    <div class="right navlinks" id="navLinks">
       <div class="navclose"><button type="button" id="navCloseBtn" aria-label="Đóng menu">✕</button></div>
       <div class="daterange">
         <label>Từ</label><input type="date" id="from">
@@ -452,8 +453,7 @@ document.getElementById('searchBtn').addEventListener('click',loadData);
   if (closeBtn) closeBtn.addEventListener('click', closeMenu);
   // Đóng menu khi bấm 1 link điều hướng (trừ nút Tìm kiếm, vì nó không chuyển trang)
   if (links) links.querySelectorAll('a.logout').forEach(a => a.addEventListener('click', closeMenu));
-  // Hiện navlinks sau khi JS đã setup xong (tránh flash hiện menu khi load)
-  if (links) links.style.visibility = '';
+
 })();
 
 function setView(v){
