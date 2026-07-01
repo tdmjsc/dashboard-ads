@@ -839,10 +839,10 @@ main{padding:16px;max-width:1400px;margin:0 auto;}
 .tabs{display:flex;gap:8px;margin-bottom:14px;}
 .tab{padding:8px 14px;border-radius:9px;background:rgba(255,255,255,.06);border:1px solid rgba(255,255,255,.1);cursor:pointer;font-size:13px;}
 .tab.on{background:#3D5AFE;border-color:#3D5AFE;}
-.wrap{overflow-x:auto;border-radius:12px;}
+.wrap{overflow-x:auto;border-radius:12px;-webkit-overflow-scrolling:touch;}
 table{width:100%;border-collapse:collapse;background:#101B2E;min-width:1100px;}
 th,td{padding:10px 12px;text-align:left;font-size:13px;border-bottom:1px solid rgba(255,255,255,.05);white-space:nowrap;}
-th{background:#16233A;color:#9FB0C8;font-size:11.5px;text-transform:uppercase;}
+th{position:sticky;top:0;z-index:2;background:#16233A;color:#9FB0C8;font-size:11.5px;text-transform:uppercase;}
 td.num{text-align:right;font-variant-numeric:tabular-nums;}
 select.st,input.ed{font-size:12.5px;color:#fff;background:rgba(255,255,255,.06);border:1px solid rgba(255,255,255,.12);border-radius:6px;padding:4px 6px;color-scheme:dark;}
 input.ed{width:100px;}.st-moi{color:#9DB2FF;}.st-tc{color:#7BE3B5;}.st-huy{color:#ff9b8a;}
@@ -918,7 +918,7 @@ input.ed{width:100px;}.st-moi{color:#9DB2FF;}.st-tc{color:#7BE3B5;}.st-huy{color
       <button class="btn" id="fBtn">Lọc</button>
       <button class="btn ghost" id="fReset">Xoá lọc</button>
     </div>
-    <div class="wrap"><div id="tbl"></div></div>
+    <div style="max-height:calc(100vh - 200px);overflow-y:auto;border-radius:12px;" id="tblOuter"><div class="wrap"><div id="tbl"></div></div></div>
   </div>
 
   <div id="statsView" style="display:none;">
@@ -1225,6 +1225,14 @@ async function loadStats(){
 }
 $('sBtn').onclick=loadStats;
 
+// Set mặc định: từ hôm qua đến hôm nay (theo giờ local)
+(function(){
+  function localDate(d){ return new Date(d).toLocaleDateString('sv-SE'); }
+  const today = new Date();
+  const yesterday = new Date(today); yesterday.setDate(today.getDate()-1);
+  if(!$('fTu').value) $('fTu').value = localDate(yesterday);
+  if(!$('fDen').value) $('fDen').value = localDate(today);
+})();
 loadOrders();
 </script>
 </body></html>`;
