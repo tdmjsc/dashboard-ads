@@ -391,6 +391,7 @@ app.use((req, res, next) => {
   // BỎ QUA mọi đường dẫn /thailand — module Thailand TỰ LO auth riêng (webhook + login riêng)
   // (mountThailand chạy async nên route /thailand đăng ký SAU middleware này → phải loại trừ ở đây)
   if (req.path === '/thailand' || req.path.startsWith('/thailand/')) return next();
+  if (req.path === '/telegram/webhook') return next(); // Telegram gọi webhook không có session
   if (req.session && req.session.user) return next();
   if (req.path.startsWith('/api/')) return res.status(401).json({ error: 'Chưa đăng nhập' });
   res.redirect('/login');
@@ -1874,6 +1875,95 @@ async function sendTelegram(chatId, text) {
 }
 
 const fmtVnd = n => (Math.round(Number(n) || 0)).toLocaleString('vi-VN');
+
+/* ===================== TELEGRAM BOT MENU (Mini App) =====================
+   - Bot trả lời /start hoặc /menu bằng bàn phím nút (Reply Keyboard) luôn
+     dính dưới ô nhắn tin.
+   - Khi nhấn 1 nút, bot gửi lại 1 tin nhắn kèm nút Inline mở thẳng trang
+     tương ứng dưới dạng Telegram Web App (mở trong khung Telegram).
+   - Cần đăng ký Webhook 1 lần để Telegram gọi /telegram/webhook khi có
+     tin nhắn mới (xem hướng dẫn cuối file).
+   ====================================================================== */
+const TG_BASE_URL = process.env.TG_BASE_URL || 'https://ads.tdmjsc.com';
+
+// Danh sách trang hiển thị trong menu: { nhãn nút : đường dẫn trang }
+const TG_MENU_PAGES = {
+  '📊 Dashboard':      '/index.html',
+  '📣 Marketing':       '/marketing.html',
+  '📦 Sản phẩm':        '/products.html',
+  '💰 Lương':           '/salary.html',
+  '🧮 Lương PTSP':      '/salary-product.html',
+  '🧾 Lương của tôi':   '/my-salary.html',
+  '🇹🇭 Đơn Thái Lan':   '/thailand',
+};
+
+// Sắp xếp nút thành lưới 2 cột cho gọn
+function buildReplyKeyboard() {
+  const labels = Object.keys(TG_MENU_PAGES);
+  const rows = [];
+  for (let i = 0; i < labels.length; i += 2) rows.push(labels.slice(i, i + 2));
+  return { keyboard: rows, resize_keyboard: true, is_persistent: true };
+}
+
+// Gửi tin nhắn kèm Reply Keyboard (menu luôn dính dưới ô nhắn tin)
+async function tgSendMenu(chatId, text) {
+  if (!TELEGRAM_BOT_TOKEN) return;
+  const url = `https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/sendMessage`;
+  await fetch(url, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      chat_id: chatId,
+      text: text || 'Chọn mục bạn muốn xem 👇',
+      reply_markup: buildReplyKeyboard(),
+    }),
+  }).catch(() => {});
+}
+
+// Gửi tin nhắn kèm 1 nút Inline mở Web App (mở thẳng trang trong khung Telegram)
+async function tgSendOpenPage(chatId, label, path) {
+  if (!TELEGRAM_BOT_TOKEN) return;
+  const url = `https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/sendMessage`;
+  const fullUrl = TG_BASE_URL.replace(/\/$/, '') + path;
+  await fetch(url, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      chat_id: chatId,
+      text: `Mở ${label.replace(/^\S+\s/, '')}:`,
+      reply_markup: {
+        inline_keyboard: [[{ text: '👉 Mở ngay', web_app: { url: fullUrl } }]],
+      },
+    }),
+  }).catch(() => {});
+}
+
+// Webhook nhận tin nhắn từ Telegram. Đặt TRƯỚC middleware bắt buộc đăng nhập.
+app.post('/telegram/webhook', express.json(), async (req, res) => {
+  res.sendStatus(200); // trả ngay cho Telegram, xử lý sau (tránh timeout/retry)
+  try {
+    const msg = req.body && req.body.message;
+    if (!msg || !msg.chat || !msg.text) return;
+    const chatId = msg.chat.id;
+    const text = msg.text.trim();
+
+    if (text === '/start' || text === '/menu') {
+      await tgSendMenu(chatId, '👋 Chào bạn! Chọn mục bạn muốn xem bên dưới.');
+      return;
+    }
+
+    // Nếu text khớp 1 trong các nhãn nút menu → gửi link mở trang đó
+    if (TG_MENU_PAGES[text]) {
+      await tgSendOpenPage(chatId, text, TG_MENU_PAGES[text]);
+      return;
+    }
+
+    // Tin nhắn không nhận diện được → gợi ý gõ /menu
+    await tgSendMenu(chatId, 'Không hiểu lệnh này 🙂 Chọn mục bên dưới hoặc gõ /menu.');
+  } catch (e) {
+    console.error('[telegram webhook] lỗi:', e.message);
+  }
+});
 
 // Soạn nội dung lương Marketing cho 1 nhân viên
 function buildMktMessage(row, monthStr, extra) {
