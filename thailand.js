@@ -839,7 +839,7 @@ main{padding:16px;max-width:1400px;margin:0 auto;}
 .tabs{display:flex;gap:8px;margin-bottom:14px;}
 .tab{padding:8px 14px;border-radius:9px;background:rgba(255,255,255,.06);border:1px solid rgba(255,255,255,.1);cursor:pointer;font-size:13px;}
 .tab.on{background:#3D5AFE;border-color:#3D5AFE;}
-.wrap{overflow-x:auto;border-radius:12px;}
+.wrap{overflow-x:auto;border-radius:12px;-webkit-overflow-scrolling:touch;}
 table{width:100%;border-collapse:collapse;background:#101B2E;min-width:1100px;}
 th,td{padding:10px 12px;text-align:left;font-size:13px;border-bottom:1px solid rgba(255,255,255,.05);white-space:nowrap;}
 th{background:#16233A;color:#9FB0C8;font-size:11.5px;text-transform:uppercase;}
@@ -871,8 +871,10 @@ input.ed{width:100px;}.st-moi{color:#9DB2FF;}.st-tc{color:#7BE3B5;}.st-huy{color
 #syncModal .row{display:flex;gap:10px;margin-bottom:10px;}
 #syncLog{font-size:12px;color:#9FB0C8;margin-top:12px;max-height:200px;overflow-y:auto;}
 #syncLog .log-row{padding:6px 8px;border-radius:6px;background:rgba(255,255,255,.04);margin-bottom:4px;}
-#syncLog .log-row.ok{border-left:3px solid #7BE3B5;}.log-row.err{border-left:3px solid #ff9b8a;}body{height:100vh;overflow:hidden;display:flex;flex-direction:column;}header{flex-shrink:0;}main{flex:1;overflow:auto;display:flex;flex-direction:column;min-height:0;}.filters{flex-shrink:0;}.tabs{flex-shrink:0;}.wrap{flex:1;overflow:auto;min-height:0;}
+#syncLog .log-row.ok{border-left:3px solid #7BE3B5;}.log-row.err{border-left:3px solid #ff9b8a;}
 
+.scroll-top-bar{overflow-x:auto;-webkit-overflow-scrolling:touch;margin-bottom:2px;}
+.scroll-top-bar>div{height:1px;}
 </style></head>
 <body>
 <header>
@@ -918,7 +920,7 @@ input.ed{width:100px;}.st-moi{color:#9DB2FF;}.st-tc{color:#7BE3B5;}.st-huy{color
       <button class="btn" id="fBtn">Lọc</button>
       <button class="btn ghost" id="fReset">Xoá lọc</button>
     </div>
-    <div class="wrap"><div id="tbl"></div></div>
+    <div class="scroll-top-bar" id="scrollTopBar"><div id="scrollTopInner"></div></div><div class="wrap" id="wrapMain"><div id="tbl"></div></div>
   </div>
 
   <div id="statsView" style="display:none;">
@@ -1047,6 +1049,7 @@ function render(orders){
   });
   h+='</tbody></table>';
   $('tbl').innerHTML=h;
+  document.dispatchEvent(new Event('thaiTableRendered'));
   // Gắn sự kiện (tránh onchange inline để không lỗi escape)
   document.querySelectorAll('.mausel').forEach(el=>el.onchange=()=>upd(+el.dataset.id,'ma_mau',el.value));
   document.querySelectorAll('.ednv').forEach(el=>el.onchange=()=>upd(+el.dataset.id,'nhan_vien',el.value));
@@ -1224,6 +1227,42 @@ async function loadStats(){
   }catch(e){$('statsBox').innerHTML='<div class="empty">Lỗi tải dữ liệu</div>';}
 }
 $('sBtn').onclick=loadStats;
+
+
+// Đồng bộ thanh scroll ngang: thanh trên cùng ↔ bảng thật
+(function(){
+  function syncScroll(){
+    var wrap = document.getElementById('wrapMain');
+    var topBar = document.getElementById('scrollTopBar');
+    var inner = document.getElementById('scrollTopInner');
+    if(!wrap || !topBar || !inner) return;
+    // Set chiều rộng inner = chiều rộng thật của bảng
+    function resize(){
+      var tbl = wrap.querySelector('table');
+      if(tbl) inner.style.width = tbl.offsetWidth + 'px';
+    }
+    resize();
+    // Đồng bộ scroll
+    var syncing = false;
+    topBar.addEventListener('scroll', function(){
+      if(syncing) return; syncing=true;
+      wrap.scrollLeft = topBar.scrollLeft;
+      syncing = false;
+    });
+    wrap.addEventListener('scroll', function(){
+      if(syncing) return; syncing=true;
+      topBar.scrollLeft = wrap.scrollLeft;
+      syncing = false;
+    });
+    // Cập nhật khi bảng thay đổi kích thước
+    var ro = window.ResizeObserver ? new ResizeObserver(resize) : null;
+    if(ro && wrap.querySelector('table')) ro.observe(wrap.querySelector('table'));
+  }
+  // Chạy sau khi loadOrders render xong
+  var _origRender = window._thaiRenderDone;
+  document.addEventListener('thaiTableRendered', syncScroll);
+  setTimeout(syncScroll, 800); // fallback
+})();
 
 (function(){
   const fmt=d=>new Date(d).toLocaleDateString('sv-SE');
