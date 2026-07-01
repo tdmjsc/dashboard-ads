@@ -4,7 +4,6 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Bảng lương — Check ADS TDMJSC</title>
-<script src="https://telegram.org/js/telegram-web-app.js"></script>
 <link rel="manifest" href="/manifest.json">
 <meta name="theme-color" content="#0B1322">
 <meta name="apple-mobile-web-app-capable" content="yes">
@@ -401,13 +400,7 @@ $('refreshBtn').addEventListener('click',()=>{$('status').removeAttribute('data-
 $('month').addEventListener('change',()=>{$('status').removeAttribute('data-base');load();});
 load();
 
-// ─── Công khai lương qua Telegram ───
-$('publishBtn').addEventListener('click', async ()=>{
-  const month=$('month').value;
-  if(!month) return;
-  if(!confirm('Công khai bảng lương tháng '+month+'?\n\nNhân viên sẽ xem được bảng lương của mình trên trang "Lương của tôi". Có thể công khai lại để cập nhật.')) return;
-  $('publishBtn').disabled=true;
-  $('publishBtn').textContent='⏳ Đang gửi…';
+
   // Soạn dữ liệu từng người (gồm các khoản đã tính client)
   const rows=LIST.filter(e=>e.name!=='Admin').map(e=>{
     const m=manOf(e.key), c=e._c||{};
@@ -457,24 +450,6 @@ if ('serviceWorker' in navigator) {
     navigator.serviceWorker.register('/service-worker.js').catch(() => {});
   });
 }
-</script>
-<script>
-(function () {
-  if (typeof window.Telegram === 'undefined' || !window.Telegram.WebApp) return;
-  var tg = window.Telegram.WebApp;
-  try {
-    tg.ready();
-    tg.expand();
-    tg.setHeaderColor('#0B1322');
-    tg.setBackgroundColor('#0B1322');
-    window.__TG_USER__ = tg.initDataUnsafe && tg.initDataUnsafe.user ? tg.initDataUnsafe.user : null;
-    window.__IS_TELEGRAM__ = true;
-    if (location.pathname !== '/' && location.pathname !== '/index.html') {
-      tg.BackButton.show();
-      tg.BackButton.onClick(function () { location.href = '/index.html'; });
-    }
-  } catch (e) {}
-})();
 </script>
 </body>
 </html>
