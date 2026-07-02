@@ -873,6 +873,13 @@ input.ed{width:100px;}.st-moi{color:#9DB2FF;}.st-tc{color:#7BE3B5;}.st-huy{color
 #syncLog .log-row{padding:6px 8px;border-radius:6px;background:rgba(255,255,255,.04);margin-bottom:4px;}
 #syncLog .log-row.ok{border-left:3px solid #7BE3B5;}.log-row.err{border-left:3px solid #ff9b8a;}
 
+
+/* Scroll ngang kép */
+.wrap-outer{overflow-x:auto;-webkit-overflow-scrolling:touch;touch-action:pan-x pan-y;overscroll-behavior-x:contain;border-radius:12px;}
+.wrap-top-scroll{overflow-x:auto;overflow-y:hidden;height:16px;margin-bottom:3px;-webkit-overflow-scrolling:touch;}
+.wrap-top-scroll>div{height:1px;background:transparent;}
+.wrap{overflow-x:visible;overflow-y:visible;border-radius:0;}
+table{width:100%;border-collapse:collapse;background:#101B2E;min-width:900px;}
 </style></head>
 <body>
 <header>
@@ -918,7 +925,8 @@ input.ed{width:100px;}.st-moi{color:#9DB2FF;}.st-tc{color:#7BE3B5;}.st-huy{color
       <button class="btn" id="fBtn">Lọc</button>
       <button class="btn ghost" id="fReset">Xoá lọc</button>
     </div>
-    <div class="wrap"><div id="tbl"></div></div>
+    <div class="wrap-top-scroll" id="wrapTopScroll"><div id="wrapTopInner"></div></div>
+<div class="wrap-outer" id="wrapOuter"><div class="wrap"><div id="tbl"></div></div></div>
   </div>
 
   <div id="statsView" style="display:none;">
@@ -1002,7 +1010,14 @@ async function loadOrders(){
 
   function fmtNgayVe(o) {
     var dt = o.created_at || o.ngay_ve || '';
-    return dt.toString().replace('T', ' ').slice(0, 16);
+    if (!dt) return '';
+    var d = new Date(dt);
+    if (isNaN(d.getTime())) return dt.toString().slice(0, 16);
+    // Chuyển sang giờ VN (UTC+7)
+    var vn = new Date(d.getTime() + 7 * 3600 * 1000);
+    var pad = n => String(n).padStart(2,'0');
+    return vn.getUTCFullYear()+'-'+pad(vn.getUTCMonth()+1)+'-'+pad(vn.getUTCDate())
+      +' '+pad(vn.getUTCHours())+':'+pad(vn.getUTCMinutes());
   }
 
   function stCls(t){
@@ -1053,6 +1068,7 @@ function render(orders){
   });
   h+='</tbody></table>';
   $('tbl').innerHTML=h;
+  document.dispatchEvent(new Event('thaiTableRendered'));
   // Gắn sự kiện (tránh onchange inline để không lỗi escape)
   document.querySelectorAll('.mausel').forEach(el=>el.onchange=()=>upd(+el.dataset.id,'ma_mau',el.value));
   document.querySelectorAll('.ednv').forEach(el=>el.onchange=()=>upd(+el.dataset.id,'nhan_vien',el.value));
@@ -1231,6 +1247,41 @@ async function loadStats(){
 }
 $('sBtn').onclick=loadStats;
 
+
+// Scroll kép: đồng bộ thanh trên ↔ bảng
+function initDualScroll() {
+  var top = document.getElementById('wrapTopScroll');
+  var outer = document.getElementById('wrapOuter');
+  var inner = document.getElementById('wrapTopInner');
+  if (!top || !outer || !inner) return;
+  function updateWidth() {
+    var tbl = outer.querySelector('table');
+    if (tbl) inner.style.width = tbl.offsetWidth + 'px';
+  }
+  updateWidth();
+  var lock = false;
+  top.addEventListener('scroll', function() {
+    if (lock) return; lock = true; outer.scrollLeft = top.scrollLeft; lock = false;
+  }, {passive: true});
+  outer.addEventListener('scroll', function() {
+    if (lock) return; lock = true; top.scrollLeft = outer.scrollLeft; lock = false;
+  }, {passive: true});
+  document.addEventListener('thaiTableRendered', function() {
+    setTimeout(updateWidth, 50);
+    top.scrollLeft = 0; outer.scrollLeft = 0;
+  });
+  if (window.ResizeObserver) {
+    new ResizeObserver(updateWidth).observe(outer);
+  }
+}
+setTimeout(initDualScroll, 300);
+
+(function(){
+  var fmt=function(d){return new Date(d.getTime()-d.getTimezoneOffset()*60000).toISOString().slice(0,10);};
+  var t=new Date(),y=new Date(t); y.setDate(t.getDate()-1);
+  if(!$('fTu').value)$('fTu').value=fmt(y);
+  if(!$('fDen').value)$('fDen').value=fmt(t);
+})();
 loadOrders();
 </script>
 </body></html>`;
