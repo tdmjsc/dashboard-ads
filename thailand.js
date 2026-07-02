@@ -873,13 +873,6 @@ input.ed{width:100px;}.st-moi{color:#9DB2FF;}.st-tc{color:#7BE3B5;}.st-huy{color
 #syncLog .log-row{padding:6px 8px;border-radius:6px;background:rgba(255,255,255,.04);margin-bottom:4px;}
 #syncLog .log-row.ok{border-left:3px solid #7BE3B5;}.log-row.err{border-left:3px solid #ff9b8a;}
 
-
-/* === SCROLL NGANG KÉP: thanh scroll trên cùng của bảng === */
-.wrap-outer{overflow-x:auto;-webkit-overflow-scrolling:touch;touch-action:pan-x;overscroll-behavior-x:contain;border-radius:12px;}
-.wrap-top-scroll{overflow-x:auto;overflow-y:hidden;height:14px;margin-bottom:2px;-webkit-overflow-scrolling:touch;}
-.wrap-top-scroll > div{height:1px;}
-.wrap{overflow-x:visible;border-radius:0;}
-table{width:100%;border-collapse:collapse;background:#101B2E;min-width:900px;}
 </style></head>
 <body>
 <header>
@@ -925,8 +918,7 @@ table{width:100%;border-collapse:collapse;background:#101B2E;min-width:900px;}
       <button class="btn" id="fBtn">Lọc</button>
       <button class="btn ghost" id="fReset">Xoá lọc</button>
     </div>
-    <div class="wrap-top-scroll" id="wrapTopScroll"><div id="wrapTopInner" style="height:1px"></div></div>
-<div class="wrap-outer" id="wrapOuter"><div class="wrap"><div id="tbl"></div></div></div>
+    <div class="wrap"><div id="tbl"></div></div>
   </div>
 
   <div id="statsView" style="display:none;">
@@ -1007,7 +999,13 @@ async function loadOrders(){
   }catch(e){$('tbl').innerHTML='<div class="empty">Lỗi tải dữ liệu</div>';}
 }
 
-function stCls(t){
+
+  function fmtNgayVe(o) {
+    var dt = o.created_at || o.ngay_ve || '';
+    return dt.toString().replace('T', ' ').slice(0, 16);
+  }
+
+  function stCls(t){
   if(['Thành công','Hoàn tất','Giao thành công','Đã giao'].includes(t))return 'st-tc';
   if(['Huỷ','Hoàn hàng','Từ chối','Có vấn đề','Đang hoàn'].includes(t))return 'st-huy';
   if(['Mới về','Chưa xử lý'].includes(t))return 'st-moi';
@@ -1039,7 +1037,7 @@ function render(orders){
     h+='<tr>'
       +(IS_ADMIN?'<td><input type="checkbox" class="chk" data-id="'+o.id+'"'+(o.da_day==1?' disabled':'')+'></td>':'')
       +'<td class="num" style="color:#6B7C97">'+(idx+1)+'</td>'
-      +'<td>'+esc((o.ngay_ve||'').toString().replace('T',' ').slice(0,16))+'</td>'
+      +'<td>'+esc(fmtNgayVe(o))+'</td>'
       +'<td>'+esc(o.ho_ten)+'</td>'
       +'<td>'+esc(o.sdt)+'</td>'
       +'<td class="muted">'+esc(o.dia_chi)+'</td>'
@@ -1055,7 +1053,6 @@ function render(orders){
   });
   h+='</tbody></table>';
   $('tbl').innerHTML=h;
-  document.dispatchEvent(new Event('thaiTableRendered'));
   // Gắn sự kiện (tránh onchange inline để không lỗi escape)
   document.querySelectorAll('.mausel').forEach(el=>el.onchange=()=>upd(+el.dataset.id,'ma_mau',el.value));
   document.querySelectorAll('.ednv').forEach(el=>el.onchange=()=>upd(+el.dataset.id,'nhan_vien',el.value));
@@ -1233,39 +1230,6 @@ async function loadStats(){
   }catch(e){$('statsBox').innerHTML='<div class="empty">Lỗi tải dữ liệu</div>';}
 }
 $('sBtn').onclick=loadStats;
-
-
-// === SCROLL KÉP: đồng bộ thanh scroll trên ↔ bảng dưới ===
-function initDualScroll(){
-  var top = document.getElementById('wrapTopScroll');
-  var outer = document.getElementById('wrapOuter');
-  var inner = document.getElementById('wrapTopInner');
-  if(!top || !outer || !inner) return;
-  function updateWidth(){
-    var tbl = outer.querySelector('table');
-    if(tbl){ inner.style.width = tbl.offsetWidth + 'px'; inner.style.height = '1px'; }
-  }
-  updateWidth();
-  var lock = false;
-  top.addEventListener('scroll', function(){
-    if(lock) return; lock=true; outer.scrollLeft=top.scrollLeft; lock=false;
-  }, {passive:true});
-  outer.addEventListener('scroll', function(){
-    if(lock) return; lock=true; top.scrollLeft=outer.scrollLeft; lock=false;
-  }, {passive:true});
-  // Cập nhật khi bảng được render lại
-  document.addEventListener('thaiTableRendered', function(){
-    updateWidth();
-    top.scrollLeft = 0; outer.scrollLeft = 0;
-  });
-  if(window.ResizeObserver){
-    var ro = new ResizeObserver(updateWidth);
-    var tbl = outer.querySelector('table');
-    if(tbl) ro.observe(tbl);
-  }
-}
-document.addEventListener('DOMContentLoaded', initDualScroll);
-setTimeout(initDualScroll, 200);
 
 loadOrders();
 </script>
