@@ -43,6 +43,7 @@
   .empty{padding:30px;text-align:center;color:#6B7C97;font-size:14px;}
   @media(max-width:680px){ h1{font-size:15px;} th,td{padding:9px 7px;font-size:12px;} .daterange{flex:1 1 100%;} }
   .user-badge{display:inline-flex;align-items:center;gap:6px;font-size:13px;color:#9DB2FF;background:rgba(157,178,255,.1);border:1px solid rgba(157,178,255,.2);padding:7px 12px;border-radius:9px;font-weight:600;white-space:nowrap;}
+  .pick{font-family:'Inter';font-size:13px;color:#E7EEF8;background:rgba(255,255,255,.06);border:1px solid rgba(255,255,255,.10);padding:7px 12px;border-radius:9px;outline:none;cursor:pointer;}
 </style>
 </head>
 <body>
@@ -63,6 +64,11 @@
       <label>Đến</label><input type="date" id="to">
     </div>
     <button class="btn" id="refreshBtn">Xem</button>
+    <select class="pick" id="teamFilter">
+      <option value="all">🏠 Mọi nhân viên</option>
+      <option value="Trịnh Đức Phương">👑 Team Phương</option>
+      <option value="Tạ Quang Trường">👑 Team Trường</option>
+    </select>
     <a href="/" class="link">← Dashboard</a>
     <a href="/products.html" class="link" id="navProducts">Sản phẩm</a>
     <a href="/my-salary.html" class="link" id="navMySalary">Lương của tôi</a>
@@ -94,6 +100,15 @@
 </main>
 
 <script>
+
+// Cấu hình team: key = tên leader (đúng chính tả), value = danh sách tên thành viên trong team (bao gồm cả leader)
+const TEAMS = {
+  'Trịnh Đức Phương': ['Trịnh Đức Phương','Đoàn Việt Hà','Nguyễn Duy Huân','Vũ Thuý An'],
+  'Tạ Quang Trường':  ['Tạ Quang Trường','Nguyễn Thị Trà My','Dương Văn Minh','Lê Thị Ánh'],
+};
+const normName = s => String(s==null?'':s).trim().toLowerCase().replace(/\s+/g,' ');
+let currentTeam = 'all'; // 'all' | tên leader
+
 const vnd = n => (Number(n)||0).toLocaleString('vi-VN');
 const pctf = n => (n==null||isNaN(n)) ? '–' : (Math.round(Number(n)*10)/10).toLocaleString('vi-VN') + '%';
 // % chi tiêu QC trên doanh số (càng thấp càng hiệu quả)
@@ -114,7 +129,27 @@ function esc(s){ return String(s==null?'':s).replace(/[&<>"]/g, c=>({'&':'&amp;'
 
 function render(d){
   const tb = $('rows');
-  const rows = (d.rows||[]).slice().sort((a,b)=>(b.doanhthu||0)-(a.doanhthu||0));
+  let rows = (d.rows||[]).slice();
+
+  // Lọc theo team nếu có chọn
+  if(currentTeam !== 'all'){
+    const members = (TEAMS[currentTeam]||[]).map(normName);
+    rows = rows.filter(r => members.includes(normName(r.name)));
+  }
+  rows.sort((a,b)=>(b.doanhthu||0)-(a.doanhthu||0));
+
+  // Tính lại total sau khi lọc
+  const filteredTotal = rows.reduce((a,r)=>({
+    contact:  a.contact  + (+r.contact  ||0),
+    soSP:     a.soSP     + (+r.soSP     ||0),
+    doanhthu: a.doanhthu + (+r.doanhthu ||0),
+    chiTieu:  a.chiTieu  + (+r.chiTieu  ||0),
+    donThai:  a.donThai  + (+r.donThai  ||0),
+  }),{contact:0,soSP:0,doanhthu:0,chiTieu:0,donThai:0});
+  filteredTotal.tongDon   = filteredTotal.contact + filteredTotal.donThai;
+  filteredTotal.giaContact= filteredTotal.contact ? Math.round(filteredTotal.chiTieu/filteredTotal.contact) : 0;
+  filteredTotal.cpa       = filteredTotal.tongDon  ? Math.round(filteredTotal.chiTieu/filteredTotal.tongDon)  : 0;
+  const total = currentTeam === 'all' ? (d.total||{}) : filteredTotal;
   if(!rows.length){ tb.innerHTML = '<tr><td colspan="10" class="empty">Không có dữ liệu trong khoảng ngày này.</td></tr>'; return; }
   let html='';
   rows.forEach(r=>{
@@ -160,6 +195,7 @@ async function load(){
       $('status').innerHTML = '<span class="err">Lỗi: '+esc(d.message||'không lấy được báo cáo')+'</span>';
       $('rows').innerHTML='';
     } else {
+      window._lastMktData = d;
       render(d);
       const t = new Date(d.lastUpdated||Date.now());
       const same = since===until;
@@ -173,6 +209,10 @@ document.querySelectorAll('.quick button').forEach(b=>{
   b.addEventListener('click', ()=>{ setRange(b.dataset.range); load(); });
 });
 $('refreshBtn').addEventListener('click', load);
+$('teamFilter').addEventListener('change', function(){
+  currentTeam = this.value;
+  if(window._lastMktData) render(window._lastMktData);
+});
 
 // Ẩn link "Sản phẩm" nếu không phải admin
 fetch('/api/me').then(r=>r.ok?r.json():null).then(me=>{
