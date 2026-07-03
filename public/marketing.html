@@ -166,7 +166,7 @@ function render(d){
       <td class="num ${pctClass(r.chiTieu, r.doanhthu)}">${pctQC(r.chiTieu, r.doanhthu)}</td>
     </tr>`;
   });
-  const t = d.total||{};
+  const t = total;
   html += `<tr class="total">
     <td>Tổng cộng</td>
     <td class="num">${vnd(t.contact)}</td>
