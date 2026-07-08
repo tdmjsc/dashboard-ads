@@ -25,7 +25,7 @@ export const USERS = [
   //  employees = danh sách người xem được KẾT QUẢ Marketing (cả team)
   //  salaryName = chỉ xem LƯƠNG của chính mình
   { user: 'mkt.phuong', pass: 'Phuong@45678', role: 'viewer',
-    employees: ['Trịnh Đức Phương', 'Đoàn Việt Hà', 'Nguyễn Duy Huân', 'Vũ Thuý An'],
+    employees: ['Trịnh Đức Phương', 'Đoàn Việt Hà', 'Nguyễn Duy Huân', 'Vũ Thuý An', 'Lê Thị Ánh Tuyết', 'Phạm Quang Tùng' ],
     salaryName: 'Trịnh Đức Phương' },
   { user: 'mkt.truong', pass: 'Truong@1234', role: 'viewer',
     employees: ['Tạ Quang Trường', 'Nguyễn Thị Trà My', 'Dương Văn Minh', 'Lê Thị Ánh'],
@@ -41,6 +41,7 @@ export const USERS = [
   { user: 'mkt.ha',    pass: 'Ha@3597',    role: 'viewer', employees: ['Đoàn Việt Hà'],       salaryName: 'Đoàn Việt Hà' },
   { user: 'mkt.thuyan',    pass: 'An@2578',    role: 'viewer', employees: ['Vũ Thuý An'],         salaryName: 'Vũ Thuý An' },
   { user: 'mkt.anhtuyet',    pass: 'Tuyet@2278',    role: 'viewer', employees: ['Lê Thị Ánh Tuyết'],         salaryName: 'Lê Thị Ánh Tuyết' },
+  { user: 'mkt.tung',    pass: 'Tung@35927',    role: 'viewer', employees: ['Phạm Quang Tùng'],       salaryName: 'Phạm Quang Tùng' },
 
   // ----- NHÂN VIÊN PHÁT TRIỂN SẢN PHẨM (xem trang SP của mình + lương của mình) -----
   //  manager = tên ở cột "Quản Lý" trong Google Sheet (để lọc SP + xem lương)
