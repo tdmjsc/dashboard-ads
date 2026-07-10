@@ -31,6 +31,27 @@
   .order-card:hover { box-shadow: 0 4px 20px rgba(0,0,0,.08); }
   .ship-card { transition: transform .1s; }
   .ship-card:active { transform: scale(.98); }
+  /* Searchable Select */
+  .ss-wrap { position: relative; }
+  .ss-input { width: 100%; cursor: pointer; background: #fff; }
+  .ss-input::placeholder { color: #9ca3af; }
+  .ss-clear { position: absolute; right: 26px; top: 50%; transform: translateY(-50%); cursor: pointer;
+    color: #9ca3af; font-size: 14px; line-height: 1; display: none; }
+  .ss-wrap.has-val .ss-clear { display: block; }
+  .ss-arrow { position: absolute; right: 8px; top: 50%; transform: translateY(-50%); pointer-events: none;
+    color: #9ca3af; font-size: 10px; transition: transform .15s; }
+  .ss-wrap.open .ss-arrow { transform: translateY(-50%) rotate(180deg); }
+  .ss-dropdown { position: absolute; left: 0; right: 0; top: 100%; margin-top: 2px;
+    background: #fff; border: 1px solid #d1d5db; border-radius: 8px;
+    box-shadow: 0 8px 24px rgba(0,0,0,.12); z-index: 50;
+    max-height: 220px; overflow-y: auto; display: none; }
+  .ss-wrap.open .ss-dropdown { display: block; }
+  .ss-opt { padding: 7px 12px; font-size: 13px; cursor: pointer; transition: background .1s; }
+  .ss-opt:hover, .ss-opt.active { background: #eff6ff; color: #1d4ed8; }
+  .ss-opt.active { font-weight: 600; }
+  .ss-empty { padding: 10px 12px; font-size: 12px; color: #9ca3af; text-align: center; }
+  .ss-dropdown::-webkit-scrollbar { width: 5px; }
+  .ss-dropdown::-webkit-scrollbar-thumb { background: #d1d5db; border-radius: 3px; }
   @media print {
     body * { visibility: hidden; }
     #printArea, #printArea * { visibility: visible; }
@@ -597,14 +618,11 @@
       <div><label class="text-xs text-gray-500">Địa chỉ gốc (tin nhắn)</label><input type="text" id="cdDiaChiFull" class="w-full text-sm mb-2 bg-white" readonly></div>
       <div class="grid grid-cols-2 md:grid-cols-4 gap-2">
         <div><label class="text-xs text-gray-500">Tỉnh/TP *</label>
-          <input type="text" id="cdTinh" list="dlTinh" class="w-full text-sm" placeholder="Chọn hoặc gõ..." oninput="onTinhChange()">
-          <datalist id="dlTinh"></datalist></div>
+          <div id="ssTinh" class="ss-wrap"></div></div>
         <div><label class="text-xs text-gray-500">Quận/Huyện *</label>
-          <input type="text" id="cdQuan" list="dlQuan" class="w-full text-sm" placeholder="Chọn hoặc gõ..." oninput="onQuanChange()">
-          <datalist id="dlQuan"></datalist></div>
+          <div id="ssQuan" class="ss-wrap"></div></div>
         <div><label class="text-xs text-gray-500">Phường/Xã</label>
-          <input type="text" id="cdPhuong" list="dlPhuong" class="w-full text-sm" placeholder="Chọn hoặc gõ...">
-          <datalist id="dlPhuong"></datalist></div>
+          <div id="ssPhuong" class="ss-wrap"></div></div>
         <div><label class="text-xs text-gray-500">Số nhà/đường</label><input type="text" id="cdDiaChi" class="w-full text-sm"></div>
       </div>
     </div>
@@ -871,46 +889,155 @@ let addressProvinces = [];
 let addressDistricts = [];
 let addressWards = [];
 
+// ============ Searchable Select Component ============
+class SearchableSelect {
+  constructor(container, opts = {}) {
+    this.el = typeof container === 'string' ? document.getElementById(container) : container;
+    this.placeholder = opts.placeholder || 'Chọn hoặc gõ...';
+    this.onChange = opts.onChange || null;
+    this.items = []; // [{name, code}]
+    this.value = '';
+    this.code = null;
+    this._build();
+  }
+  _build() {
+    this.el.innerHTML = `<input type="text" class="ss-input text-sm" placeholder="${this.placeholder}" autocomplete="off">
+      <span class="ss-clear" title="Xóa">✕</span><span class="ss-arrow">▼</span>
+      <div class="ss-dropdown"></div>`;
+    this.input = this.el.querySelector('.ss-input');
+    this.dd = this.el.querySelector('.ss-dropdown');
+    this.clearBtn = this.el.querySelector('.ss-clear');
+    // Events
+    this.input.addEventListener('focus', () => this._open());
+    this.input.addEventListener('input', () => this._filter());
+    this.input.addEventListener('keydown', e => this._key(e));
+    this.clearBtn.addEventListener('mousedown', e => { e.preventDefault(); this.clear(); });
+    // Close on click outside
+    document.addEventListener('mousedown', e => { if (!this.el.contains(e.target)) this._close(); });
+  }
+  setItems(items) {
+    this.items = items || [];
+    this._render(this.items);
+  }
+  setValue(name) {
+    this.input.value = name || '';
+    this.value = name || '';
+    const item = this.items.find(i => i.name === name);
+    this.code = item ? item.code : null;
+    this.el.classList.toggle('has-val', !!name);
+  }
+  clear() {
+    this.input.value = ''; this.value = ''; this.code = null;
+    this.el.classList.remove('has-val');
+    if (this.onChange) this.onChange('', null);
+    this._render(this.items);
+    this.input.focus();
+  }
+  _open() {
+    this.el.classList.add('open');
+    this.input.select();
+    this._filter();
+  }
+  _close() { this.el.classList.remove('open'); }
+  _filter() {
+    const q = this.input.value.toLowerCase().trim();
+    const norm = s => s.normalize('NFD').replace(/[\u0300-\u036f]/g,'').replace(/đ/g,'d').replace(/Đ/g,'D').toLowerCase();
+    const qn = norm(this.input.value);
+    const filtered = q ? this.items.filter(i => norm(i.name).includes(qn) || i.name.toLowerCase().includes(q)) : this.items;
+    this._render(filtered);
+  }
+  _render(list) {
+    if (!list.length) { this.dd.innerHTML = '<div class="ss-empty">Không tìm thấy</div>'; return; }
+    this.dd.innerHTML = list.map((item, i) =>
+      `<div class="ss-opt${item.name === this.value ? ' active' : ''}" data-idx="${i}" data-name="${esc(item.name)}" data-code="${item.code || ''}">${esc(item.name)}</div>`
+    ).join('');
+    this.dd.querySelectorAll('.ss-opt').forEach(opt => {
+      opt.addEventListener('mousedown', e => {
+        e.preventDefault();
+        this._select(opt.dataset.name, opt.dataset.code);
+      });
+    });
+    // Scroll active into view
+    const activeEl = this.dd.querySelector('.ss-opt.active');
+    if (activeEl) activeEl.scrollIntoView({ block: 'nearest' });
+  }
+  _select(name, code) {
+    this.input.value = name;
+    this.value = name;
+    this.code = code || null;
+    this.el.classList.add('has-val');
+    this._close();
+    if (this.onChange) this.onChange(name, code);
+  }
+  _key(e) {
+    const opts = this.dd.querySelectorAll('.ss-opt');
+    if (!opts.length) return;
+    let idx = [...opts].findIndex(o => o.classList.contains('active'));
+    if (e.key === 'ArrowDown') { e.preventDefault(); idx = Math.min(idx + 1, opts.length - 1); }
+    else if (e.key === 'ArrowUp') { e.preventDefault(); idx = Math.max(idx - 1, 0); }
+    else if (e.key === 'Enter') {
+      e.preventDefault();
+      if (idx >= 0) { this._select(opts[idx].dataset.name, opts[idx].dataset.code); }
+      return;
+    } else if (e.key === 'Escape') { this._close(); return; }
+    else return;
+    opts.forEach(o => o.classList.remove('active'));
+    if (idx >= 0 && opts[idx]) { opts[idx].classList.add('active'); opts[idx].scrollIntoView({ block: 'nearest' }); }
+  }
+}
+
+// ---- Instances ----
+let ssTinh, ssQuan, ssPhuong;
+
+function initAddressSelects() {
+  if (ssTinh) return; // already init
+  ssTinh = new SearchableSelect('ssTinh', {
+    placeholder: 'Gõ tên tỉnh/TP...',
+    onChange: (name, code) => {
+      ssQuan.setItems([]); ssQuan.clear();
+      ssPhuong.setItems([]); ssPhuong.clear();
+      if (code) loadDistricts(code);
+    }
+  });
+  ssQuan = new SearchableSelect('ssQuan', {
+    placeholder: 'Gõ quận/huyện...',
+    onChange: (name, code) => {
+      ssPhuong.setItems([]); ssPhuong.clear();
+      if (code) loadWards(code);
+    }
+  });
+  ssPhuong = new SearchableSelect('ssPhuong', { placeholder: 'Gõ phường/xã...' });
+}
+
 // ---- Load danh sách tỉnh ----
 async function loadProvinces(){
-  if(addressProvinces.length) return;
+  if(addressProvinces.length) { ssTinh.setItems(addressProvinces); return; }
   try{
     const r=await fetch(API+'/address/provinces');
     addressProvinces=await r.json();
-    const dl=document.getElementById('dlTinh');
-    if(dl) dl.innerHTML=addressProvinces.map(p=>`<option value="${esc(p.name)}" data-code="${p.code}">`).join('');
+    ssTinh.setItems(addressProvinces);
   }catch(e){}
 }
 
-async function onTinhChange(){
-  const val=document.getElementById('cdTinh').value;
-  const prov=addressProvinces.find(p=>p.name===val);
-  document.getElementById('cdQuan').value='';
-  document.getElementById('cdPhuong').value='';
-  document.getElementById('dlQuan').innerHTML='';
-  document.getElementById('dlPhuong').innerHTML='';
-  if(!prov) return;
+async function loadDistricts(provCode){
   try{
-    const r=await fetch(API+'/address/districts/'+prov.code);
+    ssQuan.setItems([{name:'Đang tải...', code:''}]);
+    const r=await fetch(API+'/address/districts/'+provCode);
     addressDistricts=await r.json();
-    document.getElementById('dlQuan').innerHTML=addressDistricts.map(d=>`<option value="${esc(d.name)}" data-code="${d.code}">`).join('');
-  }catch(e){}
+    ssQuan.setItems(addressDistricts);
+  }catch(e){ ssQuan.setItems([]); }
 }
 
-async function onQuanChange(){
-  const val=document.getElementById('cdQuan').value;
-  const dist=addressDistricts.find(d=>d.name===val);
-  document.getElementById('cdPhuong').value='';
-  document.getElementById('dlPhuong').innerHTML='';
-  if(!dist) return;
+async function loadWards(distCode){
   try{
-    const r=await fetch(API+'/address/wards/'+dist.code);
+    ssPhuong.setItems([{name:'Đang tải...', code:''}]);
+    const r=await fetch(API+'/address/wards/'+distCode);
     addressWards=await r.json();
-    document.getElementById('dlPhuong').innerHTML=addressWards.map(w=>`<option value="${esc(w.name)}">`).join('');
-  }catch(e){}
+    ssPhuong.setItems(addressWards);
+  }catch(e){ ssPhuong.setItems([]); }
 }
 
-function openChotDon(id){
+async function openChotDon(id){
   const o = saleOrders.find(x=>x.id===id) || whOrders.find(x=>x.id===id) || allOrders.find(x=>x.id===id); 
   if(!o) return;
   chotDonId = id;
@@ -920,9 +1047,6 @@ function openChotDon(id){
   document.getElementById('cdTinNhan').value = o.dia_chi_full||'';
   document.getElementById('cdDiaChiFull').value = o.dia_chi_full||'';
   document.getElementById('cdDiaChi').value = o.dia_chi||'';
-  document.getElementById('cdTinh').value = o.tinh||'';
-  document.getElementById('cdQuan').value = o.quan||'';
-  document.getElementById('cdPhuong').value = o.phuong||'';
   document.getElementById('cdSanPham').value = o.san_pham||'';
   document.getElementById('cdDonGia').value = o.gia_ban||0;
   document.getElementById('cdSoLuong').value = o.so_luong||1;
@@ -934,7 +1058,35 @@ function openChotDon(id){
   sel.innerHTML = '<option value="">-- Chọn từ danh sách --</option>' +
     allProducts.filter(p=>p.active).map(p=>`<option value="${p.id}" data-gia="${p.gia_ban}" data-ten="${esc(p.ten_sp)}">${esc(p.ten_sp)} — ${fmt(p.gia_ban)}</option>`).join('');
   cdCalc();
-  loadProvinces();
+
+  // Init address selects + load provinces
+  initAddressSelects();
+  await loadProvinces();
+
+  // Set existing address values and cascade-load districts/wards
+  const tinhName = o.tinh || '';
+  const quanName = o.quan || '';
+  const phuongName = o.phuong || '';
+
+  ssTinh.setValue(tinhName);
+  ssQuan.setValue(''); ssQuan.setItems([]);
+  ssPhuong.setValue(''); ssPhuong.setItems([]);
+
+  if (tinhName) {
+    const prov = addressProvinces.find(p => p.name === tinhName);
+    if (prov) {
+      await loadDistricts(prov.code);
+      ssQuan.setValue(quanName);
+      if (quanName) {
+        const dist = addressDistricts.find(d => d.name === quanName);
+        if (dist) {
+          await loadWards(dist.code);
+          ssPhuong.setValue(phuongName);
+        }
+      }
+    }
+  }
+
   document.getElementById('chotDonModal').classList.remove('hidden');
 }
 function cdSelectProduct(){
@@ -962,9 +1114,9 @@ async function submitChotDon(trangThai){
   const gia = parseInt(document.getElementById('cdDonGia').value)||0;
   const sl = parseInt(document.getElementById('cdSoLuong').value)||1;
   const diaChi = document.getElementById('cdDiaChi').value;
-  const tinh = document.getElementById('cdTinh').value;
-  const quan = document.getElementById('cdQuan').value;
-  const phuong = document.getElementById('cdPhuong').value;
+  const tinh = ssTinh ? ssTinh.value : '';
+  const quan = ssQuan ? ssQuan.value : '';
+  const phuong = ssPhuong ? ssPhuong.value : '';
   const diaChiFull = [diaChi, phuong, quan, tinh].filter(Boolean).join(', ');
 
   const body = {
