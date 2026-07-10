@@ -594,12 +594,18 @@
     <!-- Địa chỉ giao hàng -->
     <div class="bg-gray-50 rounded-lg p-4 mb-4">
       <h3 class="text-sm font-semibold text-gray-600 mb-2">Địa chỉ giao hàng</h3>
-      <div><label class="text-xs text-gray-500">Địa chỉ đầy đủ</label><input type="text" id="cdDiaChiFull" class="w-full text-sm mb-2" placeholder="Nhập hoặc sửa địa chỉ đầy đủ"></div>
+      <div><label class="text-xs text-gray-500">Địa chỉ gốc (tin nhắn)</label><input type="text" id="cdDiaChiFull" class="w-full text-sm mb-2 bg-white" readonly></div>
       <div class="grid grid-cols-2 md:grid-cols-4 gap-2">
+        <div><label class="text-xs text-gray-500">Tỉnh/TP *</label>
+          <input type="text" id="cdTinh" list="dlTinh" class="w-full text-sm" placeholder="Chọn hoặc gõ..." oninput="onTinhChange()">
+          <datalist id="dlTinh"></datalist></div>
+        <div><label class="text-xs text-gray-500">Quận/Huyện *</label>
+          <input type="text" id="cdQuan" list="dlQuan" class="w-full text-sm" placeholder="Chọn hoặc gõ..." oninput="onQuanChange()">
+          <datalist id="dlQuan"></datalist></div>
+        <div><label class="text-xs text-gray-500">Phường/Xã</label>
+          <input type="text" id="cdPhuong" list="dlPhuong" class="w-full text-sm" placeholder="Chọn hoặc gõ...">
+          <datalist id="dlPhuong"></datalist></div>
         <div><label class="text-xs text-gray-500">Số nhà/đường</label><input type="text" id="cdDiaChi" class="w-full text-sm"></div>
-        <div><label class="text-xs text-gray-500">Tỉnh/TP</label><input type="text" id="cdTinh" class="w-full text-sm"></div>
-        <div><label class="text-xs text-gray-500">Quận/Huyện</label><input type="text" id="cdQuan" class="w-full text-sm"></div>
-        <div><label class="text-xs text-gray-500">Phường/Xã</label><input type="text" id="cdPhuong" class="w-full text-sm"></div>
       </div>
     </div>
 
@@ -861,8 +867,52 @@ async function loadSaleView() {
     </div>`).join('');
 }
 let chotDonId = null;
+let addressProvinces = [];
+let addressDistricts = [];
+let addressWards = [];
+
+// ---- Load danh sách tỉnh ----
+async function loadProvinces(){
+  if(addressProvinces.length) return;
+  try{
+    const r=await fetch(API+'/address/provinces');
+    addressProvinces=await r.json();
+    const dl=document.getElementById('dlTinh');
+    if(dl) dl.innerHTML=addressProvinces.map(p=>`<option value="${esc(p.name)}" data-code="${p.code}">`).join('');
+  }catch(e){}
+}
+
+async function onTinhChange(){
+  const val=document.getElementById('cdTinh').value;
+  const prov=addressProvinces.find(p=>p.name===val);
+  document.getElementById('cdQuan').value='';
+  document.getElementById('cdPhuong').value='';
+  document.getElementById('dlQuan').innerHTML='';
+  document.getElementById('dlPhuong').innerHTML='';
+  if(!prov) return;
+  try{
+    const r=await fetch(API+'/address/districts/'+prov.code);
+    addressDistricts=await r.json();
+    document.getElementById('dlQuan').innerHTML=addressDistricts.map(d=>`<option value="${esc(d.name)}" data-code="${d.code}">`).join('');
+  }catch(e){}
+}
+
+async function onQuanChange(){
+  const val=document.getElementById('cdQuan').value;
+  const dist=addressDistricts.find(d=>d.name===val);
+  document.getElementById('cdPhuong').value='';
+  document.getElementById('dlPhuong').innerHTML='';
+  if(!dist) return;
+  try{
+    const r=await fetch(API+'/address/wards/'+dist.code);
+    addressWards=await r.json();
+    document.getElementById('dlPhuong').innerHTML=addressWards.map(w=>`<option value="${esc(w.name)}">`).join('');
+  }catch(e){}
+}
+
 function openChotDon(id){
-  const o = saleOrders.find(x=>x.id===id); if(!o) return;
+  const o = saleOrders.find(x=>x.id===id) || whOrders.find(x=>x.id===id) || allOrders.find(x=>x.id===id); 
+  if(!o) return;
   chotDonId = id;
   document.getElementById('cdId').textContent = id;
   document.getElementById('cdTen').value = o.ten_kh||'';
@@ -884,6 +934,7 @@ function openChotDon(id){
   sel.innerHTML = '<option value="">-- Chọn từ danh sách --</option>' +
     allProducts.filter(p=>p.active).map(p=>`<option value="${p.id}" data-gia="${p.gia_ban}" data-ten="${esc(p.ten_sp)}">${esc(p.ten_sp)} — ${fmt(p.gia_ban)}</option>`).join('');
   cdCalc();
+  loadProvinces();
   document.getElementById('chotDonModal').classList.remove('hidden');
 }
 function cdSelectProduct(){
@@ -910,11 +961,17 @@ async function submitChotDon(trangThai){
   const tt = trangThai || 'Đã chốt';
   const gia = parseInt(document.getElementById('cdDonGia').value)||0;
   const sl = parseInt(document.getElementById('cdSoLuong').value)||1;
+  const diaChi = document.getElementById('cdDiaChi').value;
+  const tinh = document.getElementById('cdTinh').value;
+  const quan = document.getElementById('cdQuan').value;
+  const phuong = document.getElementById('cdPhuong').value;
+  const diaChiFull = [diaChi, phuong, quan, tinh].filter(Boolean).join(', ');
+
   const body = {
     trang_thai: tt,
     ten_kh: document.getElementById('cdTen').value,
     sdt: document.getElementById('cdSdt').value,
-    dia_chi_full: document.getElementById('cdDiaChiFull').value,
+    dia_chi_full: diaChiFull,
     san_pham: document.getElementById('cdSanPham').value,
     gia_ban: gia,
     so_luong: sl,
@@ -1027,6 +1084,7 @@ async function loadWhView() {
               <button onclick="whPushSingle(${o.id},'ghtk')" class="bg-green-100 text-green-700 px-3 py-1 rounded text-xs font-medium hover:bg-green-200">🚚 GHTK</button>
               <button onclick="whPushSingle(${o.id},'vtp')" class="bg-red-100 text-red-700 px-3 py-1 rounded text-xs font-medium hover:bg-red-200">🚚 VTP</button>
               <button onclick="whPrintOne(${o.id})" class="bg-gray-100 text-gray-700 px-3 py-1 rounded text-xs font-medium hover:bg-gray-200">🖨️ In phiếu</button>
+              <button onclick="openChotDon(${o.id})" class="bg-blue-100 text-blue-700 px-3 py-1 rounded text-xs font-medium hover:bg-blue-200">✏️ Sửa đơn</button>
             </div>`}
           ${o.ghi_chu?`<div class="text-xs text-gray-400 mt-1 italic">📝 ${esc(o.ghi_chu)}</div>`:''}
         </div>
