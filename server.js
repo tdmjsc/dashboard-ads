@@ -386,20 +386,27 @@ app.get('/logout', (req, res) => req.session.destroy(() => res.redirect('/login'
   }
 })();
 
-// ---- GẮN MODULE OMS (DB riêng, an toàn) ----
-try {
-  const { mountOMS } = await import('./oms.js');
-  mountOMS(app, { mysql: mysql2, express });
-  console.log('✅ Module OMS đã gắn');
-} catch (e) {
-  console.error('⚠️ OMS module lỗi (app chính vẫn chạy):', e.message);
-}
+// ---- GẮN MODULE OMS (DB riêng, an toàn — giống Thailand) ----
+(async () => {
+  try {
+    const [{ mountOMS }, mysqlMod] = await Promise.all([
+      import('./oms.js'),
+      import('mysql2/promise'),
+    ]);
+    const mysql = mysqlMod.default || mysqlMod;
+    mountOMS(app, { mysql, express });
+    console.log('✅ Module OMS đã gắn');
+  } catch (e) {
+    console.error('⚠️ OMS module lỗi (app chính vẫn chạy):', e.message);
+  }
+})();
 
 // Từ đây trở xuống yêu cầu đăng nhập
 app.use((req, res, next) => {
   // BỎ QUA mọi đường dẫn /thailand — module Thailand TỰ LO auth riêng (webhook + login riêng)
   // (mountThailand chạy async nên route /thailand đăng ký SAU middleware này → phải loại trừ ở đây)
   if (req.path === '/thailand' || req.path.startsWith('/thailand/')) return next();
+  if (req.path === '/oms' || req.path.startsWith('/oms/')) return next();
   if (req.session && req.session.user) return next();
   if (req.path.startsWith('/api/')) return res.status(401).json({ error: 'Chưa đăng nhập' });
   res.redirect('/login');
