@@ -1,0 +1,810 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>OMS Admin — Quản lý đơn hàng</title>
+<script src="https://cdn.tailwindcss.com"></script>
+<style>
+  @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap');
+  body { font-family: 'Inter', sans-serif; background: #f0f2f5; }
+  .stat-card { transition: transform .15s; }
+  .stat-card:hover { transform: translateY(-2px); }
+  .tab-btn.active { background: #2563eb; color: #fff; }
+  .modal-bg { background: rgba(0,0,0,.45); }
+  table th { position: sticky; top: 0; z-index: 2; }
+  .badge { display: inline-block; padding: 2px 10px; border-radius: 9999px; font-size: 12px; font-weight: 500; }
+  .badge-new { background: #dbeafe; color: #1d4ed8; }
+  .badge-confirmed { background: #d1fae5; color: #065f46; }
+  .badge-shipping { background: #fef3c7; color: #92400e; }
+  .badge-success { background: #a7f3d0; color: #047857; }
+  .badge-returned { background: #fecaca; color: #991b1b; }
+  .badge-cancel { background: #e5e7eb; color: #374151; }
+  select, input[type=text], input[type=date], input[type=password], input[type=number], textarea {
+    border: 1px solid #d1d5db; border-radius: 6px; padding: 6px 10px; font-size: 14px; outline: none;
+    transition: border-color .15s;
+  }
+  select:focus, input:focus, textarea:focus { border-color: #2563eb; box-shadow: 0 0 0 3px rgba(37,99,235,.12); }
+  .call-btn { animation: pulse 2s infinite; }
+  @keyframes pulse { 0%,100%{opacity:1} 50%{opacity:.7} }
+  .order-card { transition: box-shadow .15s; }
+  .order-card:hover { box-shadow: 0 4px 20px rgba(0,0,0,.08); }
+  .ship-card { transition: transform .1s; }
+  .ship-card:active { transform: scale(.98); }
+  @media print {
+    body * { visibility: hidden; }
+    #printArea, #printArea * { visibility: visible; }
+    #printArea { position: absolute; left: 0; top: 0; width: 100%; }
+  }
+</style>
+</head>
+<body class="min-h-screen">
+
+<!-- HEADER -->
+<header class="bg-white border-b shadow-sm px-4 py-3 flex items-center justify-between sticky top-0 z-30">
+  <div class="flex items-center gap-3">
+    <div class="w-9 h-9 rounded-lg bg-blue-600 flex items-center justify-center text-white font-bold text-lg">O</div>
+    <h1 class="text-lg font-bold text-gray-800">OMS Admin</h1>
+  </div>
+  <div class="flex items-center gap-3">
+    <span id="userBadge" class="text-sm text-gray-500"></span>
+    <button onclick="logout()" class="text-sm text-red-500 hover:underline">Đăng xuất</button>
+  </div>
+</header>
+
+<!-- TABS — 7 tab -->
+<nav class="bg-white border-b px-4 py-2 flex gap-2 overflow-x-auto">
+  <button class="tab-btn active px-4 py-1.5 rounded-full text-sm font-medium" data-tab="overview">📊 Tổng quan</button>
+  <button class="tab-btn px-4 py-1.5 rounded-full text-sm font-medium bg-gray-100" data-tab="orders">📋 Đơn hàng</button>
+  <button class="tab-btn px-4 py-1.5 rounded-full text-sm font-medium bg-gray-100" data-tab="sale">📞 Sale</button>
+  <button class="tab-btn px-4 py-1.5 rounded-full text-sm font-medium bg-gray-100" data-tab="marketing">📣 Marketing</button>
+  <button class="tab-btn px-4 py-1.5 rounded-full text-sm font-medium bg-gray-100" data-tab="warehouse">📦 Kho</button>
+  <button class="tab-btn px-4 py-1.5 rounded-full text-sm font-medium bg-gray-100" data-tab="users">👤 Tài khoản</button>
+  <button class="tab-btn px-4 py-1.5 rounded-full text-sm font-medium bg-gray-100" data-tab="config">⚙️ Cấu hình</button>
+</nav>
+
+<!-- LOGIN MODAL -->
+<div id="loginModal" class="fixed inset-0 modal-bg flex items-center justify-center z-50 hidden">
+  <div class="bg-white rounded-xl shadow-2xl p-8 w-full max-w-sm mx-4">
+    <h2 class="text-xl font-bold mb-6 text-center">Đăng nhập OMS</h2>
+    <input id="loginUser" type="text" placeholder="Username" class="w-full mb-3">
+    <input id="loginPass" type="password" placeholder="Mật khẩu" class="w-full mb-4">
+    <button onclick="doLogin()" class="w-full bg-blue-600 text-white py-2.5 rounded-lg font-medium hover:bg-blue-700">Đăng nhập</button>
+    <p id="loginErr" class="text-red-500 text-sm mt-2 text-center hidden"></p>
+  </div>
+</div>
+
+<!-- ============================================================ -->
+<!-- TAB 1: TỔNG QUAN -->
+<!-- ============================================================ -->
+<div id="tab-overview" class="tab-content p-4 max-w-7xl mx-auto">
+  <div class="flex flex-wrap gap-3 mb-5 items-end">
+    <div><label class="text-xs text-gray-500 block mb-1">Từ ngày</label><input type="date" id="statTu" class="text-sm"></div>
+    <div><label class="text-xs text-gray-500 block mb-1">Đến ngày</label><input type="date" id="statDen" class="text-sm"></div>
+    <button onclick="loadStats()" class="bg-blue-600 text-white px-4 py-1.5 rounded-lg text-sm font-medium hover:bg-blue-700">Xem báo cáo</button>
+  </div>
+  <div id="overviewCards" class="grid grid-cols-2 md:grid-cols-4 gap-4 mb-6"></div>
+  <div class="bg-white rounded-xl p-5 shadow-sm mb-6">
+    <h3 class="font-semibold mb-3 text-gray-700">📈 Đơn hàng 7 ngày gần nhất</h3>
+    <div id="chartDays" class="flex items-end gap-2 h-40"></div>
+  </div>
+  <div class="grid md:grid-cols-2 gap-4">
+    <div class="bg-white rounded-xl p-5 shadow-sm">
+      <h3 class="font-semibold mb-3 text-gray-700">🏆 Hiệu suất Sale</h3>
+      <table class="w-full text-sm"><thead><tr class="bg-gray-50"><th class="p-2 text-left">Tên</th><th class="p-2 text-right">Tổng đơn</th><th class="p-2 text-right">Đã chốt</th><th class="p-2 text-right">Tỷ lệ</th></tr></thead><tbody id="tableSale"></tbody></table>
+    </div>
+    <div class="bg-white rounded-xl p-5 shadow-sm">
+      <h3 class="font-semibold mb-3 text-gray-700">📣 Hiệu suất Marketing</h3>
+      <table class="w-full text-sm"><thead><tr class="bg-gray-50"><th class="p-2 text-left">Tên</th><th class="p-2 text-right">Tổng đơn</th><th class="p-2 text-right">Đã chốt</th></tr></thead><tbody id="tableMkt"></tbody></table>
+    </div>
+  </div>
+</div>
+
+<!-- ============================================================ -->
+<!-- TAB 2: ĐƠN HÀNG (Admin full) -->
+<!-- ============================================================ -->
+<div id="tab-orders" class="tab-content p-4 max-w-7xl mx-auto hidden">
+  <div class="bg-white rounded-xl p-4 shadow-sm mb-4">
+    <div class="flex flex-wrap gap-3 items-end">
+      <div><label class="text-xs text-gray-500 block mb-1">Tìm kiếm</label><input type="text" id="fSearch" placeholder="Tên, SĐT, mã vận đơn..." class="text-sm w-48"></div>
+      <div><label class="text-xs text-gray-500 block mb-1">Trạng thái</label>
+        <select id="fStatus" class="text-sm"><option value="">Tất cả</option>
+        <option>Đơn mới</option><option>Đã chốt</option><option>Đang ship</option>
+        <option>Ship thành công</option><option>Hoàn thành công</option><option>Không mua</option></select></div>
+      <div><label class="text-xs text-gray-500 block mb-1">Từ</label><input type="date" id="fTu" class="text-sm"></div>
+      <div><label class="text-xs text-gray-500 block mb-1">Đến</label><input type="date" id="fDen" class="text-sm"></div>
+      <button onclick="loadOrders()" class="bg-blue-600 text-white px-4 py-1.5 rounded-lg text-sm font-medium">🔍 Lọc</button>
+      <button onclick="openAddOrder()" class="bg-green-600 text-white px-4 py-1.5 rounded-lg text-sm font-medium">+ Thêm đơn</button>
+    </div>
+  </div>
+  <div class="flex gap-2 mb-3 flex-wrap">
+    <button onclick="bulkAssign()" class="bg-purple-600 text-white px-3 py-1 rounded text-sm">👤 Phân Sale</button>
+    <button onclick="bulkPushGHTK()" class="bg-orange-500 text-white px-3 py-1 rounded text-sm">🚚 Đẩy GHTK</button>
+    <button onclick="bulkPushVTP()" class="bg-red-500 text-white px-3 py-1 rounded text-sm">🚚 Đẩy VTP</button>
+    <button onclick="syncShipping()" class="bg-teal-600 text-white px-3 py-1 rounded text-sm">🔄 Đồng bộ VC</button>
+    <span id="selectedCount" class="text-sm text-gray-500 leading-8"></span>
+  </div>
+  <div class="bg-white rounded-xl shadow-sm overflow-x-auto">
+    <table class="w-full text-sm">
+      <thead><tr class="bg-gray-50 text-gray-600">
+        <th class="p-2 w-8"><input type="checkbox" id="chkAll" onchange="toggleAll()"></th>
+        <th class="p-2 text-left">ID</th><th class="p-2 text-left">Thời gian</th><th class="p-2 text-left">Khách hàng</th>
+        <th class="p-2 text-left">SĐT</th><th class="p-2 text-left">Địa chỉ</th><th class="p-2 text-left">SP</th>
+        <th class="p-2 text-right">Tổng tiền</th><th class="p-2 text-left">MKT</th><th class="p-2 text-left">Sale</th>
+        <th class="p-2 text-center">Trạng thái</th><th class="p-2 text-left">Vận đơn</th><th class="p-2 text-center">⚙</th>
+      </tr></thead>
+      <tbody id="orderTable"></tbody>
+    </table>
+  </div>
+  <div id="pagination" class="flex justify-center gap-2 mt-4"></div>
+</div>
+
+<!-- ============================================================ -->
+<!-- TAB 3: SALE VIEW (Admin xem góc nhìn Sale) -->
+<!-- ============================================================ -->
+<div id="tab-sale" class="tab-content p-4 max-w-5xl mx-auto hidden">
+  <div class="flex items-center gap-2 mb-4">
+    <div class="w-8 h-8 rounded-lg bg-emerald-600 flex items-center justify-center text-white font-bold text-sm">S</div>
+    <h2 class="text-lg font-semibold text-gray-800">Góc nhìn Sale — Trực đơn</h2>
+  </div>
+  <!-- Chọn Sale -->
+  <div class="bg-white rounded-xl p-4 shadow-sm mb-4">
+    <div class="flex flex-wrap gap-3 items-center">
+      <div><label class="text-xs text-gray-500 block mb-1">Xem theo Sale</label>
+        <select id="saleFilter" class="text-sm" onchange="loadSaleView()">
+          <option value="">Tất cả Sale</option>
+        </select>
+      </div>
+      <input type="text" id="saleSearch" placeholder="🔍 Tìm tên, SĐT..." class="text-sm flex-1 min-w-[160px]" onkeyup="if(event.key==='Enter')loadSaleView()">
+      <select id="saleStatusFilter" class="text-sm" onchange="loadSaleView()">
+        <option value="">Tất cả TT</option><option value="Đơn mới" selected>Đơn mới</option><option value="Đã chốt">Đã chốt</option><option value="Không mua">Không mua</option>
+      </select>
+      <select id="saleCallFilter" class="text-sm">
+        <option value="">Tất cả</option><option value="uncalled">Chưa ghi chú</option><option value="called">Đã ghi chú</option>
+      </select>
+      <button onclick="loadSaleView()" class="bg-emerald-600 text-white px-4 py-1.5 rounded-lg text-sm font-medium">Lọc</button>
+    </div>
+  </div>
+  <!-- Stats -->
+  <div class="grid grid-cols-3 gap-3 mb-4">
+    <div class="bg-white rounded-xl p-4 shadow-sm text-center border-t-4 border-blue-500">
+      <div class="text-2xl font-bold text-blue-600" id="saleStatNew">0</div><div class="text-xs text-gray-500">Đơn mới</div>
+    </div>
+    <div class="bg-white rounded-xl p-4 shadow-sm text-center border-t-4 border-green-500">
+      <div class="text-2xl font-bold text-green-600" id="saleStatConfirmed">0</div><div class="text-xs text-gray-500">Đã chốt</div>
+    </div>
+    <div class="bg-white rounded-xl p-4 shadow-sm text-center border-t-4 border-gray-400">
+      <div class="text-2xl font-bold text-gray-500" id="saleStatCancel">0</div><div class="text-xs text-gray-500">Không mua</div>
+    </div>
+  </div>
+  <div id="saleOrderList" class="space-y-3"></div>
+</div>
+
+<!-- ============================================================ -->
+<!-- TAB 4: MARKETING VIEW (Admin xem góc nhìn MKT) -->
+<!-- ============================================================ -->
+<div id="tab-marketing" class="tab-content p-4 max-w-4xl mx-auto hidden">
+  <div class="flex items-center gap-2 mb-4">
+    <div class="w-8 h-8 rounded-lg bg-orange-500 flex items-center justify-center text-white font-bold text-sm">M</div>
+    <h2 class="text-lg font-semibold text-gray-800">Góc nhìn Marketing</h2>
+  </div>
+  <!-- Chọn NV MKT -->
+  <div class="bg-white rounded-xl p-4 shadow-sm mb-4">
+    <div class="flex flex-wrap gap-3 items-center">
+      <div><label class="text-xs text-gray-500 block mb-1">Xem theo NV Marketing</label>
+        <select id="mktFilter" class="text-sm" onchange="loadMktView()">
+          <option value="">Tất cả Marketing</option>
+        </select>
+      </div>
+      <div><label class="text-xs text-gray-500 block mb-1">Từ</label><input type="date" id="mktTu" class="text-sm"></div>
+      <div><label class="text-xs text-gray-500 block mb-1">Đến</label><input type="date" id="mktDen" class="text-sm"></div>
+      <button onclick="loadMktView()" class="bg-orange-500 text-white px-4 py-1.5 rounded-lg text-sm font-medium">Lọc</button>
+    </div>
+  </div>
+  <!-- Cards -->
+  <div class="grid grid-cols-2 md:grid-cols-4 gap-3 mb-6" id="mktPerfCards"></div>
+  <!-- Funnel -->
+  <div class="bg-white rounded-xl p-5 shadow-sm mb-6">
+    <h3 class="font-semibold mb-3 text-gray-700">📊 Phễu chuyển đổi</h3>
+    <div id="mktFunnel" class="space-y-2"></div>
+  </div>
+  <!-- Table -->
+  <div class="bg-white rounded-xl shadow-sm overflow-x-auto">
+    <table class="w-full text-sm">
+      <thead><tr class="bg-gray-50 text-gray-600 text-left">
+        <th class="p-3">#</th><th class="p-3">Thời gian</th><th class="p-3">Khách hàng</th>
+        <th class="p-3">SĐT</th><th class="p-3">SP</th><th class="p-3 text-right">Giá trị</th><th class="p-3 text-center">Trạng thái</th>
+      </tr></thead>
+      <tbody id="mktOrderTable"></tbody>
+    </table>
+  </div>
+  <p id="mktOrderCount" class="text-sm text-gray-400 mt-2 text-center"></p>
+</div>
+
+<!-- ============================================================ -->
+<!-- TAB 5: KHO VIEW (Admin xem góc nhìn Kho) -->
+<!-- ============================================================ -->
+<div id="tab-warehouse" class="tab-content p-4 max-w-6xl mx-auto hidden">
+  <div class="flex items-center gap-2 mb-4">
+    <div class="w-8 h-8 rounded-lg bg-amber-600 flex items-center justify-center text-white font-bold text-sm">K</div>
+    <h2 class="text-lg font-semibold text-gray-800">Góc nhìn Kho — Đóng gói & Vận chuyển</h2>
+  </div>
+  <div class="grid grid-cols-3 gap-3 mb-5">
+    <div class="bg-white rounded-xl p-4 shadow-sm text-center border-l-4 border-green-500">
+      <div class="text-2xl font-bold text-green-600" id="whStatReady">0</div><div class="text-xs text-gray-500">Chờ đóng gói</div>
+    </div>
+    <div class="bg-white rounded-xl p-4 shadow-sm text-center border-l-4 border-yellow-500">
+      <div class="text-2xl font-bold text-yellow-600" id="whStatShipping">0</div><div class="text-xs text-gray-500">Đang ship</div>
+    </div>
+    <div class="bg-white rounded-xl p-4 shadow-sm text-center border-l-4 border-blue-500">
+      <div class="text-2xl font-bold text-blue-600" id="whStatTotal">0</div><div class="text-xs text-gray-500">Tổng</div>
+    </div>
+  </div>
+  <div class="flex gap-2 mb-4 flex-wrap">
+    <button onclick="whSelectAll()" class="bg-gray-200 px-3 py-1.5 rounded text-sm font-medium">☑️ Chọn tất cả</button>
+    <button onclick="whBulkPush('ghtk')" class="bg-green-600 text-white px-4 py-1.5 rounded text-sm font-medium">🚚 Đẩy GHTK</button>
+    <button onclick="whBulkPush('vtp')" class="bg-red-500 text-white px-4 py-1.5 rounded text-sm font-medium">🚚 Đẩy VTP</button>
+    <button onclick="whPrintSelected()" class="bg-blue-600 text-white px-4 py-1.5 rounded text-sm font-medium">🖨️ In phiếu giao</button>
+    <span id="whSelectedInfo" class="text-sm text-gray-500 leading-8 ml-2"></span>
+  </div>
+  <div id="whOrderGrid" class="grid md:grid-cols-2 gap-3"></div>
+</div>
+
+<!-- ============================================================ -->
+<!-- TAB 6: TÀI KHOẢN -->
+<!-- ============================================================ -->
+<div id="tab-users" class="tab-content p-4 max-w-4xl mx-auto hidden">
+  <div class="flex justify-between items-center mb-4">
+    <h2 class="text-lg font-semibold">Quản lý tài khoản</h2>
+    <button onclick="openAddUser()" class="bg-green-600 text-white px-4 py-1.5 rounded-lg text-sm font-medium">+ Thêm tài khoản</button>
+  </div>
+  <div class="bg-white rounded-xl shadow-sm overflow-x-auto">
+    <table class="w-full text-sm">
+      <thead><tr class="bg-gray-50"><th class="p-3 text-left">Username</th><th class="p-3 text-left">Họ tên</th><th class="p-3 text-left">Quyền</th><th class="p-3 text-center">TT</th><th class="p-3 text-center">⚙</th></tr></thead>
+      <tbody id="userTable"></tbody>
+    </table>
+  </div>
+</div>
+
+<!-- ============================================================ -->
+<!-- TAB 7: CẤU HÌNH API -->
+<!-- ============================================================ -->
+<div id="tab-config" class="tab-content p-4 max-w-3xl mx-auto hidden">
+  <h2 class="text-lg font-semibold mb-4">Cấu hình tích hợp API</h2>
+  <div class="bg-white rounded-xl p-5 shadow-sm mb-4">
+    <h3 class="font-semibold text-green-700 mb-3">🚚 GHTK</h3>
+    <div class="grid gap-3">
+      <div><label class="text-xs text-gray-500">API Token</label><input type="text" id="cfg_ghtk_token" class="w-full text-sm"></div>
+      <div class="grid grid-cols-2 gap-3">
+        <div><label class="text-xs text-gray-500">Tên shop</label><input type="text" id="cfg_ghtk_shop_name" class="w-full text-sm"></div>
+        <div><label class="text-xs text-gray-500">SĐT lấy hàng</label><input type="text" id="cfg_ghtk_pick_tel" class="w-full text-sm"></div>
+      </div>
+      <div><label class="text-xs text-gray-500">Địa chỉ lấy hàng</label><input type="text" id="cfg_ghtk_pick_address" class="w-full text-sm"></div>
+      <div class="grid grid-cols-2 gap-3">
+        <div><label class="text-xs text-gray-500">Tỉnh/TP</label><input type="text" id="cfg_ghtk_pick_province" class="w-full text-sm"></div>
+        <div><label class="text-xs text-gray-500">Quận/Huyện</label><input type="text" id="cfg_ghtk_pick_district" class="w-full text-sm"></div>
+      </div>
+    </div>
+  </div>
+  <div class="bg-white rounded-xl p-5 shadow-sm mb-4">
+    <h3 class="font-semibold text-red-600 mb-3">🚚 Viettel Post</h3>
+    <div class="grid gap-3">
+      <div class="grid grid-cols-2 gap-3">
+        <div><label class="text-xs text-gray-500">Username</label><input type="text" id="cfg_vtp_username" class="w-full text-sm"></div>
+        <div><label class="text-xs text-gray-500">Password</label><input type="password" id="cfg_vtp_password" class="w-full text-sm"></div>
+      </div>
+      <div><label class="text-xs text-gray-500">Tên người gửi</label><input type="text" id="cfg_vtp_sender_name" class="w-full text-sm"></div>
+      <div><label class="text-xs text-gray-500">Địa chỉ người gửi</label><input type="text" id="cfg_vtp_sender_address" class="w-full text-sm"></div>
+      <div><label class="text-xs text-gray-500">SĐT người gửi</label><input type="text" id="cfg_vtp_sender_phone" class="w-full text-sm"></div>
+    </div>
+  </div>
+  <div class="bg-white rounded-xl p-5 shadow-sm mb-4">
+    <h3 class="font-semibold text-blue-700 mb-3">🧾 Misa</h3>
+    <div class="grid gap-3">
+      <div><label class="text-xs text-gray-500">App ID</label><input type="text" id="cfg_misa_app_id" class="w-full text-sm"></div>
+      <div><label class="text-xs text-gray-500">Access Token</label><input type="text" id="cfg_misa_access_token" class="w-full text-sm"></div>
+      <div><label class="text-xs text-gray-500">Mã số thuế</label><input type="text" id="cfg_misa_tax_code" class="w-full text-sm"></div>
+    </div>
+  </div>
+  <div class="bg-white rounded-xl p-5 shadow-sm mb-4">
+    <h3 class="font-semibold text-purple-700 mb-3">📥 Ladipage Webhook</h3>
+    <p class="text-sm text-gray-600 mb-2">URL webhook:</p>
+    <code class="bg-gray-100 px-3 py-2 rounded block text-sm text-blue-700 select-all" id="webhookUrl"></code>
+    <p class="text-xs text-gray-400 mt-2">Map: name, phone, address, product, quantity, price, utm_content (=tên NV MKT)</p>
+  </div>
+  <button onclick="saveConfig()" class="bg-blue-600 text-white px-6 py-2.5 rounded-lg font-medium hover:bg-blue-700 w-full">💾 Lưu cấu hình</button>
+</div>
+
+<!-- ============================================================ -->
+<!-- MODALS -->
+<!-- ============================================================ -->
+<!-- Modal Thêm đơn -->
+<div id="addOrderModal" class="fixed inset-0 modal-bg flex items-center justify-center z-50 hidden">
+  <div class="bg-white rounded-xl shadow-2xl p-6 w-full max-w-lg mx-4 max-h-[90vh] overflow-y-auto">
+    <h2 class="text-lg font-bold mb-4">Thêm đơn hàng mới</h2>
+    <div class="grid gap-3">
+      <div class="grid grid-cols-2 gap-3">
+        <div><label class="text-xs text-gray-500">Tên KH *</label><input type="text" id="addTen" class="w-full text-sm"></div>
+        <div><label class="text-xs text-gray-500">SĐT *</label><input type="text" id="addSdt" class="w-full text-sm"></div>
+      </div>
+      <div><label class="text-xs text-gray-500">Địa chỉ đầy đủ</label><input type="text" id="addDiaChi" class="w-full text-sm" placeholder="123 Nguyễn Huệ, P. Bến Nghé, Q.1, TP HCM"></div>
+      <div class="grid grid-cols-2 gap-3">
+        <div><label class="text-xs text-gray-500">Sản phẩm</label><input type="text" id="addSP" class="w-full text-sm"></div>
+        <div><label class="text-xs text-gray-500">Số lượng</label><input type="number" id="addSL" value="1" class="w-full text-sm"></div>
+      </div>
+      <div class="grid grid-cols-2 gap-3">
+        <div><label class="text-xs text-gray-500">Giá bán (VND)</label><input type="number" id="addGia" class="w-full text-sm"></div>
+        <div><label class="text-xs text-gray-500">NV Marketing</label><input type="text" id="addMkt" class="w-full text-sm"></div>
+      </div>
+      <div><label class="text-xs text-gray-500">Ghi chú</label><textarea id="addNote" class="w-full text-sm" rows="2"></textarea></div>
+    </div>
+    <div class="flex gap-3 mt-5">
+      <button onclick="submitOrder()" class="flex-1 bg-blue-600 text-white py-2 rounded-lg font-medium">Thêm đơn</button>
+      <button onclick="closeModal('addOrderModal')" class="flex-1 bg-gray-200 py-2 rounded-lg font-medium">Hủy</button>
+    </div>
+  </div>
+</div>
+
+<!-- Modal Sửa đơn -->
+<div id="editOrderModal" class="fixed inset-0 modal-bg flex items-center justify-center z-50 hidden">
+  <div class="bg-white rounded-xl shadow-2xl p-6 w-full max-w-lg mx-4 max-h-[90vh] overflow-y-auto">
+    <h2 class="text-lg font-bold mb-4">Sửa đơn #<span id="editId"></span></h2>
+    <div class="grid gap-3">
+      <div class="grid grid-cols-2 gap-3">
+        <div><label class="text-xs text-gray-500">Tên KH</label><input type="text" id="editTen" class="w-full text-sm"></div>
+        <div><label class="text-xs text-gray-500">SĐT</label><input type="text" id="editSdt" class="w-full text-sm"></div>
+      </div>
+      <div><label class="text-xs text-gray-500">Địa chỉ</label><input type="text" id="editDiaChi" class="w-full text-sm"></div>
+      <div class="grid grid-cols-3 gap-3">
+        <div><label class="text-xs text-gray-500">SP</label><input type="text" id="editSP" class="w-full text-sm"></div>
+        <div><label class="text-xs text-gray-500">SL</label><input type="number" id="editSL" class="w-full text-sm"></div>
+        <div><label class="text-xs text-gray-500">Giá</label><input type="number" id="editGia" class="w-full text-sm"></div>
+      </div>
+      <div class="grid grid-cols-2 gap-3">
+        <div><label class="text-xs text-gray-500">Trạng thái</label>
+          <select id="editTT" class="w-full text-sm"><option>Đơn mới</option><option>Đã chốt</option><option>Đang ship</option><option>Ship thành công</option><option>Hoàn thành công</option><option>Không mua</option></select></div>
+        <div><label class="text-xs text-gray-500">Sale</label><input type="text" id="editSale" class="w-full text-sm"></div>
+      </div>
+      <div><label class="text-xs text-gray-500">Ghi chú</label><textarea id="editNote" class="w-full text-sm" rows="2"></textarea></div>
+    </div>
+    <div class="flex gap-3 mt-5">
+      <button onclick="submitEdit()" class="flex-1 bg-blue-600 text-white py-2 rounded-lg font-medium">Lưu</button>
+      <button onclick="closeModal('editOrderModal')" class="flex-1 bg-gray-200 py-2 rounded-lg font-medium">Hủy</button>
+    </div>
+  </div>
+</div>
+
+<!-- Modal Thêm tài khoản -->
+<div id="addUserModal" class="fixed inset-0 modal-bg flex items-center justify-center z-50 hidden">
+  <div class="bg-white rounded-xl shadow-2xl p-6 w-full max-w-sm mx-4">
+    <h2 class="text-lg font-bold mb-4">Thêm tài khoản</h2>
+    <div class="grid gap-3">
+      <div><label class="text-xs text-gray-500">Username *</label><input type="text" id="newUser" class="w-full text-sm"></div>
+      <div><label class="text-xs text-gray-500">Mật khẩu *</label><input type="password" id="newPass" class="w-full text-sm"></div>
+      <div><label class="text-xs text-gray-500">Họ tên</label><input type="text" id="newName" class="w-full text-sm"></div>
+      <div><label class="text-xs text-gray-500">Quyền</label>
+        <select id="newRole" class="w-full text-sm"><option value="sale">Sale</option><option value="marketing">Marketing</option><option value="warehouse">Kho</option><option value="admin">Admin</option></select></div>
+    </div>
+    <div class="flex gap-3 mt-5">
+      <button onclick="submitUser()" class="flex-1 bg-green-600 text-white py-2 rounded-lg font-medium">Tạo</button>
+      <button onclick="closeModal('addUserModal')" class="flex-1 bg-gray-200 py-2 rounded-lg font-medium">Hủy</button>
+    </div>
+  </div>
+</div>
+
+<!-- Print Area -->
+<div id="printArea" class="hidden"></div>
+
+<!-- ============================================================ -->
+<script>
+const API = '/oms/api';
+let currentUser = null;
+let allOrders = [];
+let currentPage = 1;
+let saleOrders = [];
+let whOrders = [];
+
+// ========== AUTH ==========
+async function checkAuth() {
+  try {
+    const r = await fetch(API + '/me');
+    if (r.ok) { currentUser = await r.json(); onLoggedIn(); }
+    else document.getElementById('loginModal').classList.remove('hidden');
+  } catch(e) { document.getElementById('loginModal').classList.remove('hidden'); }
+}
+async function doLogin() {
+  const u = document.getElementById('loginUser').value, p = document.getElementById('loginPass').value;
+  const r = await fetch('/oms/login', { method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({username:u,password:p})});
+  const d = await r.json();
+  if (d.ok) { currentUser = d.user; document.getElementById('loginModal').classList.add('hidden'); onLoggedIn(); }
+  else { document.getElementById('loginErr').textContent = d.error; document.getElementById('loginErr').classList.remove('hidden'); }
+}
+async function logout() { await fetch('/oms/logout',{method:'POST'}); location.reload(); }
+function onLoggedIn() {
+  document.getElementById('userBadge').textContent = '👤 ' + (currentUser.ho_ten||currentUser.username) + ' (admin)';
+  document.getElementById('webhookUrl').textContent = location.origin + '/oms/webhook';
+  loadStats(); loadOrders(); loadUsers(); loadConfig();
+  loadEmployeeLists();
+}
+
+// ========== TABS ==========
+document.querySelectorAll('.tab-btn').forEach(btn => {
+  btn.addEventListener('click', () => {
+    document.querySelectorAll('.tab-btn').forEach(b => { b.classList.remove('active'); b.classList.add('bg-gray-100'); });
+    btn.classList.add('active'); btn.classList.remove('bg-gray-100');
+    document.querySelectorAll('.tab-content').forEach(c => c.classList.add('hidden'));
+    document.getElementById('tab-' + btn.dataset.tab).classList.remove('hidden');
+    // Lazy load dữ liệu khi chuyển tab
+    if (btn.dataset.tab === 'sale') loadSaleView();
+    if (btn.dataset.tab === 'marketing') loadMktView();
+    if (btn.dataset.tab === 'warehouse') loadWhView();
+  });
+});
+
+// ========== Load danh sách NV cho dropdown ==========
+async function loadEmployeeLists() {
+  try {
+    const r = await fetch(API + '/employees');
+    const d = await r.json();
+    const saleSelect = document.getElementById('saleFilter');
+    const mktSelect = document.getElementById('mktFilter');
+    (d.sales||[]).forEach(name => { saleSelect.innerHTML += `<option value="${esc(name)}">${esc(name)}</option>`; });
+    (d.marketings||[]).forEach(name => { mktSelect.innerHTML += `<option value="${esc(name)}">${esc(name)}</option>`; });
+    // Thêm cả nhân viên marketing từ đơn hàng (lỡ chưa có tài khoản)
+    const r2 = await fetch(API + '/orders?limit=500');
+    const d2 = await r2.json();
+    const mktNames = new Set((d.marketings||[]).map(n=>n));
+    (d2.orders||[]).forEach(o => { if (o.nv_marketing && !mktNames.has(o.nv_marketing)) { mktNames.add(o.nv_marketing); mktSelect.innerHTML += `<option value="${esc(o.nv_marketing)}">${esc(o.nv_marketing)}</option>`; }});
+    const saleNames = new Set((d.sales||[]).map(n=>n));
+    (d2.orders||[]).forEach(o => { if (o.sale_phu_trach && !saleNames.has(o.sale_phu_trach)) { saleNames.add(o.sale_phu_trach); saleSelect.innerHTML += `<option value="${esc(o.sale_phu_trach)}">${esc(o.sale_phu_trach)}</option>`; }});
+  } catch(e) {}
+}
+
+// ========== TAB 1: THỐNG KÊ ==========
+async function loadStats() {
+  const tu = document.getElementById('statTu').value, den = document.getElementById('statDen').value;
+  const params = new URLSearchParams(); if(tu) params.set('tu',tu); if(den) params.set('den',den);
+  const r = await fetch(API + '/stats?' + params);
+  const d = await r.json(); const o = d.overview || {};
+  document.getElementById('overviewCards').innerHTML = [
+    {l:'Tổng đơn',v:o.tongDon||0,c:'blue',i:'📦'},{l:'Doanh thu',v:fmt(o.doanhThu||0),c:'green',i:'💰'},
+    {l:'Đơn mới',v:o.donMoi||0,c:'sky',i:'🆕'},{l:'Đã chốt',v:o.daChot||0,c:'emerald',i:'✅'},
+    {l:'Đang ship',v:o.dangShip||0,c:'amber',i:'🚚'},{l:'Ship OK',v:o.shipOK||0,c:'teal',i:'🎉'},
+    {l:'Hoàn hàng',v:o.hoanHang||0,c:'red',i:'↩️'},{l:'Không mua',v:o.khongMua||0,c:'gray',i:'❌'},
+  ].map(c=>`<div class="stat-card bg-white rounded-xl p-4 shadow-sm border-l-4 border-${c.c}-500"><div class="text-xs text-gray-500 mb-1">${c.i} ${c.l}</div><div class="text-xl font-bold text-gray-800">${c.v}</div></div>`).join('');
+
+  document.getElementById('tableSale').innerHTML = (d.bySale||[]).map(s=>`<tr class="border-t"><td class="p-2">${s.ten}</td><td class="p-2 text-right">${s.tongDon}</td><td class="p-2 text-right">${s.daChot}</td><td class="p-2 text-right font-medium">${s.tyLeChot}%</td></tr>`).join('')||'<tr><td colspan="4" class="p-3 text-gray-400 text-center">Chưa có</td></tr>';
+  document.getElementById('tableMkt').innerHTML = (d.byMkt||[]).map(m=>`<tr class="border-t"><td class="p-2">${m.ten}</td><td class="p-2 text-right">${m.tongDon}</td><td class="p-2 text-right">${m.daChot}</td></tr>`).join('')||'<tr><td colspan="3" class="p-3 text-gray-400 text-center">Chưa có</td></tr>';
+
+  const days = d.byDay||[]; const maxDon = Math.max(...days.map(d=>d.soDon),1);
+  document.getElementById('chartDays').innerHTML = days.map(day=>{
+    const h=Math.max(day.soDon/maxDon*100,8);
+    return `<div class="flex-1 flex flex-col items-center justify-end"><div class="text-xs font-medium mb-1">${day.soDon}</div><div class="w-full bg-blue-500 rounded-t" style="height:${h}%"></div><div class="text-xs text-gray-400 mt-1">${day.ngay?.slice(5)}</div></div>`;
+  }).join('')||'<div class="text-gray-400 text-sm w-full text-center">Chưa có</div>';
+}
+
+// ========== TAB 2: ĐƠN HÀNG (Admin full) ==========
+async function loadOrders(page) {
+  currentPage = page||1;
+  const params = new URLSearchParams({page:currentPage,limit:30});
+  const q=document.getElementById('fSearch').value, tt=document.getElementById('fStatus').value;
+  const tu=document.getElementById('fTu').value, den=document.getElementById('fDen').value;
+  if(q)params.set('q',q); if(tt)params.set('trang_thai',tt); if(tu)params.set('tu',tu); if(den)params.set('den',den);
+  const r = await fetch(API+'/orders?'+params); const d = await r.json(); allOrders = d.orders||[];
+
+  document.getElementById('orderTable').innerHTML = allOrders.map(o=>`
+    <tr class="border-t hover:bg-gray-50">
+      <td class="p-2 text-center"><input type="checkbox" class="chkOrder" value="${o.id}"></td>
+      <td class="p-2 font-mono text-xs">${o.id}</td><td class="p-2 text-xs">${fmtDate(o.ngay_ve)}</td>
+      <td class="p-2 font-medium">${esc(o.ten_kh)}</td><td class="p-2">${esc(o.sdt)}</td>
+      <td class="p-2 text-xs max-w-[180px] truncate" title="${esc(o.dia_chi_full)}">${esc(o.dia_chi_full||'')}</td>
+      <td class="p-2 text-xs">${esc(o.san_pham||'')}</td><td class="p-2 text-right font-medium">${fmt(o.tong_tien)}</td>
+      <td class="p-2 text-xs">${esc(o.nv_marketing||'')}</td><td class="p-2 text-xs">${esc(o.sale_phu_trach||'')}</td>
+      <td class="p-2 text-center">${badgeTT(o.trang_thai)}</td><td class="p-2 text-xs font-mono">${esc(o.ma_van_don||'')}</td>
+      <td class="p-2 text-center"><button onclick="openEditOrder(${o.id})" class="text-blue-600 text-xs hover:underline">Sửa</button> <button onclick="deleteOrder(${o.id})" class="text-red-500 text-xs hover:underline">Xóa</button></td>
+    </tr>`).join('')||'<tr><td colspan="13" class="p-6 text-center text-gray-400">Chưa có đơn</td></tr>';
+
+  const tp=Math.ceil((d.total||0)/(d.limit||30)); let pg='';
+  for(let i=1;i<=tp;i++) pg+=`<button onclick="loadOrders(${i})" class="px-3 py-1 rounded text-sm ${i===currentPage?'bg-blue-600 text-white':'bg-white border'}">${i}</button>`;
+  document.getElementById('pagination').innerHTML = pg;
+}
+function toggleAll(){ const c=document.getElementById('chkAll').checked; document.querySelectorAll('.chkOrder').forEach(cb=>cb.checked=c); }
+function getSelectedIds(){ return [...document.querySelectorAll('.chkOrder:checked')].map(cb=>parseInt(cb.value)); }
+
+// ========== TAB 3: SALE VIEW ==========
+async function loadSaleView() {
+  const params = new URLSearchParams({limit:200});
+  const sale = document.getElementById('saleFilter').value;
+  const q = document.getElementById('saleSearch').value;
+  const tt = document.getElementById('saleStatusFilter').value;
+  if(sale) params.set('sale', sale);
+  if(q) params.set('q', q);
+  if(tt) params.set('trang_thai', tt);
+
+  const r = await fetch(API+'/orders?'+params); const d = await r.json();
+  saleOrders = d.orders||[];
+
+  // Bộ lọc gọi điện
+  const cf = document.getElementById('saleCallFilter').value;
+  let filtered = saleOrders;
+  if(cf==='uncalled') filtered = saleOrders.filter(o=>!o.ghi_chu);
+  else if(cf==='called') filtered = saleOrders.filter(o=>o.ghi_chu);
+
+  document.getElementById('saleStatNew').textContent = saleOrders.filter(o=>o.trang_thai==='Đơn mới').length;
+  document.getElementById('saleStatConfirmed').textContent = saleOrders.filter(o=>o.trang_thai==='Đã chốt').length;
+  document.getElementById('saleStatCancel').textContent = saleOrders.filter(o=>o.trang_thai==='Không mua').length;
+
+  if(!filtered.length){ document.getElementById('saleOrderList').innerHTML='<div class="text-center text-gray-400 py-8">Không có đơn nào</div>'; return; }
+
+  document.getElementById('saleOrderList').innerHTML = filtered.map(o=>`
+    <div class="order-card bg-white rounded-xl p-4 shadow-sm border-l-4 ${o.trang_thai==='Đơn mới'?'border-blue-500':o.trang_thai==='Đã chốt'?'border-green-500':'border-gray-300'}">
+      <div class="flex justify-between items-start mb-2">
+        <div>
+          <span class="font-bold text-gray-800">${esc(o.ten_kh)}</span>
+          <a href="tel:${o.sdt}" class="call-btn ml-2 inline-block bg-green-100 text-green-700 px-3 py-0.5 rounded-full text-sm font-medium hover:bg-green-200">📞 ${esc(o.sdt)}</a>
+          ${o.sale_phu_trach ? `<span class="ml-2 text-xs text-purple-600 bg-purple-50 px-2 py-0.5 rounded">👤 ${esc(o.sale_phu_trach)}</span>` : ''}
+        </div>
+        <span class="badge ${o.trang_thai==='Đơn mới'?'badge-new':o.trang_thai==='Đã chốt'?'badge-confirmed':'badge-cancel'}">${o.trang_thai}</span>
+      </div>
+      <div class="text-sm text-gray-600 mb-2">
+        <div>📍 ${esc(o.dia_chi_full||'Chưa có')}</div>
+        <div class="flex gap-4 mt-1">
+          <span>📦 ${esc(o.san_pham||'N/A')}</span><span>💰 ${fmt(o.tong_tien)}</span>
+          <span class="text-gray-400">🕐 ${fmtDate(o.ngay_ve)}</span>
+        </div>
+        ${o.nv_marketing?`<div class="text-xs text-gray-400 mt-1">MKT: ${esc(o.nv_marketing)}</div>`:''}
+      </div>
+      <div class="flex gap-2 items-end mt-3">
+        <textarea id="snote-${o.id}" class="flex-1 text-sm" rows="1" placeholder="Ghi chú cuộc gọi...">${esc(o.ghi_chu||'')}</textarea>
+        <div class="flex gap-1">
+          <button onclick="saleUpdate(${o.id},'Đã chốt')" class="bg-green-600 text-white px-3 py-1.5 rounded text-sm font-medium">✅ Chốt</button>
+          <button onclick="saleUpdate(${o.id},'Không mua')" class="bg-gray-400 text-white px-3 py-1.5 rounded text-sm font-medium">❌</button>
+          <button onclick="saleSaveNote(${o.id})" class="bg-blue-500 text-white px-3 py-1.5 rounded text-sm font-medium">💾</button>
+        </div>
+      </div>
+    </div>`).join('');
+}
+async function saleUpdate(id,tt){
+  const note = document.getElementById('snote-'+id)?.value||'';
+  await fetch(API+'/orders/'+id,{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify({trang_thai:tt,ghi_chu:note})});
+  loadSaleView();
+}
+async function saleSaveNote(id){
+  const note = document.getElementById('snote-'+id)?.value||'';
+  await fetch(API+'/orders/'+id,{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify({ghi_chu:note})});
+  const el = document.getElementById('snote-'+id);
+  if(el){el.style.borderColor='#10b981'; setTimeout(()=>el.style.borderColor='',1000);}
+}
+
+// ========== TAB 4: MARKETING VIEW ==========
+async function loadMktView() {
+  const params = new URLSearchParams({limit:500});
+  const nv = document.getElementById('mktFilter').value;
+  const tu = document.getElementById('mktTu').value;
+  const den = document.getElementById('mktDen').value;
+  if(nv) params.set('nv', nv);
+  if(tu) params.set('tu', tu);
+  if(den) params.set('den', den);
+
+  const r = await fetch(API+'/orders?'+params); const d = await r.json();
+  const orders = d.orders||[];
+
+  const total=orders.length;
+  const confirmed=orders.filter(o=>['Đã chốt','Đang ship','Ship thành công'].includes(o.trang_thai)).length;
+  const revenue=orders.filter(o=>o.trang_thai==='Ship thành công').reduce((s,o)=>s+(o.tong_tien||0),0);
+  const conv=total?Math.round(confirmed/total*100):0;
+
+  document.getElementById('mktPerfCards').innerHTML = [
+    {l:'Tổng đơn về',v:total,i:'📦',c:'orange'},{l:'Đã chốt',v:confirmed,i:'✅',c:'green'},
+    {l:'Tỷ lệ chốt',v:conv+'%',i:'📈',c:'blue'},{l:'Doanh thu ship OK',v:fmt(revenue),i:'💰',c:'emerald'},
+  ].map(c=>`<div class="bg-white rounded-xl p-4 shadow-sm border-t-4 border-${c.c}-500"><div class="text-xs text-gray-500">${c.i} ${c.l}</div><div class="text-xl font-bold mt-1">${c.v}</div></div>`).join('');
+
+  // Funnel
+  const sc={}; orders.forEach(o=>{sc[o.trang_thai]=(sc[o.trang_thai]||0)+1;});
+  const fo=['Đơn mới','Đã chốt','Đang ship','Ship thành công','Hoàn thành công','Không mua'];
+  const mx=Math.max(...Object.values(sc),1);
+  const colors={'Đơn mới':'bg-blue-500','Đã chốt':'bg-green-500','Đang ship':'bg-yellow-500','Ship thành công':'bg-emerald-500','Hoàn thành công':'bg-red-400','Không mua':'bg-gray-400'};
+  document.getElementById('mktFunnel').innerHTML = fo.map(tt=>{
+    const cnt=sc[tt]||0; const pct=Math.round(cnt/mx*100);
+    return `<div class="flex items-center gap-3"><span class="text-xs w-28 text-right text-gray-500">${tt}</span><div class="flex-1 bg-gray-100 rounded-full h-6 relative"><div class="${colors[tt]||'bg-gray-400'} h-6 rounded-full flex items-center justify-end pr-2" style="width:${Math.max(pct,5)}%"><span class="text-xs text-white font-medium">${cnt}</span></div></div></div>`;
+  }).join('');
+
+  document.getElementById('mktOrderTable').innerHTML = orders.map((o,i)=>`
+    <tr class="border-t hover:bg-orange-50/40"><td class="p-3 text-gray-400">${i+1}</td><td class="p-3 text-xs">${fmtDate(o.ngay_ve)}</td>
+    <td class="p-3 font-medium">${esc(o.ten_kh)}</td><td class="p-3">${esc(o.sdt)}</td><td class="p-3 text-xs">${esc(o.san_pham||'')}</td>
+    <td class="p-3 text-right">${fmt(o.tong_tien)}</td><td class="p-3 text-center">${badgeTT(o.trang_thai)}</td></tr>
+  `).join('')||'<tr><td colspan="7" class="p-6 text-center text-gray-400">Chưa có đơn</td></tr>';
+  document.getElementById('mktOrderCount').textContent = `${orders.length} / ${d.total||0} đơn` + (nv ? ` — NV: ${nv}` : ' — Tất cả Marketing');
+}
+
+// ========== TAB 5: KHO VIEW ==========
+async function loadWhView() {
+  const params = new URLSearchParams({limit:200, trang_thai:''});
+  // Kho: lấy đơn Đã chốt + Đang ship
+  const r1 = await fetch(API+'/orders?limit=200&trang_thai=Đã chốt');
+  const r2 = await fetch(API+'/orders?limit=200&trang_thai=Đang ship');
+  const d1 = await r1.json(); const d2 = await r2.json();
+  whOrders = [...(d1.orders||[]), ...(d2.orders||[])];
+
+  const ready = whOrders.filter(o=>o.trang_thai==='Đã chốt').length;
+  const shipping = whOrders.filter(o=>o.trang_thai==='Đang ship').length;
+  document.getElementById('whStatReady').textContent = ready;
+  document.getElementById('whStatShipping').textContent = shipping;
+  document.getElementById('whStatTotal').textContent = whOrders.length;
+
+  if(!whOrders.length){ document.getElementById('whOrderGrid').innerHTML='<div class="col-span-2 text-center text-gray-400 py-8">Không có đơn cần đóng gói</div>'; return; }
+
+  document.getElementById('whOrderGrid').innerHTML = whOrders.map(o=>`
+    <div class="ship-card bg-white rounded-xl p-4 shadow-sm border ${o.trang_thai==='Đã chốt'?'border-green-200':'border-yellow-200'}">
+      <div class="flex items-start gap-3">
+        <input type="checkbox" class="whChk mt-1" value="${o.id}" ${o.ma_van_don?'disabled':''}>
+        <div class="flex-1">
+          <div class="flex justify-between items-start">
+            <div><span class="font-bold text-gray-800">#${o.id}</span>
+            <span class="badge ${o.trang_thai==='Đã chốt'?'badge-confirmed':'badge-shipping'} ml-2">${o.trang_thai}</span></div>
+            <span class="text-xs text-gray-400">${fmtDate(o.ngay_ve)}</span>
+          </div>
+          <div class="mt-2 space-y-1 text-sm">
+            <div class="font-medium">👤 ${esc(o.ten_kh)} — 📞 ${esc(o.sdt)}</div>
+            <div class="text-gray-600">📍 ${esc(o.dia_chi_full||'')}</div>
+            <div class="flex gap-4"><span>📦 ${esc(o.san_pham||'SP')} × ${o.so_luong||1}</span><span class="font-medium">💰 ${fmt(o.tong_tien)} COD</span></div>
+            ${o.tinh?`<div class="text-xs text-gray-400">🏘️ ${[o.phuong,o.quan,o.tinh].filter(Boolean).join(', ')}</div>`:''}
+          </div>
+          ${o.ma_van_don?`
+            <div class="mt-2 bg-blue-50 rounded px-3 py-2 flex items-center gap-2">
+              <span class="text-xs font-medium text-blue-700">Mã vận đơn:</span>
+              <code class="text-sm font-mono text-blue-900 select-all">${esc(o.ma_van_don)}</code>
+              <span class="badge badge-shipping ml-auto">${esc(o.don_vi_vc)}</span>
+            </div>`:`
+            <div class="mt-2 flex gap-2">
+              <button onclick="whPushSingle(${o.id},'ghtk')" class="bg-green-100 text-green-700 px-3 py-1 rounded text-xs font-medium hover:bg-green-200">🚚 GHTK</button>
+              <button onclick="whPushSingle(${o.id},'vtp')" class="bg-red-100 text-red-700 px-3 py-1 rounded text-xs font-medium hover:bg-red-200">🚚 VTP</button>
+              <button onclick="whPrintOne(${o.id})" class="bg-gray-100 text-gray-700 px-3 py-1 rounded text-xs font-medium hover:bg-gray-200">🖨️ In phiếu</button>
+            </div>`}
+          ${o.ghi_chu?`<div class="text-xs text-gray-400 mt-1 italic">📝 ${esc(o.ghi_chu)}</div>`:''}
+        </div>
+      </div>
+    </div>`).join('');
+}
+
+function whSelectAll(){
+  const boxes=document.querySelectorAll('.whChk:not(:disabled)'); const all=[...boxes].every(b=>b.checked);
+  boxes.forEach(b=>b.checked=!all);
+  document.getElementById('whSelectedInfo').textContent=[...document.querySelectorAll('.whChk:checked')].length+' đơn đã chọn';
+}
+function getWhSelectedIds(){ return [...document.querySelectorAll('.whChk:checked')].map(cb=>parseInt(cb.value)); }
+
+async function whBulkPush(carrier){
+  const ids=getWhSelectedIds(); if(!ids.length) return alert('Chọn đơn trước');
+  const name=carrier==='ghtk'?'GHTK':'Viettel Post';
+  if(!confirm(`Đẩy ${ids.length} đơn sang ${name}?`)) return;
+  const ep=carrier==='ghtk'?'/push-ghtk':'/push-vtp';
+  const r=await fetch(API+ep,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({ids})});
+  const d=await r.json(); const ok=(d.results||[]).filter(x=>x.ok).length;
+  const fail=(d.results||[]).filter(x=>!x.ok);
+  alert(`✅ ${ok}/${ids.length}`+(fail.length?'\n❌:\n'+fail.map(f=>`#${f.id}: ${f.error}`).join('\n'):''));
+  loadWhView();
+}
+async function whPushSingle(id,carrier){
+  const name=carrier==='ghtk'?'GHTK':'VTP';
+  if(!confirm(`Đẩy đơn #${id} sang ${name}?`)) return;
+  const ep=carrier==='ghtk'?'/push-ghtk':'/push-vtp';
+  const r=await fetch(API+ep,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({ids:[id]})});
+  const d=await r.json(); const res=d.results?.[0];
+  if(res?.ok) alert('✅ Mã vận đơn: '+(res.label||'')); else alert('❌ '+( res?.error||'Lỗi'));
+  loadWhView();
+}
+function whPrintOne(id){ const o=whOrders.find(x=>x.id===id); if(o) printShipLabel([o]); }
+function whPrintSelected(){ const ids=getWhSelectedIds(); if(!ids.length) return alert('Chọn đơn'); printShipLabel(whOrders.filter(o=>ids.includes(o.id))); }
+
+// ========== THÊM / SỬA / XÓA ĐƠN ==========
+function openAddOrder(){ document.getElementById('addOrderModal').classList.remove('hidden'); }
+function closeModal(id){ document.getElementById(id).classList.add('hidden'); }
+async function submitOrder(){
+  const body={ten_kh:document.getElementById('addTen').value,sdt:document.getElementById('addSdt').value,
+    dia_chi_full:document.getElementById('addDiaChi').value,san_pham:document.getElementById('addSP').value,
+    so_luong:parseInt(document.getElementById('addSL').value)||1,gia_ban:parseInt(document.getElementById('addGia').value)||0,
+    nv_marketing:document.getElementById('addMkt').value,ghi_chu:document.getElementById('addNote').value};
+  const r=await fetch(API+'/orders',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});
+  const d=await r.json();
+  if(d.ok){closeModal('addOrderModal');loadOrders();alert('✅ Đã thêm #'+d.id);} else alert('❌ '+d.error);
+}
+function openEditOrder(id){
+  const o=allOrders.find(x=>x.id===id); if(!o) return;
+  document.getElementById('editId').textContent=id;
+  document.getElementById('editTen').value=o.ten_kh||''; document.getElementById('editSdt').value=o.sdt||'';
+  document.getElementById('editDiaChi').value=o.dia_chi_full||''; document.getElementById('editSP').value=o.san_pham||'';
+  document.getElementById('editSL').value=o.so_luong||1; document.getElementById('editGia').value=o.gia_ban||0;
+  document.getElementById('editTT').value=o.trang_thai||'Đơn mới'; document.getElementById('editSale').value=o.sale_phu_trach||'';
+  document.getElementById('editNote').value=o.ghi_chu||'';
+  document.getElementById('editOrderModal').classList.remove('hidden');
+}
+async function submitEdit(){
+  const id=document.getElementById('editId').textContent;
+  const body={ten_kh:document.getElementById('editTen').value,sdt:document.getElementById('editSdt').value,
+    dia_chi_full:document.getElementById('editDiaChi').value,san_pham:document.getElementById('editSP').value,
+    so_luong:parseInt(document.getElementById('editSL').value)||1,gia_ban:parseInt(document.getElementById('editGia').value)||0,
+    tong_tien:(parseInt(document.getElementById('editGia').value)||0)*(parseInt(document.getElementById('editSL').value)||1),
+    trang_thai:document.getElementById('editTT').value,sale_phu_trach:document.getElementById('editSale').value,
+    ghi_chu:document.getElementById('editNote').value};
+  const r=await fetch(API+'/orders/'+id,{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});
+  if((await r.json()).ok){closeModal('editOrderModal');loadOrders(currentPage);} else alert('❌ Lỗi');
+}
+async function deleteOrder(id){ if(!confirm('Xóa đơn #'+id+'?')) return; await fetch(API+'/orders/'+id,{method:'DELETE'}); loadOrders(currentPage); }
+
+// ========== BULK (Tab đơn hàng) ==========
+async function bulkAssign(){ const ids=getSelectedIds(); if(!ids.length) return alert('Chọn đơn'); const s=prompt('Tên Sale:'); if(!s)return; await fetch(API+'/assign-sale',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({ids,sale:s})}); loadOrders(currentPage); }
+async function bulkPushGHTK(){ const ids=getSelectedIds(); if(!ids.length) return alert('Chọn đơn'); if(!confirm(`Đẩy ${ids.length} đơn GHTK?`))return; const r=await fetch(API+'/push-ghtk',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({ids})}); const d=await r.json(); alert(`✅ ${(d.results||[]).filter(x=>x.ok).length}/${ids.length}`); loadOrders(currentPage); }
+async function bulkPushVTP(){ const ids=getSelectedIds(); if(!ids.length) return alert('Chọn đơn'); if(!confirm(`Đẩy ${ids.length} đơn VTP?`))return; const r=await fetch(API+'/push-vtp',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({ids})}); const d=await r.json(); alert(`✅ ${(d.results||[]).filter(x=>x.ok).length}/${ids.length}`); loadOrders(currentPage); }
+async function syncShipping(){ if(!confirm('Đồng bộ vận chuyển?'))return; const r=await fetch(API+'/sync-shipping',{method:'POST'}); alert((await r.json()).message||'Xong'); loadOrders(currentPage); }
+
+// ========== TÀI KHOẢN ==========
+async function loadUsers(){
+  const r=await fetch(API+'/users'); if(!r.ok)return; const users=await r.json();
+  const rl={admin:'Admin',sale:'Sale',marketing:'Marketing',warehouse:'Kho'};
+  document.getElementById('userTable').innerHTML=users.map(u=>`
+    <tr class="border-t"><td class="p-3 font-mono">${esc(u.username)}</td><td class="p-3">${esc(u.ho_ten)}</td>
+    <td class="p-3"><span class="badge ${u.role==='admin'?'badge-returned':'badge-confirmed'}">${rl[u.role]||u.role}</span></td>
+    <td class="p-3 text-center">${u.active?'✅':'❌'}</td>
+    <td class="p-3 text-center"><button onclick="toggleUser(${u.id},${u.active?0:1})" class="text-xs ${u.active?'text-red-500':'text-green-600'} hover:underline">${u.active?'Vô hiệu':'Kích hoạt'}</button></td></tr>`).join('');
+}
+function openAddUser(){ document.getElementById('addUserModal').classList.remove('hidden'); }
+async function submitUser(){
+  const body={username:document.getElementById('newUser').value,password:document.getElementById('newPass').value,ho_ten:document.getElementById('newName').value,role:document.getElementById('newRole').value};
+  const r=await fetch(API+'/users',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});
+  if((await r.json()).ok){closeModal('addUserModal');loadUsers();} else alert('Lỗi');
+}
+async function toggleUser(id,active){ await fetch(API+'/users/'+id,{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify({active})}); loadUsers(); }
+
+// ========== CẤU HÌNH ==========
+async function loadConfig(){
+  const r=await fetch(API+'/config'); if(!r.ok)return; const cfg=await r.json();
+  ['ghtk_token','ghtk_shop_name','ghtk_pick_tel','ghtk_pick_address','ghtk_pick_province','ghtk_pick_district',
+   'vtp_username','vtp_password','vtp_sender_name','vtp_sender_address','vtp_sender_phone',
+   'misa_app_id','misa_access_token','misa_tax_code'].forEach(f=>{const el=document.getElementById('cfg_'+f);if(el&&cfg[f])el.value=cfg[f];});
+}
+async function saveConfig(){
+  const body={};
+  ['ghtk_token','ghtk_shop_name','ghtk_pick_tel','ghtk_pick_address','ghtk_pick_province','ghtk_pick_district',
+   'vtp_username','vtp_password','vtp_sender_name','vtp_sender_address','vtp_sender_phone',
+   'misa_app_id','misa_access_token','misa_tax_code'].forEach(f=>{const el=document.getElementById('cfg_'+f);if(el)body[f]=el.value;});
+  const r=await fetch(API+'/config',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});
+  if((await r.json()).ok) alert('✅ Đã lưu');
+}
+
+// ========== IN PHIẾU GIAO ==========
+function printShipLabel(orders){
+  document.getElementById('printArea').innerHTML = orders.map(o=>`
+    <div style="border:2px solid #000;padding:20px;margin:10px 0;page-break-after:always;font-family:Arial,sans-serif;">
+      <div style="text-align:center;font-size:22px;font-weight:bold;border-bottom:2px solid #000;padding-bottom:10px;margin-bottom:15px;">PHIẾU GIAO HÀNG #${o.id}</div>
+      <table style="width:100%;font-size:16px;border-collapse:collapse;">
+        <tr><td style="padding:8px 0;font-weight:bold;width:140px;">Người nhận:</td><td>${esc(o.ten_kh)}</td></tr>
+        <tr><td style="padding:8px 0;font-weight:bold;">Điện thoại:</td><td style="font-size:20px;font-weight:bold;">${esc(o.sdt)}</td></tr>
+        <tr><td style="padding:8px 0;font-weight:bold;vertical-align:top;">Địa chỉ:</td><td>${esc(o.dia_chi_full||'')}</td></tr>
+        <tr><td colspan="2" style="border-top:1px dashed #999;padding-top:10px;"></td></tr>
+        <tr><td style="padding:8px 0;font-weight:bold;">Sản phẩm:</td><td>${esc(o.san_pham||'SP')} × ${o.so_luong||1}</td></tr>
+        <tr><td style="padding:8px 0;font-weight:bold;">Thu COD:</td><td style="font-size:20px;font-weight:bold;color:#d00;">${fmt(o.tong_tien)}</td></tr>
+        ${o.ma_van_don?`<tr><td style="padding:8px 0;font-weight:bold;">Mã vận đơn:</td><td style="font-family:monospace;font-size:18px;">${esc(o.ma_van_don)}</td></tr>`:''}
+        ${o.ghi_chu?`<tr><td style="padding:8px 0;font-weight:bold;">Ghi chú:</td><td>${esc(o.ghi_chu)}</td></tr>`:''}
+      </table>
+      <div style="text-align:right;margin-top:15px;font-size:12px;color:#888;">In lúc: ${new Date().toLocaleString('vi-VN')}</div>
+    </div>`).join('');
+  document.getElementById('printArea').classList.remove('hidden');
+  window.print();
+  setTimeout(()=>document.getElementById('printArea').classList.add('hidden'),1000);
+}
+
+// ========== HELPERS ==========
+function fmt(n){return Number(n||0).toLocaleString('vi-VN')+'đ';}
+function fmtDate(d){if(!d)return'';return new Date(d).toLocaleString('vi-VN',{day:'2-digit',month:'2-digit',year:'numeric',hour:'2-digit',minute:'2-digit'});}
+function esc(s){const d=document.createElement('div');d.textContent=s||'';return d.innerHTML;}
+function badgeTT(tt){
+  const cls={'Đơn mới':'badge-new','Đã chốt':'badge-confirmed','Đang ship':'badge-shipping','Ship thành công':'badge-success','Hoàn thành công':'badge-returned','Không mua':'badge-cancel'};
+  return `<span class="badge ${cls[tt]||'badge-cancel'}">${tt||''}</span>`;
+}
+
+// ========== INIT ==========
+checkAuth();
+</script>
+</body>
+</html>

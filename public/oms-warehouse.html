@@ -1,0 +1,256 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>OMS Kho — Đóng gói & Vận chuyển</title>
+<script src="https://cdn.tailwindcss.com"></script>
+<style>
+  @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap');
+  body { font-family: 'Inter', sans-serif; background: #f4f5f7; }
+  .badge { display:inline-block; padding:2px 10px; border-radius:9999px; font-size:12px; font-weight:500; }
+  .badge-confirmed { background:#d1fae5; color:#065f46; }
+  .badge-shipping { background:#fef3c7; color:#92400e; }
+  select, input { border:1px solid #d1d5db; border-radius:6px; padding:6px 10px; font-size:14px; outline:none; }
+  @media print {
+    body * { visibility: hidden; }
+    #printArea, #printArea * { visibility: visible; }
+    #printArea { position: absolute; left: 0; top: 0; width: 100%; }
+  }
+  .ship-card { transition: transform .1s; }
+  .ship-card:active { transform: scale(.98); }
+</style>
+</head>
+<body class="min-h-screen">
+
+<!-- HEADER -->
+<header class="bg-white border-b shadow-sm px-4 py-3 flex items-center justify-between sticky top-0 z-30">
+  <div class="flex items-center gap-3">
+    <div class="w-9 h-9 rounded-lg bg-amber-600 flex items-center justify-center text-white font-bold">K</div>
+    <h1 class="text-lg font-bold text-gray-800">Kho — Đóng gói & Vận chuyển</h1>
+  </div>
+  <div class="flex items-center gap-3">
+    <span id="userBadge" class="text-sm text-gray-500"></span>
+    <button onclick="logout()" class="text-sm text-red-500 hover:underline">Đăng xuất</button>
+  </div>
+</header>
+
+<!-- LOGIN -->
+<div id="loginModal" class="fixed inset-0 bg-black/40 flex items-center justify-center z-50 hidden">
+  <div class="bg-white rounded-xl shadow-2xl p-8 w-full max-w-sm mx-4">
+    <h2 class="text-xl font-bold mb-6 text-center">Đăng nhập</h2>
+    <input id="loginUser" type="text" placeholder="Username" class="w-full mb-3">
+    <input id="loginPass" type="password" placeholder="Mật khẩu" class="w-full mb-4">
+    <button onclick="doLogin()" class="w-full bg-amber-600 text-white py-2.5 rounded-lg font-medium hover:bg-amber-700">Đăng nhập</button>
+    <p id="loginErr" class="text-red-500 text-sm mt-2 text-center hidden"></p>
+  </div>
+</div>
+
+<!-- MAIN -->
+<div class="max-w-6xl mx-auto p-4">
+  <!-- Stats -->
+  <div class="grid grid-cols-3 gap-3 mb-5">
+    <div class="bg-white rounded-xl p-4 shadow-sm text-center border-l-4 border-green-500">
+      <div class="text-2xl font-bold text-green-600" id="statReady">0</div>
+      <div class="text-xs text-gray-500">Chờ đóng gói</div>
+    </div>
+    <div class="bg-white rounded-xl p-4 shadow-sm text-center border-l-4 border-yellow-500">
+      <div class="text-2xl font-bold text-yellow-600" id="statShipping">0</div>
+      <div class="text-xs text-gray-500">Đang ship</div>
+    </div>
+    <div class="bg-white rounded-xl p-4 shadow-sm text-center border-l-4 border-blue-500">
+      <div class="text-2xl font-bold text-blue-600" id="statTotal">0</div>
+      <div class="text-xs text-gray-500">Tổng hiển thị</div>
+    </div>
+  </div>
+
+  <!-- Actions -->
+  <div class="flex gap-2 mb-4 flex-wrap">
+    <button onclick="selectAll()" class="bg-gray-200 px-3 py-1.5 rounded text-sm font-medium">☑️ Chọn tất cả</button>
+    <button onclick="bulkPush('ghtk')" class="bg-green-600 text-white px-4 py-1.5 rounded text-sm font-medium">🚚 Đẩy GHTK</button>
+    <button onclick="bulkPush('vtp')" class="bg-red-500 text-white px-4 py-1.5 rounded text-sm font-medium">🚚 Đẩy Viettel Post</button>
+    <button onclick="printSelected()" class="bg-blue-600 text-white px-4 py-1.5 rounded text-sm font-medium">🖨️ In phiếu giao</button>
+    <span id="selectedInfo" class="text-sm text-gray-500 leading-8 ml-2"></span>
+  </div>
+
+  <!-- Order Cards -->
+  <div id="orderGrid" class="grid md:grid-cols-2 gap-3"></div>
+</div>
+
+<!-- PRINT AREA (ẩn, chỉ hiện khi in) -->
+<div id="printArea" class="hidden"></div>
+
+<script>
+const API = '/oms/api';
+let currentUser = null;
+let allOrders = [];
+
+async function checkAuth() {
+  try {
+    const r = await fetch(API + '/me');
+    if (r.ok) { currentUser = await r.json(); onLoggedIn(); }
+    else document.getElementById('loginModal').classList.remove('hidden');
+  } catch(e) { document.getElementById('loginModal').classList.remove('hidden'); }
+}
+
+async function doLogin() {
+  const r = await fetch('/oms/login', { method:'POST', headers:{'Content-Type':'application/json'},
+    body:JSON.stringify({username: document.getElementById('loginUser').value, password: document.getElementById('loginPass').value})});
+  const d = await r.json();
+  if (d.ok) { currentUser = d.user; document.getElementById('loginModal').classList.add('hidden'); onLoggedIn(); }
+  else { document.getElementById('loginErr').textContent = d.error; document.getElementById('loginErr').classList.remove('hidden'); }
+}
+
+async function logout() { await fetch('/oms/logout',{method:'POST'}); location.reload(); }
+
+function onLoggedIn() {
+  document.getElementById('userBadge').textContent = '👤 ' + (currentUser.ho_ten || currentUser.username);
+  loadOrders();
+}
+
+async function loadOrders() {
+  const r = await fetch(API + '/orders?limit=200');
+  const d = await r.json();
+  allOrders = d.orders || [];
+
+  const ready = allOrders.filter(o => o.trang_thai === 'Đã chốt').length;
+  const shipping = allOrders.filter(o => o.trang_thai === 'Đang ship').length;
+  document.getElementById('statReady').textContent = ready;
+  document.getElementById('statShipping').textContent = shipping;
+  document.getElementById('statTotal').textContent = allOrders.length;
+
+  if (!allOrders.length) {
+    document.getElementById('orderGrid').innerHTML = '<div class="col-span-2 text-center text-gray-400 py-10">Không có đơn nào cần đóng gói</div>';
+    return;
+  }
+
+  document.getElementById('orderGrid').innerHTML = allOrders.map(o => `
+    <div class="ship-card bg-white rounded-xl p-4 shadow-sm border ${o.trang_thai==='Đã chốt'?'border-green-200':'border-yellow-200'}">
+      <div class="flex items-start gap-3">
+        <input type="checkbox" class="chkOrder mt-1" value="${o.id}" ${o.ma_van_don?'disabled':''}>
+        <div class="flex-1">
+          <div class="flex justify-between items-start">
+            <div>
+              <span class="font-bold text-gray-800">#${o.id}</span>
+              <span class="badge ${o.trang_thai==='Đã chốt'?'badge-confirmed':'badge-shipping'} ml-2">${o.trang_thai}</span>
+            </div>
+            <span class="text-xs text-gray-400">${fmtDate(o.ngay_ve)}</span>
+          </div>
+
+          <div class="mt-2 space-y-1 text-sm">
+            <div class="font-medium">👤 ${esc(o.ten_kh)} — 📞 ${esc(o.sdt)}</div>
+            <div class="text-gray-600">📍 ${esc(o.dia_chi_full||'')}</div>
+            <div class="flex gap-4">
+              <span>📦 ${esc(o.san_pham||'SP')} × ${o.so_luong||1}</span>
+              <span class="font-medium">💰 ${fmt(o.tong_tien)} COD</span>
+            </div>
+            ${o.tinh ? `<div class="text-xs text-gray-400">🏘️ ${[o.phuong,o.quan,o.tinh].filter(Boolean).join(', ')}</div>` : ''}
+          </div>
+
+          ${o.ma_van_don ? `
+            <div class="mt-2 bg-blue-50 rounded px-3 py-2 flex items-center gap-2">
+              <span class="text-xs font-medium text-blue-700">Mã vận đơn:</span>
+              <code class="text-sm font-mono text-blue-900 select-all">${esc(o.ma_van_don)}</code>
+              <span class="badge badge-shipping ml-auto">${esc(o.don_vi_vc)}</span>
+            </div>
+          ` : `
+            <div class="mt-2 flex gap-2">
+              <button onclick="pushSingle(${o.id},'ghtk')" class="bg-green-100 text-green-700 px-3 py-1 rounded text-xs font-medium hover:bg-green-200">🚚 GHTK</button>
+              <button onclick="pushSingle(${o.id},'vtp')" class="bg-red-100 text-red-700 px-3 py-1 rounded text-xs font-medium hover:bg-red-200">🚚 VTP</button>
+              <button onclick="printOne(${o.id})" class="bg-gray-100 text-gray-700 px-3 py-1 rounded text-xs font-medium hover:bg-gray-200">🖨️ In phiếu</button>
+            </div>
+          `}
+
+          ${o.ghi_chu ? `<div class="text-xs text-gray-400 mt-1 italic">📝 ${esc(o.ghi_chu)}</div>` : ''}
+        </div>
+      </div>
+    </div>
+  `).join('');
+}
+
+function selectAll() {
+  const boxes = document.querySelectorAll('.chkOrder:not(:disabled)');
+  const allChecked = [...boxes].every(b => b.checked);
+  boxes.forEach(b => b.checked = !allChecked);
+  const n = [...document.querySelectorAll('.chkOrder:checked')].length;
+  document.getElementById('selectedInfo').textContent = n ? `Đã chọn ${n} đơn` : '';
+}
+
+function getSelectedIds() {
+  return [...document.querySelectorAll('.chkOrder:checked')].map(cb => parseInt(cb.value));
+}
+
+async function bulkPush(carrier) {
+  const ids = getSelectedIds();
+  if (!ids.length) return alert('Chọn đơn trước');
+  const name = carrier === 'ghtk' ? 'GHTK' : 'Viettel Post';
+  if (!confirm(`Đẩy ${ids.length} đơn sang ${name}?`)) return;
+
+  const endpoint = carrier === 'ghtk' ? '/push-ghtk' : '/push-vtp';
+  const r = await fetch(API + endpoint, { method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({ids})});
+  const d = await r.json();
+  const ok = (d.results||[]).filter(x => x.ok).length;
+  const fail = (d.results||[]).filter(x => !x.ok);
+  alert(`✅ Thành công: ${ok}/${ids.length}` + (fail.length ? '\n❌ Lỗi:\n' + fail.map(f => `#${f.id}: ${f.error}`).join('\n') : ''));
+  loadOrders();
+}
+
+async function pushSingle(id, carrier) {
+  const name = carrier === 'ghtk' ? 'GHTK' : 'Viettel Post';
+  if (!confirm(`Đẩy đơn #${id} sang ${name}?`)) return;
+  const endpoint = carrier === 'ghtk' ? '/push-ghtk' : '/push-vtp';
+  const r = await fetch(API + endpoint, { method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({ids:[id]})});
+  const d = await r.json();
+  const result = d.results?.[0];
+  if (result?.ok) alert('✅ Đã đẩy! Mã vận đơn: ' + (result.label||''));
+  else alert('❌ Lỗi: ' + (result?.error||'Không rõ'));
+  loadOrders();
+}
+
+function printOne(id) {
+  const o = allOrders.find(x => x.id === id);
+  if (!o) return;
+  printShipLabel([o]);
+}
+
+function printSelected() {
+  const ids = getSelectedIds();
+  if (!ids.length) return alert('Chọn đơn trước');
+  const orders = allOrders.filter(o => ids.includes(o.id));
+  printShipLabel(orders);
+}
+
+function printShipLabel(orders) {
+  const html = orders.map(o => `
+    <div style="border:2px solid #000; padding:20px; margin:10px 0; page-break-after:always; font-family:Arial,sans-serif;">
+      <div style="text-align:center; font-size:22px; font-weight:bold; border-bottom:2px solid #000; padding-bottom:10px; margin-bottom:15px;">
+        PHIẾU GIAO HÀNG #${o.id}
+      </div>
+      <table style="width:100%; font-size:16px; border-collapse:collapse;">
+        <tr><td style="padding:8px 0; font-weight:bold; width:140px;">Người nhận:</td><td>${esc(o.ten_kh)}</td></tr>
+        <tr><td style="padding:8px 0; font-weight:bold;">Điện thoại:</td><td style="font-size:20px; font-weight:bold;">${esc(o.sdt)}</td></tr>
+        <tr><td style="padding:8px 0; font-weight:bold; vertical-align:top;">Địa chỉ:</td><td>${esc(o.dia_chi_full||'')}</td></tr>
+        <tr><td colspan="2" style="border-top:1px dashed #999; padding-top:10px;"></td></tr>
+        <tr><td style="padding:8px 0; font-weight:bold;">Sản phẩm:</td><td>${esc(o.san_pham||'SP')} × ${o.so_luong||1}</td></tr>
+        <tr><td style="padding:8px 0; font-weight:bold;">Thu COD:</td><td style="font-size:20px; font-weight:bold; color:#d00;">${fmt(o.tong_tien)}</td></tr>
+        ${o.ma_van_don ? `<tr><td style="padding:8px 0; font-weight:bold;">Mã vận đơn:</td><td style="font-family:monospace; font-size:18px;">${esc(o.ma_van_don)}</td></tr>` : ''}
+        ${o.ghi_chu ? `<tr><td style="padding:8px 0; font-weight:bold;">Ghi chú:</td><td>${esc(o.ghi_chu)}</td></tr>` : ''}
+      </table>
+      <div style="text-align:right; margin-top:15px; font-size:12px; color:#888;">In lúc: ${new Date().toLocaleString('vi-VN')}</div>
+    </div>
+  `).join('');
+
+  document.getElementById('printArea').innerHTML = html;
+  document.getElementById('printArea').classList.remove('hidden');
+  window.print();
+  setTimeout(() => document.getElementById('printArea').classList.add('hidden'), 1000);
+}
+
+function fmt(n) { return Number(n||0).toLocaleString('vi-VN') + 'đ'; }
+function fmtDate(d) { if (!d) return ''; return new Date(d).toLocaleString('vi-VN',{day:'2-digit',month:'2-digit',hour:'2-digit',minute:'2-digit'}); }
+function esc(s) { const d=document.createElement('div'); d.textContent=s||''; return d.innerHTML; }
+
+checkAuth();
+</script>
+</body>
+</html>

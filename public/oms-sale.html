@@ -1,0 +1,200 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>OMS Sale — Trực đơn</title>
+<script src="https://cdn.tailwindcss.com"></script>
+<style>
+  @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap');
+  body { font-family: 'Inter', sans-serif; background: #f8f9fb; }
+  .badge { display:inline-block; padding:2px 10px; border-radius:9999px; font-size:12px; font-weight:500; }
+  .badge-new { background:#dbeafe; color:#1d4ed8; }
+  .badge-confirmed { background:#d1fae5; color:#065f46; }
+  .badge-cancel { background:#e5e7eb; color:#374151; }
+  .order-card { transition: box-shadow .15s; }
+  .order-card:hover { box-shadow: 0 4px 20px rgba(0,0,0,.08); }
+  .call-btn { animation: pulse 2s infinite; }
+  @keyframes pulse { 0%,100%{opacity:1} 50%{opacity:.7} }
+  select, input, textarea { border:1px solid #d1d5db; border-radius:6px; padding:6px 10px; font-size:14px; outline:none; }
+  select:focus, input:focus, textarea:focus { border-color:#2563eb; }
+</style>
+</head>
+<body class="min-h-screen">
+
+<!-- HEADER -->
+<header class="bg-white border-b shadow-sm px-4 py-3 flex items-center justify-between sticky top-0 z-30">
+  <div class="flex items-center gap-3">
+    <div class="w-9 h-9 rounded-lg bg-emerald-600 flex items-center justify-center text-white font-bold">S</div>
+    <h1 class="text-lg font-bold text-gray-800">Sale — Trực đơn</h1>
+  </div>
+  <div class="flex items-center gap-3">
+    <span id="userBadge" class="text-sm text-gray-500"></span>
+    <button onclick="logout()" class="text-sm text-red-500 hover:underline">Đăng xuất</button>
+  </div>
+</header>
+
+<!-- LOGIN MODAL -->
+<div id="loginModal" class="fixed inset-0 bg-black/40 flex items-center justify-center z-50 hidden">
+  <div class="bg-white rounded-xl shadow-2xl p-8 w-full max-w-sm mx-4">
+    <h2 class="text-xl font-bold mb-6 text-center">Đăng nhập</h2>
+    <input id="loginUser" type="text" placeholder="Username" class="w-full mb-3">
+    <input id="loginPass" type="password" placeholder="Mật khẩu" class="w-full mb-4">
+    <button onclick="doLogin()" class="w-full bg-emerald-600 text-white py-2.5 rounded-lg font-medium hover:bg-emerald-700">Đăng nhập</button>
+    <p id="loginErr" class="text-red-500 text-sm mt-2 text-center hidden"></p>
+  </div>
+</div>
+
+<!-- FILTERS -->
+<div class="px-4 py-3 bg-white border-b">
+  <div class="flex flex-wrap gap-3 items-center max-w-5xl mx-auto">
+    <input type="text" id="fSearch" placeholder="🔍 Tìm tên, SĐT..." class="text-sm flex-1 min-w-[180px]" onkeyup="if(event.key==='Enter')loadOrders()">
+    <select id="fStatus" class="text-sm" onchange="loadOrders()">
+      <option value="">Tất cả trạng thái</option>
+      <option value="Đơn mới" selected>Đơn mới</option>
+      <option value="Đã chốt">Đã chốt</option>
+      <option value="Không mua">Không mua</option>
+    </select>
+    <select id="fCallFilter" class="text-sm">
+      <option value="">Tất cả</option>
+      <option value="uncalled">Chưa ghi chú (chưa gọi)</option>
+      <option value="called">Đã ghi chú</option>
+    </select>
+    <button onclick="loadOrders()" class="bg-emerald-600 text-white px-4 py-1.5 rounded-lg text-sm font-medium">Lọc</button>
+  </div>
+</div>
+
+<!-- STATS BAR -->
+<div class="px-4 py-3 max-w-5xl mx-auto">
+  <div class="grid grid-cols-3 gap-3 mb-4">
+    <div class="bg-white rounded-xl p-4 shadow-sm text-center border-t-4 border-blue-500">
+      <div class="text-2xl font-bold text-blue-600" id="statNew">0</div>
+      <div class="text-xs text-gray-500">Đơn mới</div>
+    </div>
+    <div class="bg-white rounded-xl p-4 shadow-sm text-center border-t-4 border-green-500">
+      <div class="text-2xl font-bold text-green-600" id="statConfirmed">0</div>
+      <div class="text-xs text-gray-500">Đã chốt</div>
+    </div>
+    <div class="bg-white rounded-xl p-4 shadow-sm text-center border-t-4 border-gray-400">
+      <div class="text-2xl font-bold text-gray-500" id="statCancel">0</div>
+      <div class="text-xs text-gray-500">Không mua</div>
+    </div>
+  </div>
+</div>
+
+<!-- ORDER LIST -->
+<div class="px-4 max-w-5xl mx-auto pb-8" id="orderList">
+  <div class="text-center text-gray-400 py-10">Đang tải...</div>
+</div>
+
+<script>
+const API = '/oms/api';
+let currentUser = null;
+let allOrders = [];
+
+async function checkAuth() {
+  try {
+    const r = await fetch(API + '/me');
+    if (r.ok) { currentUser = await r.json(); onLoggedIn(); }
+    else document.getElementById('loginModal').classList.remove('hidden');
+  } catch(e) { document.getElementById('loginModal').classList.remove('hidden'); }
+}
+
+async function doLogin() {
+  const r = await fetch('/oms/login', { method:'POST', headers:{'Content-Type':'application/json'},
+    body:JSON.stringify({username: document.getElementById('loginUser').value, password: document.getElementById('loginPass').value})});
+  const d = await r.json();
+  if (d.ok) { currentUser = d.user; document.getElementById('loginModal').classList.add('hidden'); onLoggedIn(); }
+  else { document.getElementById('loginErr').textContent = d.error; document.getElementById('loginErr').classList.remove('hidden'); }
+}
+
+async function logout() { await fetch('/oms/logout',{method:'POST'}); location.reload(); }
+
+function onLoggedIn() {
+  document.getElementById('userBadge').textContent = '👤 ' + (currentUser.ho_ten || currentUser.username);
+  loadOrders();
+}
+
+async function loadOrders() {
+  const params = new URLSearchParams({ limit: 100 });
+  const q = document.getElementById('fSearch').value;
+  const tt = document.getElementById('fStatus').value;
+  if (q) params.set('q', q);
+  if (tt) params.set('trang_thai', tt);
+
+  const r = await fetch(API + '/orders?' + params);
+  const d = await r.json();
+  allOrders = d.orders || [];
+
+  // Bộ lọc gọi điện
+  const callFilter = document.getElementById('fCallFilter').value;
+  let filtered = allOrders;
+  if (callFilter === 'uncalled') filtered = allOrders.filter(o => !o.ghi_chu);
+  else if (callFilter === 'called') filtered = allOrders.filter(o => o.ghi_chu);
+
+  // Cập nhật stats
+  document.getElementById('statNew').textContent = allOrders.filter(o => o.trang_thai === 'Đơn mới').length;
+  document.getElementById('statConfirmed').textContent = allOrders.filter(o => o.trang_thai === 'Đã chốt').length;
+  document.getElementById('statCancel').textContent = allOrders.filter(o => o.trang_thai === 'Không mua').length;
+
+  if (!filtered.length) {
+    document.getElementById('orderList').innerHTML = '<div class="text-center text-gray-400 py-10">Không có đơn nào</div>';
+    return;
+  }
+
+  document.getElementById('orderList').innerHTML = filtered.map(o => `
+    <div class="order-card bg-white rounded-xl p-4 shadow-sm mb-3 border-l-4 ${o.trang_thai==='Đơn mới'?'border-blue-500':o.trang_thai==='Đã chốt'?'border-green-500':'border-gray-300'}">
+      <div class="flex justify-between items-start mb-2">
+        <div>
+          <span class="font-bold text-gray-800">${esc(o.ten_kh)}</span>
+          <a href="tel:${o.sdt}" class="call-btn ml-2 inline-block bg-green-100 text-green-700 px-3 py-0.5 rounded-full text-sm font-medium hover:bg-green-200">📞 ${esc(o.sdt)}</a>
+        </div>
+        <span class="badge ${o.trang_thai==='Đơn mới'?'badge-new':o.trang_thai==='Đã chốt'?'badge-confirmed':'badge-cancel'}">${o.trang_thai}</span>
+      </div>
+
+      <div class="text-sm text-gray-600 mb-2">
+        <div>📍 ${esc(o.dia_chi_full||'Chưa có địa chỉ')}</div>
+        <div class="flex gap-4 mt-1">
+          <span>📦 ${esc(o.san_pham||'N/A')}</span>
+          <span>💰 ${fmt(o.tong_tien)}</span>
+          <span class="text-gray-400">🕐 ${fmtDate(o.ngay_ve)}</span>
+        </div>
+        ${o.nv_marketing ? `<div class="text-xs text-gray-400 mt-1">MKT: ${esc(o.nv_marketing)}</div>` : ''}
+      </div>
+
+      <!-- Ghi chú + Hành động -->
+      <div class="flex gap-2 items-end mt-3">
+        <textarea id="note-${o.id}" class="flex-1 text-sm" rows="1" placeholder="Ghi chú cuộc gọi...">${esc(o.ghi_chu||'')}</textarea>
+        <div class="flex gap-1">
+          <button onclick="updateOrder(${o.id},'Đã chốt')" class="bg-green-600 text-white px-3 py-1.5 rounded text-sm font-medium hover:bg-green-700" title="Chốt đơn">✅ Chốt</button>
+          <button onclick="updateOrder(${o.id},'Không mua')" class="bg-gray-400 text-white px-3 py-1.5 rounded text-sm font-medium hover:bg-gray-500" title="Không mua">❌</button>
+          <button onclick="saveNote(${o.id})" class="bg-blue-500 text-white px-3 py-1.5 rounded text-sm font-medium hover:bg-blue-600" title="Lưu ghi chú">💾</button>
+        </div>
+      </div>
+    </div>
+  `).join('');
+}
+
+async function updateOrder(id, trangThai) {
+  const note = document.getElementById('note-' + id)?.value || '';
+  const body = { trang_thai: trangThai, ghi_chu: note };
+  await fetch(API + '/orders/' + id, { method:'PUT', headers:{'Content-Type':'application/json'}, body:JSON.stringify(body)});
+  loadOrders();
+}
+
+async function saveNote(id) {
+  const note = document.getElementById('note-' + id)?.value || '';
+  await fetch(API + '/orders/' + id, { method:'PUT', headers:{'Content-Type':'application/json'}, body:JSON.stringify({ghi_chu: note})});
+  // Visual feedback
+  const el = document.getElementById('note-' + id);
+  if (el) { el.style.borderColor = '#10b981'; setTimeout(()=>el.style.borderColor='', 1000); }
+}
+
+function fmt(n) { return Number(n||0).toLocaleString('vi-VN') + 'đ'; }
+function fmtDate(d) { if (!d) return ''; return new Date(d).toLocaleString('vi-VN',{day:'2-digit',month:'2-digit',hour:'2-digit',minute:'2-digit'}); }
+function esc(s) { const d=document.createElement('div'); d.textContent=s||''; return d.innerHTML; }
+
+checkAuth();
+</script>
+</body>
+</html>

@@ -1,0 +1,185 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>OMS Marketing — Đơn của tôi</title>
+<script src="https://cdn.tailwindcss.com"></script>
+<style>
+  @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap');
+  body { font-family: 'Inter', sans-serif; background: #faf7f5; }
+  .badge { display:inline-block; padding:2px 10px; border-radius:9999px; font-size:12px; font-weight:500; }
+  .badge-new { background:#dbeafe; color:#1d4ed8; }
+  .badge-confirmed { background:#d1fae5; color:#065f46; }
+  .badge-shipping { background:#fef3c7; color:#92400e; }
+  .badge-success { background:#a7f3d0; color:#047857; }
+  .badge-returned { background:#fecaca; color:#991b1b; }
+  .badge-cancel { background:#e5e7eb; color:#374151; }
+  select, input { border:1px solid #d1d5db; border-radius:6px; padding:6px 10px; font-size:14px; outline:none; }
+</style>
+</head>
+<body class="min-h-screen">
+
+<!-- HEADER -->
+<header class="bg-white border-b shadow-sm px-4 py-3 flex items-center justify-between sticky top-0 z-30">
+  <div class="flex items-center gap-3">
+    <div class="w-9 h-9 rounded-lg bg-orange-500 flex items-center justify-center text-white font-bold">M</div>
+    <h1 class="text-lg font-bold text-gray-800">Marketing — Đơn của tôi</h1>
+  </div>
+  <div class="flex items-center gap-3">
+    <span id="userBadge" class="text-sm text-gray-500"></span>
+    <button onclick="logout()" class="text-sm text-red-500 hover:underline">Đăng xuất</button>
+  </div>
+</header>
+
+<!-- LOGIN -->
+<div id="loginModal" class="fixed inset-0 bg-black/40 flex items-center justify-center z-50 hidden">
+  <div class="bg-white rounded-xl shadow-2xl p-8 w-full max-w-sm mx-4">
+    <h2 class="text-xl font-bold mb-6 text-center">Đăng nhập</h2>
+    <input id="loginUser" type="text" placeholder="Username" class="w-full mb-3">
+    <input id="loginPass" type="password" placeholder="Mật khẩu" class="w-full mb-4">
+    <button onclick="doLogin()" class="w-full bg-orange-500 text-white py-2.5 rounded-lg font-medium hover:bg-orange-600">Đăng nhập</button>
+    <p id="loginErr" class="text-red-500 text-sm mt-2 text-center hidden"></p>
+  </div>
+</div>
+
+<!-- MAIN -->
+<div class="max-w-4xl mx-auto p-4">
+  <!-- Performance Cards -->
+  <div class="grid grid-cols-2 md:grid-cols-4 gap-3 mb-6" id="perfCards"></div>
+
+  <!-- Funnel / Conversion -->
+  <div class="bg-white rounded-xl p-5 shadow-sm mb-6">
+    <h3 class="font-semibold mb-3 text-gray-700">📊 Phễu chuyển đổi</h3>
+    <div id="funnel" class="space-y-2"></div>
+  </div>
+
+  <!-- Filter -->
+  <div class="flex gap-3 mb-4 items-end flex-wrap">
+    <div><label class="text-xs text-gray-500 block mb-1">Từ</label><input type="date" id="fTu" class="text-sm"></div>
+    <div><label class="text-xs text-gray-500 block mb-1">Đến</label><input type="date" id="fDen" class="text-sm"></div>
+    <select id="fStatus" class="text-sm">
+      <option value="">Tất cả</option><option>Đơn mới</option><option>Đã chốt</option><option>Đang ship</option>
+      <option>Ship thành công</option><option>Hoàn thành công</option><option>Không mua</option>
+    </select>
+    <button onclick="loadOrders()" class="bg-orange-500 text-white px-4 py-1.5 rounded-lg text-sm font-medium">🔍 Lọc</button>
+  </div>
+
+  <!-- Order Table -->
+  <div class="bg-white rounded-xl shadow-sm overflow-x-auto">
+    <table class="w-full text-sm">
+      <thead><tr class="bg-gray-50 text-gray-600 text-left">
+        <th class="p-3">#</th><th class="p-3">Thời gian</th><th class="p-3">Khách hàng</th>
+        <th class="p-3">SĐT</th><th class="p-3">Sản phẩm</th><th class="p-3 text-right">Giá trị</th><th class="p-3 text-center">Trạng thái</th>
+      </tr></thead>
+      <tbody id="orderTable"></tbody>
+    </table>
+  </div>
+  <p id="orderCount" class="text-sm text-gray-400 mt-2 text-center"></p>
+</div>
+
+<script>
+const API = '/oms/api';
+let currentUser = null;
+
+async function checkAuth() {
+  try {
+    const r = await fetch(API + '/me');
+    if (r.ok) { currentUser = await r.json(); onLoggedIn(); }
+    else document.getElementById('loginModal').classList.remove('hidden');
+  } catch(e) { document.getElementById('loginModal').classList.remove('hidden'); }
+}
+
+async function doLogin() {
+  const r = await fetch('/oms/login', { method:'POST', headers:{'Content-Type':'application/json'},
+    body:JSON.stringify({username: document.getElementById('loginUser').value, password: document.getElementById('loginPass').value})});
+  const d = await r.json();
+  if (d.ok) { currentUser = d.user; document.getElementById('loginModal').classList.add('hidden'); onLoggedIn(); }
+  else { document.getElementById('loginErr').textContent = d.error; document.getElementById('loginErr').classList.remove('hidden'); }
+}
+
+async function logout() { await fetch('/oms/logout',{method:'POST'}); location.reload(); }
+
+function onLoggedIn() {
+  document.getElementById('userBadge').textContent = '👤 ' + (currentUser.ho_ten || currentUser.username);
+  loadOrders();
+}
+
+async function loadOrders() {
+  const params = new URLSearchParams({ limit: 200 });
+  const tu = document.getElementById('fTu').value;
+  const den = document.getElementById('fDen').value;
+  const tt = document.getElementById('fStatus').value;
+  if (tu) params.set('tu', tu);
+  if (den) params.set('den', den);
+  if (tt) params.set('trang_thai', tt);
+
+  const r = await fetch(API + '/orders?' + params);
+  const d = await r.json();
+  const orders = d.orders || [];
+
+  // Performance cards
+  const total = orders.length;
+  const confirmed = orders.filter(o => ['Đã chốt','Đang ship','Ship thành công'].includes(o.trang_thai)).length;
+  const revenue = orders.filter(o => o.trang_thai === 'Ship thành công').reduce((s,o) => s + (o.tong_tien||0), 0);
+  const convRate = total ? Math.round(confirmed/total*100) : 0;
+
+  document.getElementById('perfCards').innerHTML = [
+    { label:'Tổng đơn về', value: total, icon:'📦', color:'orange' },
+    { label:'Đã chốt', value: confirmed, icon:'✅', color:'green' },
+    { label:'Tỷ lệ chốt', value: convRate + '%', icon:'📈', color:'blue' },
+    { label:'Doanh thu', value: fmt(revenue), icon:'💰', color:'emerald' },
+  ].map(c => `<div class="bg-white rounded-xl p-4 shadow-sm border-t-4 border-${c.color}-500">
+    <div class="text-xs text-gray-500">${c.icon} ${c.label}</div>
+    <div class="text-xl font-bold mt-1">${c.value}</div>
+  </div>`).join('');
+
+  // Funnel
+  const statusCounts = {};
+  orders.forEach(o => { statusCounts[o.trang_thai] = (statusCounts[o.trang_thai]||0)+1; });
+  const funnelOrder = ['Đơn mới','Đã chốt','Đang ship','Ship thành công','Hoàn thành công','Không mua'];
+  const maxCount = Math.max(...Object.values(statusCounts), 1);
+  document.getElementById('funnel').innerHTML = funnelOrder.map(tt => {
+    const cnt = statusCounts[tt] || 0;
+    const pct = Math.round(cnt/maxCount*100);
+    const colors = {'Đơn mới':'bg-blue-500','Đã chốt':'bg-green-500','Đang ship':'bg-yellow-500',
+      'Ship thành công':'bg-emerald-500','Hoàn thành công':'bg-red-400','Không mua':'bg-gray-400'};
+    return `<div class="flex items-center gap-3">
+      <span class="text-xs w-28 text-right text-gray-500">${tt}</span>
+      <div class="flex-1 bg-gray-100 rounded-full h-6 relative">
+        <div class="${colors[tt]||'bg-gray-400'} h-6 rounded-full flex items-center justify-end pr-2" style="width:${Math.max(pct,5)}%">
+          <span class="text-xs text-white font-medium">${cnt}</span>
+        </div>
+      </div>
+    </div>`;
+  }).join('');
+
+  // Table
+  document.getElementById('orderTable').innerHTML = orders.map((o,i) => `
+    <tr class="border-t hover:bg-orange-50/40">
+      <td class="p-3 text-gray-400">${i+1}</td>
+      <td class="p-3 text-xs">${fmtDate(o.ngay_ve)}</td>
+      <td class="p-3 font-medium">${esc(o.ten_kh)}</td>
+      <td class="p-3">${esc(o.sdt)}</td>
+      <td class="p-3 text-xs">${esc(o.san_pham||'')}</td>
+      <td class="p-3 text-right">${fmt(o.tong_tien)}</td>
+      <td class="p-3 text-center">${badgeTT(o.trang_thai)}</td>
+    </tr>
+  `).join('') || '<tr><td colspan="7" class="p-6 text-center text-gray-400">Chưa có đơn nào</td></tr>';
+
+  document.getElementById('orderCount').textContent = `Hiển thị ${orders.length} / ${d.total||0} đơn`;
+}
+
+function fmt(n) { return Number(n||0).toLocaleString('vi-VN') + 'đ'; }
+function fmtDate(d) { if (!d) return ''; return new Date(d).toLocaleString('vi-VN',{day:'2-digit',month:'2-digit',hour:'2-digit',minute:'2-digit'}); }
+function esc(s) { const d=document.createElement('div'); d.textContent=s||''; return d.innerHTML; }
+function badgeTT(tt) {
+  const cls = {'Đơn mới':'badge-new','Đã chốt':'badge-confirmed','Đang ship':'badge-shipping',
+    'Ship thành công':'badge-success','Hoàn thành công':'badge-returned','Không mua':'badge-cancel'};
+  return `<span class="badge ${cls[tt]||'badge-cancel'}">${tt||''}</span>`;
+}
+
+checkAuth();
+</script>
+</body>
+</html>
