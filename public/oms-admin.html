@@ -39,6 +39,19 @@
 </style>
 </head>
 <body class="min-h-screen">
+<script>
+// ---- XOÁ SERVICE WORKER + CACHE ngay khi load ----
+// Fix lỗi F5 hiện data cũ do SW cache của dashboard cũ
+(async()=>{
+  try{
+    const regs=await navigator.serviceWorker.getRegistrations();
+    for(const r of regs) await r.unregister();
+    const names=await caches.keys();
+    for(const n of names) await caches.delete(n);
+    if(regs.length) console.log('[OMS] Đã xoá',regs.length,'Service Worker +',names.length,'caches');
+  }catch(e){}
+})();
+</script>
 
 <!-- HEADER -->
 <header class="bg-white border-b shadow-sm px-4 py-3 flex items-center justify-between sticky top-0 z-30">
@@ -323,8 +336,22 @@
 <!-- ============================================================ -->
 <!-- TAB 9: CẤU HÌNH API -->
 <!-- ============================================================ -->
-<div id="tab-config" class="tab-content p-4 max-w-3xl mx-auto hidden">
-  <h2 class="text-lg font-semibold mb-4">Cấu hình tích hợp API</h2>
+<div id="tab-config" class="tab-content p-4 max-w-4xl mx-auto hidden">
+
+  <!-- QUẢN LÝ KHO -->
+  <div class="mb-6">
+    <div class="flex justify-between items-center mb-4">
+      <h2 class="text-lg font-semibold">📦 Quản lý kho hàng</h2>
+      <button onclick="openAddWarehouse()" class="bg-green-600 text-white px-4 py-1.5 rounded-lg text-sm font-medium">+ Thêm kho</button>
+    </div>
+    <div id="warehouseList" class="space-y-3"></div>
+  </div>
+
+  <hr class="my-6">
+
+  <!-- CẤU HÌNH MẶC ĐỊNH (fallback nếu không chọn kho) -->
+  <h2 class="text-lg font-semibold mb-4">⚙️ Cấu hình API mặc định</h2>
+  <p class="text-sm text-gray-400 mb-4">Dùng khi đơn hàng không chọn kho cụ thể</p>
   <div class="bg-white rounded-xl p-5 shadow-sm mb-4">
     <h3 class="font-semibold text-green-700 mb-3">🚚 GHTK</h3>
     <div class="grid gap-3">
@@ -496,6 +523,52 @@
     <div class="flex gap-3 mt-5">
       <button onclick="submitLink()" class="flex-1 bg-indigo-600 text-white py-2 rounded-lg font-medium">Đăng ký</button>
       <button onclick="closeModal('addLinkModal')" class="flex-1 bg-gray-200 py-2 rounded-lg font-medium">Hủy</button>
+    </div>
+  </div>
+</div>
+
+<!-- Modal Tạo/Sửa kho -->
+<div id="warehouseModal" class="fixed inset-0 modal-bg flex items-center justify-center z-50 hidden">
+  <div class="bg-white rounded-xl shadow-2xl p-6 w-full max-w-lg mx-4 max-h-[90vh] overflow-y-auto">
+    <h2 class="text-lg font-bold mb-4" id="whModalTitle">Thêm kho mới</h2>
+    <input type="hidden" id="whEditId" value="">
+    <div class="grid gap-3">
+      <div><label class="text-xs text-gray-500">Tên kho *</label><input type="text" id="whTenKho" class="w-full text-sm" placeholder="VD: Kho Hà Nội"></div>
+      <div class="grid grid-cols-2 gap-3">
+        <div><label class="text-xs text-gray-500">Địa chỉ kho</label><input type="text" id="whDiaChi" class="w-full text-sm"></div>
+        <div><label class="text-xs text-gray-500">SĐT kho</label><input type="text" id="whSdt" class="w-full text-sm"></div>
+      </div>
+      <div class="grid grid-cols-2 gap-3">
+        <div><label class="text-xs text-gray-500">Tỉnh/TP</label><input type="text" id="whTinh" class="w-full text-sm"></div>
+        <div><label class="text-xs text-gray-500">Quận/Huyện</label><input type="text" id="whQuan" class="w-full text-sm"></div>
+      </div>
+
+      <hr class="my-2">
+      <h3 class="text-sm font-semibold text-green-700">🚚 GHTK cho kho này</h3>
+      <div><label class="text-xs text-gray-500">GHTK Token</label><input type="text" id="whGhtkToken" class="w-full text-sm"></div>
+      <div class="grid grid-cols-2 gap-3">
+        <div><label class="text-xs text-gray-500">Tên shop lấy hàng</label><input type="text" id="whGhtkPickName" class="w-full text-sm"></div>
+        <div><label class="text-xs text-gray-500">SĐT lấy hàng</label><input type="text" id="whGhtkPickTel" class="w-full text-sm"></div>
+      </div>
+      <div><label class="text-xs text-gray-500">Địa chỉ lấy hàng</label><input type="text" id="whGhtkPickAddress" class="w-full text-sm"></div>
+      <div class="grid grid-cols-2 gap-3">
+        <div><label class="text-xs text-gray-500">Tỉnh lấy hàng</label><input type="text" id="whGhtkPickProvince" class="w-full text-sm"></div>
+        <div><label class="text-xs text-gray-500">Quận lấy hàng</label><input type="text" id="whGhtkPickDistrict" class="w-full text-sm"></div>
+      </div>
+
+      <hr class="my-2">
+      <h3 class="text-sm font-semibold text-red-600">🚚 Viettel Post cho kho này</h3>
+      <div class="grid grid-cols-2 gap-3">
+        <div><label class="text-xs text-gray-500">VTP Username</label><input type="text" id="whVtpUsername" class="w-full text-sm"></div>
+        <div><label class="text-xs text-gray-500">VTP Password</label><input type="password" id="whVtpPassword" class="w-full text-sm"></div>
+      </div>
+      <div><label class="text-xs text-gray-500">Tên người gửi</label><input type="text" id="whVtpSenderName" class="w-full text-sm"></div>
+      <div><label class="text-xs text-gray-500">Địa chỉ người gửi</label><input type="text" id="whVtpSenderAddress" class="w-full text-sm"></div>
+      <div><label class="text-xs text-gray-500">SĐT người gửi</label><input type="text" id="whVtpSenderPhone" class="w-full text-sm"></div>
+    </div>
+    <div class="flex gap-3 mt-5">
+      <button onclick="submitWarehouse()" class="flex-1 bg-green-600 text-white py-2 rounded-lg font-medium">💾 Lưu kho</button>
+      <button onclick="closeModal('warehouseModal')" class="flex-1 bg-gray-200 py-2 rounded-lg font-medium">Hủy</button>
     </div>
   </div>
 </div>
@@ -1231,12 +1304,111 @@ async function deleteLink(id){if(!confirm('Xóa link #'+id+'?'))return;await fet
 let allWarehouses = [];
 async function loadWarehouses(){
   try{
-    const r=await fetch(API+'/warehouses'); if(!r.ok)return;
-    allWarehouses=await r.json();
-    // Cập nhật dropdown kho trong modal chốt đơn
+    const r=await fetch(API+'/warehouses/all'); 
+    if(!r.ok){ const r2=await fetch(API+'/warehouses'); if(r2.ok) allWarehouses=await r2.json(); }
+    else allWarehouses=await r.json();
+    // Dropdown kho trong modal chốt đơn
     const sel=document.getElementById('cdKho');
-    if(sel) sel.innerHTML='<option value="0">-- Chọn kho --</option>'+allWarehouses.map(w=>`<option value="${w.id}">${esc(w.ten_kho)}</option>`).join('');
+    if(sel) sel.innerHTML='<option value="0">-- Chọn kho --</option>'+allWarehouses.filter(w=>w.active).map(w=>`<option value="${w.id}">${esc(w.ten_kho)} — ${esc(w.dia_chi||'')}</option>`).join('');
+    // Render danh sách kho trong tab Cấu hình
+    renderWarehouseList();
   }catch(e){}
+}
+
+function renderWarehouseList(){
+  const el=document.getElementById('warehouseList');
+  if(!el) return;
+  if(!allWarehouses.length){
+    el.innerHTML='<div class="bg-gray-50 rounded-xl p-6 text-center text-gray-400">Chưa có kho nào. Bấm "+ Thêm kho" để tạo.</div>';
+    return;
+  }
+  el.innerHTML=allWarehouses.map(w=>`
+    <div class="bg-white rounded-xl p-4 shadow-sm border ${w.active?'border-green-200':'border-gray-200 opacity-60'}">
+      <div class="flex justify-between items-start">
+        <div>
+          <span class="font-bold text-gray-800">${esc(w.ten_kho)}</span>
+          ${w.active?'<span class="badge badge-confirmed ml-2">Hoạt động</span>':'<span class="badge badge-cancel ml-2">Tắt</span>'}
+        </div>
+        <div class="flex gap-1">
+          <button onclick="editWarehouse(${w.id})" class="text-xs px-2 py-1 bg-blue-50 text-blue-600 rounded hover:bg-blue-100">Sửa</button>
+          <button onclick="toggleWarehouse(${w.id},${w.active?0:1})" class="text-xs px-2 py-1 ${w.active?'bg-red-50 text-red-500':'bg-green-50 text-green-600'} rounded">${w.active?'Tắt':'Bật'}</button>
+          <button onclick="deleteWarehouse(${w.id})" class="text-xs px-2 py-1 bg-gray-50 text-red-500 rounded">Xóa</button>
+        </div>
+      </div>
+      <div class="text-sm text-gray-500 mt-1">📍 ${esc(w.dia_chi||'Chưa có địa chỉ')} | 📞 ${esc(w.sdt||'')}</div>
+      <div class="flex gap-4 mt-1 text-xs text-gray-400">
+        <span>GHTK: ${w.ghtk_token?'✅ Đã cấu hình':'❌ Chưa'}</span>
+        <span>VTP: ${w.vtp_username?'✅ Đã cấu hình':'❌ Chưa'}</span>
+      </div>
+    </div>
+  `).join('');
+}
+
+function openAddWarehouse(){
+  document.getElementById('whModalTitle').textContent='Thêm kho mới';
+  document.getElementById('whEditId').value='';
+  ['whTenKho','whDiaChi','whSdt','whTinh','whQuan','whGhtkToken','whGhtkPickName','whGhtkPickTel','whGhtkPickAddress','whGhtkPickProvince','whGhtkPickDistrict','whVtpUsername','whVtpPassword','whVtpSenderName','whVtpSenderAddress','whVtpSenderPhone'].forEach(id=>{const el=document.getElementById(id);if(el)el.value='';});
+  document.getElementById('warehouseModal').classList.remove('hidden');
+}
+
+function editWarehouse(id){
+  const w=allWarehouses.find(x=>x.id===id); if(!w)return;
+  document.getElementById('whModalTitle').textContent='Sửa kho: '+w.ten_kho;
+  document.getElementById('whEditId').value=id;
+  document.getElementById('whTenKho').value=w.ten_kho||'';
+  document.getElementById('whDiaChi').value=w.dia_chi||'';
+  document.getElementById('whSdt').value=w.sdt||'';
+  document.getElementById('whTinh').value=w.tinh||'';
+  document.getElementById('whQuan').value=w.quan||'';
+  document.getElementById('whGhtkToken').value=w.ghtk_token||'';
+  document.getElementById('whGhtkPickName').value=w.ghtk_pick_name||'';
+  document.getElementById('whGhtkPickTel').value=w.ghtk_pick_tel||'';
+  document.getElementById('whGhtkPickAddress').value=w.ghtk_pick_address||'';
+  document.getElementById('whGhtkPickProvince').value=w.ghtk_pick_province||'';
+  document.getElementById('whGhtkPickDistrict').value=w.ghtk_pick_district||'';
+  document.getElementById('whVtpUsername').value=w.vtp_username||'';
+  document.getElementById('whVtpPassword').value=w.vtp_password||'';
+  document.getElementById('whVtpSenderName').value=w.vtp_sender_name||'';
+  document.getElementById('whVtpSenderAddress').value=w.vtp_sender_address||'';
+  document.getElementById('whVtpSenderPhone').value=w.vtp_sender_phone||'';
+  document.getElementById('warehouseModal').classList.remove('hidden');
+}
+
+async function submitWarehouse(){
+  const editId=document.getElementById('whEditId').value;
+  const body={
+    ten_kho:document.getElementById('whTenKho').value,
+    dia_chi:document.getElementById('whDiaChi').value,
+    sdt:document.getElementById('whSdt').value,
+    tinh:document.getElementById('whTinh').value,
+    quan:document.getElementById('whQuan').value,
+    ghtk_token:document.getElementById('whGhtkToken').value,
+    ghtk_pick_name:document.getElementById('whGhtkPickName').value,
+    ghtk_pick_tel:document.getElementById('whGhtkPickTel').value,
+    ghtk_pick_address:document.getElementById('whGhtkPickAddress').value,
+    ghtk_pick_province:document.getElementById('whGhtkPickProvince').value,
+    ghtk_pick_district:document.getElementById('whGhtkPickDistrict').value,
+    vtp_username:document.getElementById('whVtpUsername').value,
+    vtp_password:document.getElementById('whVtpPassword').value,
+    vtp_sender_name:document.getElementById('whVtpSenderName').value,
+    vtp_sender_address:document.getElementById('whVtpSenderAddress').value,
+    vtp_sender_phone:document.getElementById('whVtpSenderPhone').value,
+  };
+  const url = editId ? API+'/warehouses/'+editId : API+'/warehouses';
+  const method = editId ? 'PUT' : 'POST';
+  const r=await fetch(url,{method,headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});
+  const d=await r.json();
+  if(d.ok){closeModal('warehouseModal');loadWarehouses();alert('✅ '+(editId?'Đã cập nhật':'Đã tạo kho'));} else alert('❌ '+(d.error||'Lỗi'));
+}
+
+async function toggleWarehouse(id,active){
+  await fetch(API+'/warehouses/'+id,{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify({active})});
+  loadWarehouses();
+}
+async function deleteWarehouse(id){
+  if(!confirm('Xóa kho này?'))return;
+  await fetch(API+'/warehouses/'+id,{method:'DELETE'});
+  loadWarehouses();
 }
 
 // ========== PHÂN ĐƠN TỰ ĐỘNG ==========

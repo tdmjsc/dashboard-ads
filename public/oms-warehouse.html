@@ -22,6 +22,7 @@
 </style>
 </head>
 <body class="min-h-screen">
+<script>(async()=>{try{const r=await navigator.serviceWorker.getRegistrations();for(const s of r)await s.unregister();const c=await caches.keys();for(const n of c)await caches.delete(n)}catch(e){}})();</script>
 
 <!-- HEADER -->
 <header class="bg-white border-b shadow-sm px-4 py-3 flex items-center justify-between sticky top-0 z-30">
