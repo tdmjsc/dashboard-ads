@@ -419,7 +419,11 @@ async function doLogin() {
   if (d.ok) { currentUser = d.user; document.getElementById('loginModal').classList.add('hidden'); onLoggedIn(); }
   else { document.getElementById('loginErr').textContent = d.error; document.getElementById('loginErr').classList.remove('hidden'); }
 }
-async function logout() { await fetch('/oms/logout',{method:'POST'}); location.reload(); }
+async function logout() { 
+  await fetch('/oms/logout',{method:'POST'}); 
+  // Đăng xuất luôn dashboard chính
+  window.location.href = '/logout'; 
+}
 function onLoggedIn() {
   document.getElementById('userBadge').textContent = '👤 ' + (currentUser.ho_ten||currentUser.username) + ' (admin)';
   document.getElementById('webhookUrl').textContent = location.origin + '/oms/webhook';
