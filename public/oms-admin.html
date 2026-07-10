@@ -121,6 +121,7 @@
   </div>
   <div class="flex gap-2 mb-3 flex-wrap">
     <button onclick="bulkAssign()" class="bg-purple-600 text-white px-3 py-1 rounded text-sm">👤 Phân Sale</button>
+    <button onclick="autoAssign()" class="bg-indigo-600 text-white px-3 py-1 rounded text-sm">🔄 Tự động chia đều</button>
     <button onclick="bulkPushGHTK()" class="bg-orange-500 text-white px-3 py-1 rounded text-sm">🚚 Đẩy GHTK</button>
     <button onclick="bulkPushVTP()" class="bg-red-500 text-white px-3 py-1 rounded text-sm">🚚 Đẩy VTP</button>
     <button onclick="syncShipping()" class="bg-teal-600 text-white px-3 py-1 rounded text-sm">🔄 Đồng bộ VC</button>
@@ -562,9 +563,15 @@
     </div>
 
     <!-- Ghi chú -->
-    <div class="mb-4">
-      <label class="text-xs text-gray-500">Ghi chú giao hàng</label>
-      <textarea id="cdGhiChu" class="w-full text-sm" rows="2" placeholder="Cho xem và cho thử, gọi trước khi giao..."></textarea>
+    <div class="grid grid-cols-2 gap-3 mb-4">
+      <div>
+        <label class="text-xs text-gray-500">Chọn kho xuất hàng</label>
+        <select id="cdKho" class="w-full text-sm"><option value="0">-- Chọn kho --</option></select>
+      </div>
+      <div>
+        <label class="text-xs text-gray-500">Ghi chú giao hàng</label>
+        <textarea id="cdGhiChu" class="w-full text-sm" rows="2" placeholder="Cho xem và cho thử, gọi trước khi giao..."></textarea>
+      </div>
     </div>
 
     <!-- Nút hành động -->
@@ -612,7 +619,31 @@ function onLoggedIn() {
   document.getElementById('userBadge').textContent = '👤 ' + (currentUser.ho_ten||currentUser.username) + ' (admin)';
   document.getElementById('webhookUrl').textContent = location.origin + '/oms/webhook';
   loadStats(); loadOrders(); loadUsers(); loadConfig();
-  loadEmployeeLists(); loadProducts();
+  loadEmployeeLists(); loadProducts(); loadWarehouses();
+
+  // ---- PHÂN QUYỀN TAB theo role ----
+  const role = currentUser?.role || 'admin';
+  const tabPerms = {
+    admin: ['overview','orders','sale','marketing','warehouse','users','products','links','config'],
+    sale: ['overview','sale'],
+    marketing: ['overview','marketing','links'],
+    warehouse: ['warehouse'],
+  };
+  const allowed = tabPerms[role] || tabPerms.admin;
+  document.querySelectorAll('.tab-btn').forEach(btn => {
+    if (!allowed.includes(btn.dataset.tab)) btn.style.display = 'none';
+  });
+  // Mặc định mở tab đầu tiên được phép
+  const firstTab = allowed[0];
+  document.querySelectorAll('.tab-btn').forEach(b => { b.classList.remove('active'); b.classList.add('bg-gray-100'); });
+  document.querySelectorAll('.tab-content').forEach(c => c.classList.add('hidden'));
+  const activeBtn = document.querySelector(`[data-tab="${firstTab}"]`);
+  if(activeBtn){ activeBtn.classList.add('active'); activeBtn.classList.remove('bg-gray-100'); }
+  const activeTab = document.getElementById('tab-'+firstTab);
+  if(activeTab) activeTab.classList.remove('hidden');
+  if(firstTab==='sale') loadSaleView();
+  if(firstTab==='marketing') loadMktView();
+  if(firstTab==='warehouse') loadWhView();
 }
 
 // ========== TABS ==========
@@ -749,6 +780,8 @@ async function loadSaleView() {
         <div class="flex gap-1">
           <button onclick="openChotDon(${o.id})" class="bg-green-600 text-white px-3 py-1.5 rounded text-sm font-medium">✅ Chốt đơn</button>
           <button onclick="saleUpdate(${o.id},'Không mua')" class="bg-gray-400 text-white px-3 py-1.5 rounded text-sm font-medium">❌</button>
+          ${o.trang_thai==='Đã chốt'?`<button onclick="saleUpdate(${o.id},'Đơn mới')" class="bg-yellow-500 text-white px-2 py-1.5 rounded text-xs font-medium" title="Huỷ chốt → Đơn mới">↩️ Huỷ chốt</button>`:''}
+          ${o.trang_thai==='Không mua'?`<button onclick="saleUpdate(${o.id},'Đơn mới')" class="bg-yellow-500 text-white px-2 py-1.5 rounded text-xs font-medium" title="Quay lại Đơn mới">↩️ Mở lại</button>`:''}
           <button onclick="saleSaveNote(${o.id})" class="bg-blue-500 text-white px-3 py-1.5 rounded text-sm font-medium">💾</button>
         </div>
       </div>
@@ -815,6 +848,7 @@ async function submitChotDon(trangThai){
     tong_tien: gia * sl,
     phi_ship: parseInt(document.getElementById('cdPhiShip').value)||0,
     ghi_chu: document.getElementById('cdGhiChu').value,
+    kho_id: parseInt(document.getElementById('cdKho').value)||0,
   };
   const r = await fetch(API+'/orders/'+chotDonId,{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});
   const d = await r.json();
@@ -1192,6 +1226,30 @@ async function submitLink(){
 }
 async function toggleLink(id,active){await fetch(API+'/links/'+id,{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify({active})});loadLinks();}
 async function deleteLink(id){if(!confirm('Xóa link #'+id+'?'))return;await fetch(API+'/links/'+id,{method:'DELETE'});loadLinks();}
+
+// ========== KHO ==========
+let allWarehouses = [];
+async function loadWarehouses(){
+  try{
+    const r=await fetch(API+'/warehouses'); if(!r.ok)return;
+    allWarehouses=await r.json();
+    // Cập nhật dropdown kho trong modal chốt đơn
+    const sel=document.getElementById('cdKho');
+    if(sel) sel.innerHTML='<option value="0">-- Chọn kho --</option>'+allWarehouses.map(w=>`<option value="${w.id}">${esc(w.ten_kho)}</option>`).join('');
+  }catch(e){}
+}
+
+// ========== PHÂN ĐƠN TỰ ĐỘNG ==========
+async function autoAssign(){
+  const ids = getSelectedIds();
+  const msg = ids.length ? `Phân ${ids.length} đơn đã chọn chia đều cho Sale?` : 'Tự động phân TẤT CẢ đơn mới chưa phân cho Sale?';
+  if(!confirm(msg)) return;
+  const body = ids.length ? {ids} : {};
+  const r=await fetch(API+'/auto-assign',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});
+  const d=await r.json();
+  if(d.ok) alert('✅ '+d.message); else alert('❌ '+(d.error||'Lỗi'));
+  loadOrders(currentPage);
+}
 
 // ========== INIT ==========
 checkAuth();
