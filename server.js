@@ -1973,6 +1973,34 @@ app.post('/api/meta-cache/clear', express.json(), (req, res) => {
   res.json({ ok: true });
 });
 
+// ---- Inject nút "Lưu đơn VN" vào TẤT CẢ trang HTML dashboard ----
+app.use((req, res, next) => {
+  // Chỉ inject cho HTML pages (không phải API, CSS, JS, ảnh)
+  const p = req.path;
+  if (p.startsWith('/oms') || p.startsWith('/api/') || !req.session?.user) return next();
+  
+  // Override res.send để chèn script trước </body>
+  const originalSend = res.send.bind(res);
+  res.send = function(body) {
+    if (typeof body === 'string' && body.includes('</body>')) {
+      const btnScript = `<script>
+(function(){
+  if(document.getElementById('oms-go-btn'))return;
+  var a=document.createElement('a');a.id='oms-go-btn';a.href='/go-oms';
+  a.innerHTML='📋 Lưu đơn VN';
+  a.style.cssText='position:fixed;bottom:20px;right:20px;z-index:99999;background:linear-gradient(135deg,#2563eb,#7c3aed);color:#fff;padding:12px 22px;border-radius:14px;font-size:14px;font-weight:700;text-decoration:none;box-shadow:0 4px 15px rgba(37,99,235,.45);font-family:system-ui,sans-serif;transition:transform .15s,box-shadow .15s;';
+  a.onmouseenter=function(){a.style.transform='scale(1.08)';a.style.boxShadow='0 6px 20px rgba(37,99,235,.55)';};
+  a.onmouseleave=function(){a.style.transform='scale(1)';a.style.boxShadow='0 4px 15px rgba(37,99,235,.45)';};
+  document.body.appendChild(a);
+})();
+</script>`;
+      body = body.replace('</body>', btnScript + '</body>');
+    }
+    return originalSend(body);
+  };
+  next();
+});
+
 app.use(express.static(path.join(__dirname, 'public')));
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => console.log(`Đang chạy: http://localhost:${PORT}`));
