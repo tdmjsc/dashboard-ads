@@ -179,6 +179,40 @@ async function ensureTables(pool) {
   for (const col of addCols) {
     try { await pool.query(`ALTER TABLE oms_orders ADD COLUMN ${col}`); } catch(e) {}
   }
+
+  // Bảng sản phẩm
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS oms_products (
+      id INT AUTO_INCREMENT PRIMARY KEY,
+      ma_sp VARCHAR(60) DEFAULT '' COMMENT 'Mã sản phẩm',
+      ten_sp VARCHAR(255) NOT NULL COMMENT 'Tên sản phẩm',
+      gia_ban BIGINT DEFAULT 0 COMMENT 'Giá bán (VND)',
+      gia_nhap BIGINT DEFAULT 0 COMMENT 'Giá nhập (VND)',
+      mo_ta TEXT,
+      hinh_anh VARCHAR(500) DEFAULT '',
+      danh_muc VARCHAR(120) DEFAULT '' COMMENT 'Danh mục SP',
+      active TINYINT DEFAULT 1,
+      created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+      INDEX idx_masp (ma_sp),
+      INDEX idx_tensp (ten_sp)
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+  `);
+
+  // Bảng đăng ký link: NV Marketing khai báo link → sản phẩm + NV
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS oms_link_registry (
+      id INT AUTO_INCREMENT PRIMARY KEY,
+      url_pattern VARCHAR(500) NOT NULL COMMENT 'URL hoặc phần URL landing page',
+      product_id INT DEFAULT 0 COMMENT 'FK → oms_products.id',
+      ten_sp VARCHAR(255) DEFAULT '' COMMENT 'Tên SP (cache)',
+      nv_marketing VARCHAR(120) NOT NULL COMMENT 'Tên NV Marketing',
+      ghi_chu VARCHAR(255) DEFAULT '',
+      active TINYINT DEFAULT 1,
+      created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+      INDEX idx_url (url_pattern),
+      INDEX idx_nv (nv_marketing)
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+  `);
 }
 
 // =====================================================================
@@ -280,16 +314,42 @@ export function mountOMS(app, { mysql, express }) {
     const ten = d.name || d.ten || d.ho_ten || '';
     const sdt = d.phone || d.sdt || d.dien_thoai || '';
     const diaChiFull = d.address || d.dia_chi || '';
-    const sanPham = d.product || d.san_pham || d.message || '';
+    let sanPham = d.product || d.san_pham || d.message || '';
     const soLuong = parseInt(d.quantity || d.so_luong || 1, 10) || 1;
-    const gia = parseInt(d.price || d.gia || 0, 10) || 0;
+    let gia = parseInt(d.price || d.gia || 0, 10) || 0;
 
     // UTM parameters → xác định nhân viên marketing
     const utmSource = d.utm_source || '';
     const utmMedium = d.utm_medium || '';
     const utmCampaign = d.utm_campaign || '';
     const utmContent = d.utm_content || '';
-    const nvMarketing = d.utm_content || d.nhan_vien || d.user || d.marketing || '';
+    let nvMarketing = d.utm_content || d.nhan_vien || d.user || d.marketing || '';
+
+    // ---- TỰ NHẬN DIỆN từ Link Registry ----
+    // Ladipage gửi kèm url_page (URL trang gửi form)
+    const urlPage = d.url_page || d.page_url || d.referer || d.referrer || '';
+    if (urlPage) {
+      try {
+        const links = await db('SELECT * FROM oms_link_registry WHERE active=1');
+        for (const link of links) {
+          // So khớp: URL chứa pattern đã đăng ký
+          if (urlPage.toLowerCase().includes(link.url_pattern.toLowerCase())) {
+            // Auto-fill NV Marketing nếu chưa có
+            if (!nvMarketing) nvMarketing = link.nv_marketing;
+            // Auto-fill sản phẩm nếu chưa có
+            if (!sanPham && link.ten_sp) sanPham = link.ten_sp;
+            // Auto-fill giá nếu chưa có
+            if (!gia && link.product_id) {
+              try {
+                const [prod] = await db('SELECT gia_ban FROM oms_products WHERE id=?', [link.product_id]);
+                if (prod?.gia_ban) gia = prod.gia_ban;
+              } catch(e) {}
+            }
+            break; // Khớp link đầu tiên
+          }
+        }
+      } catch(e) { console.error('[OMS] Link registry lookup error:', e.message); }
+    }
 
     // Tách địa chỉ tự động
     const addr = parseAddress(diaChiFull);
@@ -840,6 +900,134 @@ export function mountOMS(app, { mysql, express }) {
     } catch(e) {
       res.type('text').send('(Chưa có log)');
     }
+  }));
+
+  // ===================== QUẢN LÝ SẢN PHẨM =====================
+  app.get('/oms/api/products', omsAuth, wrap(async (req, res) => {
+    const { q, danh_muc, active } = req.query;
+    let where = ['1=1'];
+    let params = [];
+    if (q) { where.push('(ten_sp LIKE ? OR ma_sp LIKE ?)'); params.push(`%${q}%`, `%${q}%`); }
+    if (danh_muc) { where.push('danh_muc = ?'); params.push(danh_muc); }
+    if (active !== undefined) { where.push('active = ?'); params.push(active); }
+    const rows = await db(`SELECT * FROM oms_products WHERE ${where.join(' AND ')} ORDER BY ten_sp`, params);
+    res.json(rows);
+  }));
+
+  app.post('/oms/api/products', requireRole('admin'), jsonParser, wrap(async (req, res) => {
+    const d = req.body;
+    if (!d.ten_sp) return res.status(400).json({ error: 'Thiếu tên sản phẩm' });
+    const result = await db(`INSERT INTO oms_products (ma_sp, ten_sp, gia_ban, gia_nhap, mo_ta, hinh_anh, danh_muc)
+      VALUES (?,?,?,?,?,?,?)`,
+      [d.ma_sp||'', d.ten_sp, d.gia_ban||0, d.gia_nhap||0, d.mo_ta||'', d.hinh_anh||'', d.danh_muc||'']);
+    res.json({ ok: true, id: result.insertId });
+  }));
+
+  app.put('/oms/api/products/:id', requireRole('admin'), jsonParser, wrap(async (req, res) => {
+    const d = req.body;
+    const fields = ['ma_sp','ten_sp','gia_ban','gia_nhap','mo_ta','hinh_anh','danh_muc','active'];
+    const sets = []; const vals = [];
+    for (const f of fields) { if (d[f] !== undefined) { sets.push(`${f}=?`); vals.push(d[f]); } }
+    if (!sets.length) return res.status(400).json({ error: 'Không có gì' });
+    vals.push(req.params.id);
+    await db(`UPDATE oms_products SET ${sets.join(',')} WHERE id=?`, vals);
+    res.json({ ok: true });
+  }));
+
+  app.delete('/oms/api/products/:id', requireRole('admin'), wrap(async (req, res) => {
+    await db('DELETE FROM oms_products WHERE id=?', [req.params.id]);
+    res.json({ ok: true });
+  }));
+
+  // Import sản phẩm hàng loạt (từ array JSON)
+  app.post('/oms/api/products/import', requireRole('admin'), jsonParser, wrap(async (req, res) => {
+    const items = req.body.items || [];
+    if (!items.length) return res.status(400).json({ error: 'Danh sách rỗng' });
+    let inserted = 0;
+    for (const d of items) {
+      if (!d.ten_sp) continue;
+      try {
+        await db(`INSERT INTO oms_products (ma_sp, ten_sp, gia_ban, gia_nhap, mo_ta, danh_muc)
+          VALUES (?,?,?,?,?,?)`,
+          [d.ma_sp||'', d.ten_sp, d.gia_ban||0, d.gia_nhap||0, d.mo_ta||'', d.danh_muc||'']);
+        inserted++;
+      } catch(e) { /* bỏ qua duplicate */ }
+    }
+    res.json({ ok: true, inserted, total: items.length });
+  }));
+
+  // Lấy danh mục SP (cho dropdown)
+  app.get('/oms/api/products/categories', omsAuth, wrap(async (req, res) => {
+    const rows = await db("SELECT DISTINCT danh_muc FROM oms_products WHERE danh_muc != '' AND active=1 ORDER BY danh_muc");
+    res.json(rows.map(r => r.danh_muc));
+  }));
+
+  // ===================== ĐĂNG KÝ LINK (NV Marketing khai báo) =====================
+  app.get('/oms/api/links', omsAuth, wrap(async (req, res) => {
+    const user = req.session.omsUser;
+    let where = ['1=1'];
+    let params = [];
+    // Marketing chỉ xem link của mình
+    if (user.role === 'marketing') {
+      where.push('nv_marketing = ?');
+      params.push(user.ho_ten);
+    }
+    const rows = await db(`SELECT lr.*, p.ten_sp as product_name, p.gia_ban as product_price
+      FROM oms_link_registry lr
+      LEFT JOIN oms_products p ON lr.product_id = p.id
+      WHERE ${where.join(' AND ')}
+      ORDER BY lr.created_at DESC`, params);
+    res.json(rows);
+  }));
+
+  app.post('/oms/api/links', omsAuth, jsonParser, wrap(async (req, res) => {
+    const d = req.body;
+    const user = req.session.omsUser;
+    if (!d.url_pattern) return res.status(400).json({ error: 'Thiếu URL landing page' });
+    if (!d.product_id) return res.status(400).json({ error: 'Chưa chọn sản phẩm' });
+
+    // NV Marketing: tự ghi tên mình. Admin: chọn NV bất kỳ
+    const nvName = user.role === 'admin' ? (d.nv_marketing || user.ho_ten) : user.ho_ten;
+
+    // Lấy tên SP để cache vào link registry
+    let tenSp = '';
+    try {
+      const [prod] = await db('SELECT ten_sp FROM oms_products WHERE id=?', [d.product_id]);
+      tenSp = prod?.ten_sp || '';
+    } catch(e) {}
+
+    const result = await db(`INSERT INTO oms_link_registry (url_pattern, product_id, ten_sp, nv_marketing, ghi_chu)
+      VALUES (?,?,?,?,?)`,
+      [d.url_pattern, d.product_id, tenSp, nvName, d.ghi_chu||'']);
+    res.json({ ok: true, id: result.insertId });
+  }));
+
+  app.put('/oms/api/links/:id', omsAuth, jsonParser, wrap(async (req, res) => {
+    const d = req.body;
+    const user = req.session.omsUser;
+    // Marketing chỉ sửa link của mình
+    if (user.role === 'marketing') {
+      const [existing] = await db('SELECT nv_marketing FROM oms_link_registry WHERE id=?', [req.params.id]);
+      if (existing?.nv_marketing !== user.ho_ten) return res.status(403).json({ error: 'Không phải link của bạn' });
+    }
+    const sets = []; const vals = [];
+    if (d.url_pattern) { sets.push('url_pattern=?'); vals.push(d.url_pattern); }
+    if (d.product_id) {
+      sets.push('product_id=?'); vals.push(d.product_id);
+      try { const [p] = await db('SELECT ten_sp FROM oms_products WHERE id=?', [d.product_id]); sets.push('ten_sp=?'); vals.push(p?.ten_sp||''); } catch(e) {}
+    }
+    if (d.ghi_chu !== undefined) { sets.push('ghi_chu=?'); vals.push(d.ghi_chu); }
+    if (d.active !== undefined) { sets.push('active=?'); vals.push(d.active); }
+    if (d.nv_marketing && user.role === 'admin') { sets.push('nv_marketing=?'); vals.push(d.nv_marketing); }
+    if (!sets.length) return res.status(400).json({ error: 'Không có gì' });
+    vals.push(req.params.id);
+    await db(`UPDATE oms_link_registry SET ${sets.join(',')} WHERE id=?`, vals);
+    res.json({ ok: true });
+  }));
+
+  app.delete('/oms/api/links/:id', requireRole('admin'), wrap(async (req, res) => {
+    await db('DELETE FROM oms_link_registry WHERE id=?', [req.params.id]);
+    res.json({ ok: true });
   }));
 
   // ===================== KHỞI TẠO =====================
