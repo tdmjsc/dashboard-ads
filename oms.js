@@ -180,6 +180,35 @@ async function ensureTables(pool) {
     try { await pool.query(`ALTER TABLE oms_orders ADD COLUMN ${col}`); } catch(e) {}
   }
 
+  // Bảng kho hàng (mỗi kho có GHTK/VTP riêng)
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS oms_warehouses (
+      id INT AUTO_INCREMENT PRIMARY KEY,
+      ten_kho VARCHAR(120) NOT NULL COMMENT 'Tên kho',
+      dia_chi VARCHAR(500) DEFAULT '' COMMENT 'Địa chỉ kho',
+      tinh VARCHAR(120) DEFAULT '',
+      quan VARCHAR(120) DEFAULT '',
+      sdt VARCHAR(50) DEFAULT '',
+      ghtk_token VARCHAR(255) DEFAULT '',
+      ghtk_pick_name VARCHAR(120) DEFAULT '',
+      ghtk_pick_address VARCHAR(500) DEFAULT '',
+      ghtk_pick_province VARCHAR(120) DEFAULT '',
+      ghtk_pick_district VARCHAR(120) DEFAULT '',
+      ghtk_pick_tel VARCHAR(50) DEFAULT '',
+      vtp_username VARCHAR(120) DEFAULT '',
+      vtp_password VARCHAR(255) DEFAULT '',
+      vtp_token VARCHAR(500) DEFAULT '',
+      vtp_sender_name VARCHAR(120) DEFAULT '',
+      vtp_sender_address VARCHAR(500) DEFAULT '',
+      vtp_sender_phone VARCHAR(50) DEFAULT '',
+      active TINYINT DEFAULT 1,
+      created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+  `);
+
+  // Thêm cột kho_id vào orders nếu chưa có
+  try { await pool.query("ALTER TABLE oms_orders ADD COLUMN kho_id INT DEFAULT 0 COMMENT 'FK → oms_warehouses.id'"); } catch(e) {}
+
   // Bảng sản phẩm
   await pool.query(`
     CREATE TABLE IF NOT EXISTS oms_products (
@@ -453,23 +482,35 @@ export function mountOMS(app, { mysql, express }) {
     const d = req.body;
     const user = req.session.omsUser;
 
-    // Sale chỉ được cập nhật ghi chú + trạng thái (Đã chốt / Không mua)
+    // Sale: sửa được thông tin đơn + chốt/huỷ chốt/không mua/quay lại đơn mới
     if (user.role === 'sale') {
-      const allowed = {};
-      if (d.trang_thai && ['Đã chốt', 'Không mua'].includes(d.trang_thai)) allowed.trang_thai = d.trang_thai;
-      if (d.ghi_chu !== undefined) allowed.ghi_chu = d.ghi_chu;
-      if (d.sale_phu_trach) allowed.sale_phu_trach = d.sale_phu_trach;
-      if (Object.keys(allowed).length === 0) return res.status(400).json({ error: 'Không có gì để cập nhật' });
-
-      const sets = Object.keys(allowed).map(k => `${k}=?`).join(', ');
-      await db(`UPDATE oms_orders SET ${sets} WHERE id=?`, [...Object.values(allowed), id]);
+      const saleAllowed = ['trang_thai','ghi_chu','sale_phu_trach','ten_kh','sdt',
+        'dia_chi_full','san_pham','so_luong','gia_ban','tong_tien','phi_ship','kho_id'];
+      // Sale được phép: Đơn mới, Đã chốt, Không mua (huỷ chốt/huỷ không mua → quay Đơn mới)
+      if (d.trang_thai && !['Đơn mới','Đã chốt','Không mua'].includes(d.trang_thai)) {
+        return res.status(403).json({ error: 'Sale không được đổi sang trạng thái này' });
+      }
+      const sets = []; const vals = [];
+      for (const f of saleAllowed) {
+        if (d[f] !== undefined) {
+          sets.push(`${f}=?`); vals.push(d[f]);
+          if (f === 'dia_chi_full') {
+            const addr = parseAddress(d[f]);
+            sets.push('tinh=?','quan=?','phuong=?','dia_chi=?');
+            vals.push(addr.tinh, addr.quan, addr.phuong, addr.diaChi);
+          }
+        }
+      }
+      if (!sets.length) return res.status(400).json({ error: 'Không có gì để cập nhật' });
+      vals.push(id);
+      await db(`UPDATE oms_orders SET ${sets.join(',')} WHERE id=?`, vals);
       return res.json({ ok: true });
     }
 
-    // Admin/Warehouse có thể cập nhật nhiều trường hơn
+    // Admin/Warehouse có thể cập nhật hầu hết trường
     const allowedFields = ['trang_thai','ghi_chu','sale_phu_trach','don_vi_vc','ma_van_don',
       'trang_thai_vc','nv_marketing','ten_kh','sdt','dia_chi_full','san_pham',
-      'so_luong','gia_ban','tong_tien','phi_ship','da_thanh_toan'];
+      'so_luong','gia_ban','tong_tien','phi_ship','da_thanh_toan','kho_id'];
 
     const sets = [];
     const vals = [];
@@ -603,33 +644,73 @@ export function mountOMS(app, { mysql, express }) {
     res.json({ ok: true });
   }));
 
+  // ===================== Helper: lấy config GHTK/VTP từ kho hoặc config chung =====================
+  async function getWarehouseConfig(khoId) {
+    // Ưu tiên lấy từ kho riêng
+    if (khoId) {
+      const [wh] = await db('SELECT * FROM oms_warehouses WHERE id=? AND active=1', [khoId]);
+      if (wh) return {
+        ghtk_token: wh.ghtk_token,
+        pick_name: wh.ghtk_pick_name || wh.ten_kho,
+        pick_address: wh.ghtk_pick_address || wh.dia_chi,
+        pick_province: wh.ghtk_pick_province || wh.tinh,
+        pick_district: wh.ghtk_pick_district || wh.quan,
+        pick_tel: wh.ghtk_pick_tel || wh.sdt,
+        vtp_username: wh.vtp_username,
+        vtp_password: wh.vtp_password,
+        vtp_token: wh.vtp_token,
+        vtp_sender_name: wh.vtp_sender_name || wh.ten_kho,
+        vtp_sender_address: wh.vtp_sender_address || wh.dia_chi,
+        vtp_sender_phone: wh.vtp_sender_phone || wh.sdt,
+        ten_kho: wh.ten_kho,
+      };
+    }
+    // Fallback: config chung
+    const cfgRows = await db("SELECT config_key, config_value FROM oms_config");
+    const cfg = {}; cfgRows.forEach(r => cfg[r.config_key] = r.config_value);
+    return {
+      ghtk_token: cfg.ghtk_token || process.env.GHTK_TOKEN || '',
+      pick_name: cfg.ghtk_shop_name || process.env.GHTK_SHOP_NAME || 'Shop',
+      pick_address: cfg.ghtk_pick_address || process.env.GHTK_PICK_ADDRESS || '',
+      pick_province: cfg.ghtk_pick_province || process.env.GHTK_PICK_PROVINCE || '',
+      pick_district: cfg.ghtk_pick_district || process.env.GHTK_PICK_DISTRICT || '',
+      pick_tel: cfg.ghtk_pick_tel || process.env.GHTK_PICK_TEL || '',
+      vtp_username: cfg.vtp_username || process.env.VTP_USERNAME || '',
+      vtp_password: cfg.vtp_password || process.env.VTP_PASSWORD || '',
+      vtp_token: cfg.vtp_token || process.env.VTP_TOKEN || '',
+      vtp_sender_name: cfg.vtp_sender_name || process.env.VTP_SENDER_NAME || 'Shop',
+      vtp_sender_address: cfg.vtp_sender_address || process.env.VTP_SENDER_ADDRESS || '',
+      vtp_sender_phone: cfg.vtp_sender_phone || process.env.VTP_SENDER_PHONE || '',
+      ten_kho: 'Kho mặc định',
+    };
+  }
+
   // ===================== ĐẨY ĐƠN GHTK =====================
   app.post('/oms/api/push-ghtk', requireRole('admin', 'warehouse'), jsonParser, wrap(async (req, res) => {
-    const { ids } = req.body; // [1, 2, 3]
+    const { ids } = req.body;
     if (!ids?.length) return res.status(400).json({ error: 'Chưa chọn đơn' });
-
-    // Lấy config GHTK
-    const cfgRows = await db("SELECT config_value FROM oms_config WHERE config_key='ghtk_token'");
-    const token = cfgRows[0]?.config_value || process.env.GHTK_TOKEN || '';
-    const apiUrl = process.env.GHTK_URL || 'https://services.giaohangtietkiem.vn';
-
-    if (!token) return res.status(400).json({ error: 'Chưa cấu hình GHTK Token' });
 
     const orders = await db(`SELECT * FROM oms_orders WHERE id IN (${ids.map(()=>'?').join(',')})`, ids);
     const results = [];
+    const apiUrl = 'https://services.giaohangtietkiem.vn';
 
     for (const o of orders) {
       try {
+        // Lấy config từ kho của đơn
+        const wCfg = await getWarehouseConfig(o.kho_id);
+        if (!wCfg.ghtk_token) { results.push({ id: o.id, ok: false, error: 'Chưa cấu hình GHTK Token cho kho "'+wCfg.ten_kho+'"' }); continue; }
+        if (!wCfg.pick_address) { results.push({ id: o.id, ok: false, error: 'Chưa nhập địa chỉ lấy hàng cho kho "'+wCfg.ten_kho+'"' }); continue; }
+
         const body = {
           products: [{ name: o.san_pham || 'Sản phẩm', weight: 0.5, quantity: o.so_luong || 1, product_code: '' }],
           order: {
             id: `OMS-${o.id}`,
-            pick_name: process.env.GHTK_SHOP_NAME || 'Shop',
+            pick_name: wCfg.pick_name,
             pick_money: 0,
-            pick_address: process.env.GHTK_PICK_ADDRESS || '',
-            pick_province: process.env.GHTK_PICK_PROVINCE || '',
-            pick_district: process.env.GHTK_PICK_DISTRICT || '',
-            pick_tel: process.env.GHTK_PICK_TEL || '',
+            pick_address: wCfg.pick_address,
+            pick_province: wCfg.pick_province,
+            pick_district: wCfg.pick_district,
+            pick_tel: wCfg.pick_tel,
             name: o.ten_kh,
             address: o.dia_chi || o.dia_chi_full,
             province: o.tinh?.replace(/^(TP |Tỉnh )/,'') || '',
@@ -647,7 +728,7 @@ export function mountOMS(app, { mysql, express }) {
 
         const resp = await fetch(`${apiUrl}/services/shipment/order/?ver=1.5`, {
           method: 'POST',
-          headers: { 'Content-Type': 'application/json', 'Token': token },
+          headers: { 'Content-Type': 'application/json', 'Token': wCfg.ghtk_token },
           body: JSON.stringify(body)
         });
         const data = await resp.json();
@@ -883,10 +964,81 @@ export function mountOMS(app, { mysql, express }) {
   }
 
   // ===================== PHÂN CÔNG SALE (Admin) =====================
+  // Phân đơn thủ công
   app.post('/oms/api/assign-sale', requireRole('admin'), jsonParser, wrap(async (req, res) => {
     const { ids, sale } = req.body;
     if (!ids?.length || !sale) return res.status(400).json({ error: 'Thiếu đơn hoặc tên sale' });
     await db(`UPDATE oms_orders SET sale_phu_trach=? WHERE id IN (${ids.map(()=>'?').join(',')})`, [sale, ...ids]);
+    res.json({ ok: true });
+  }));
+
+  // Phân đơn tự động chia đều cho tất cả Sale
+  app.post('/oms/api/auto-assign', requireRole('admin'), jsonParser, wrap(async (req, res) => {
+    const { ids } = req.body; // danh sách ID đơn cần phân
+    // Lấy danh sách Sale đang hoạt động
+    const sales = await db("SELECT ho_ten FROM oms_users WHERE role='sale' AND active=1 ORDER BY ho_ten");
+    if (!sales.length) return res.status(400).json({ error: 'Chưa có nhân viên Sale nào' });
+
+    let orderIds = ids;
+    if (!orderIds?.length) {
+      // Nếu không truyền IDs → phân tất cả đơn mới chưa phân
+      const unassigned = await db("SELECT id FROM oms_orders WHERE trang_thai='Đơn mới' AND (sale_phu_trach='' OR sale_phu_trach IS NULL) ORDER BY id");
+      orderIds = unassigned.map(r => r.id);
+    }
+    if (!orderIds.length) return res.json({ ok: true, message: 'Không có đơn nào cần phân' });
+
+    // Chia đều round-robin
+    const saleNames = sales.map(s => s.ho_ten);
+    let assigned = 0;
+    for (let i = 0; i < orderIds.length; i++) {
+      const saleName = saleNames[i % saleNames.length];
+      await db('UPDATE oms_orders SET sale_phu_trach=? WHERE id=?', [saleName, orderIds[i]]);
+      assigned++;
+    }
+
+    res.json({ ok: true, message: `Đã phân ${assigned} đơn cho ${saleNames.length} Sale`, assigned, sales: saleNames });
+  }));
+
+  // ===================== QUẢN LÝ KHO (Admin) =====================
+  app.get('/oms/api/warehouses', omsAuth, wrap(async (req, res) => {
+    const rows = await db('SELECT * FROM oms_warehouses WHERE active=1 ORDER BY ten_kho');
+    res.json(rows);
+  }));
+
+  app.get('/oms/api/warehouses/all', requireRole('admin'), wrap(async (req, res) => {
+    const rows = await db('SELECT * FROM oms_warehouses ORDER BY ten_kho');
+    res.json(rows);
+  }));
+
+  app.post('/oms/api/warehouses', requireRole('admin'), jsonParser, wrap(async (req, res) => {
+    const d = req.body;
+    if (!d.ten_kho) return res.status(400).json({ error: 'Thiếu tên kho' });
+    const result = await db(`INSERT INTO oms_warehouses
+      (ten_kho, dia_chi, tinh, quan, sdt,
+       ghtk_token, ghtk_pick_name, ghtk_pick_address, ghtk_pick_province, ghtk_pick_district, ghtk_pick_tel,
+       vtp_username, vtp_password, vtp_sender_name, vtp_sender_address, vtp_sender_phone)
+      VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+      [d.ten_kho, d.dia_chi||'', d.tinh||'', d.quan||'', d.sdt||'',
+       d.ghtk_token||'', d.ghtk_pick_name||'', d.ghtk_pick_address||'', d.ghtk_pick_province||'', d.ghtk_pick_district||'', d.ghtk_pick_tel||'',
+       d.vtp_username||'', d.vtp_password||'', d.vtp_sender_name||'', d.vtp_sender_address||'', d.vtp_sender_phone||'']);
+    res.json({ ok: true, id: result.insertId });
+  }));
+
+  app.put('/oms/api/warehouses/:id', requireRole('admin'), jsonParser, wrap(async (req, res) => {
+    const d = req.body;
+    const fields = ['ten_kho','dia_chi','tinh','quan','sdt','active',
+      'ghtk_token','ghtk_pick_name','ghtk_pick_address','ghtk_pick_province','ghtk_pick_district','ghtk_pick_tel',
+      'vtp_username','vtp_password','vtp_token','vtp_sender_name','vtp_sender_address','vtp_sender_phone'];
+    const sets = []; const vals = [];
+    for (const f of fields) { if (d[f] !== undefined) { sets.push(`${f}=?`); vals.push(d[f]); } }
+    if (!sets.length) return res.status(400).json({ error: 'Không có gì' });
+    vals.push(req.params.id);
+    await db(`UPDATE oms_warehouses SET ${sets.join(',')} WHERE id=?`, vals);
+    res.json({ ok: true });
+  }));
+
+  app.delete('/oms/api/warehouses/:id', requireRole('admin'), wrap(async (req, res) => {
+    await db('DELETE FROM oms_warehouses WHERE id=?', [req.params.id]);
     res.json({ ok: true });
   }));
 
