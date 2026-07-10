@@ -497,9 +497,12 @@ export function mountOMS(app, { mysql, express }) {
     const { username, password, ho_ten, role } = req.body;
     if (!username || !password) return res.status(400).json({ error: 'Thiếu username/password' });
     await ensureTables(getPool());
-    await db('INSERT INTO oms_users (username, password, ho_ten, role) VALUES (?,?,?,?)',
+    const result = await db('INSERT INTO oms_users (username, password, ho_ten, role) VALUES (?,?,?,?)',
       [username, password, ho_ten || username, role || 'sale']);
-    res.json({ ok: true });
+    // Debug: đọc lại ngay để kiểm tra
+    const check = await db('SELECT COUNT(*) as cnt FROM oms_users');
+    const allUsers = await db('SELECT id, username FROM oms_users ORDER BY id');
+    res.json({ ok: true, debug: { insertId: result.insertId, affectedRows: result.affectedRows, totalUsers: check[0]?.cnt, allUsers } });
   }));
 
   app.put('/oms/api/users/:id', requireRole('admin'), jsonParser, wrap(async (req, res) => {
