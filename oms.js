@@ -224,18 +224,23 @@ export function mountOMS(app, { mysql, express }) {
   };
 
   // ---- Middleware xác thực OMS ----
-  function omsAuth(req, res, next) {
-    if (req.session?.omsUser) return next();
-    // Cho phép admin dashboard chính vào luôn
+  // Tự động nhận admin từ dashboard chính → không cần đăng nhập OMS riêng
+  function autoSetOmsUser(req) {
+    if (req.session?.omsUser) return;
     if (req.session?.user?.role === 'admin') {
-      req.session.omsUser = { username: 'admin', ho_ten: 'Admin', role: 'admin' };
-      return next();
+      req.session.omsUser = { id: 0, username: req.session.user.user || 'admin', ho_ten: 'Admin', role: 'admin' };
     }
+  }
+
+  function omsAuth(req, res, next) {
+    autoSetOmsUser(req);
+    if (req.session?.omsUser) return next();
     res.status(401).json({ error: 'Chưa đăng nhập OMS' });
   }
 
   function requireRole(...roles) {
     return (req, res, next) => {
+      autoSetOmsUser(req);
       if (!req.session?.omsUser) return res.status(401).json({ error: 'Chưa đăng nhập' });
       if (roles.includes(req.session.omsUser.role)) return next();
       res.status(403).json({ error: 'Không đủ quyền' });
