@@ -857,10 +857,17 @@ async function loadUsers(){
   const r=await fetch(API+'/users'); if(!r.ok)return; const users=await r.json();
   const rl={admin:'Admin',sale:'Sale',marketing:'Marketing',warehouse:'Kho'};
   document.getElementById('userTable').innerHTML=users.map(u=>`
-    <tr class="border-t"><td class="p-3 font-mono">${esc(u.username)}</td><td class="p-3">${esc(u.ho_ten)}</td>
-    <td class="p-3"><span class="badge ${u.role==='admin'?'badge-returned':'badge-confirmed'}">${rl[u.role]||u.role}</span></td>
-    <td class="p-3 text-center">${u.active?'✅':'❌'}</td>
-    <td class="p-3 text-center"><button onclick="toggleUser(${u.id},${u.active?0:1})" class="text-xs ${u.active?'text-red-500':'text-green-600'} hover:underline">${u.active?'Vô hiệu':'Kích hoạt'}</button></td></tr>`).join('');
+    <tr class="border-t">
+      <td class="p-3 font-mono">${esc(u.username)}</td>
+      <td class="p-3">${esc(u.ho_ten)}</td>
+      <td class="p-3"><span class="badge ${u.role==='admin'?'badge-returned':'badge-confirmed'}">${rl[u.role]||u.role}</span></td>
+      <td class="p-3 text-center">${u.active?'<span class="text-green-600">Hoạt động</span>':'<span class="text-red-500">Vô hiệu</span>'}</td>
+      <td class="p-3 text-center space-x-1">
+        <button onclick="toggleUser(${u.id},${u.active?0:1},'${esc(u.username)}')" class="text-xs px-2 py-1 rounded ${u.active?'bg-red-50 text-red-600 hover:bg-red-100':'bg-green-50 text-green-600 hover:bg-green-100'}">${u.active?'Vô hiệu':'Kích hoạt'}</button>
+        <button onclick="changePassword(${u.id},'${esc(u.username)}')" class="text-xs px-2 py-1 rounded bg-blue-50 text-blue-600 hover:bg-blue-100">Đổi MK</button>
+        ${u.username!=='admin'?`<button onclick="deleteUser(${u.id},'${esc(u.username)}')" class="text-xs px-2 py-1 rounded bg-gray-50 text-red-500 hover:bg-red-50">Xóa</button>`:''}
+      </td>
+    </tr>`).join('');
 }
 function openAddUser(){ document.getElementById('addUserModal').classList.remove('hidden'); }
 async function submitUser(){
@@ -869,7 +876,27 @@ async function submitUser(){
   const d=await r.json();
   if(d.ok){closeModal('addUserModal');loadUsers();alert('✅ Đã tạo tài khoản');} else alert('❌ '+(d.error||'Lỗi không xác định'));
 }
-async function toggleUser(id,active){ await fetch(API+'/users/'+id,{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify({active})}); loadUsers(); }
+async function toggleUser(id,active,username){
+  const action = active ? 'Kích hoạt lại' : 'Vô hiệu hóa';
+  if(!confirm(`${action} tài khoản "${username}"?`)) return;
+  const r = await fetch(API+'/users/'+id,{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify({active})});
+  const d = await r.json();
+  if(d.ok) loadUsers(); else alert('❌ '+(d.error||'Lỗi'));
+}
+async function changePassword(id,username){
+  const newPass = prompt(`Nhập mật khẩu mới cho "${username}":`);
+  if(!newPass) return;
+  if(newPass.length < 4){ alert('Mật khẩu phải ít nhất 4 ký tự'); return; }
+  const r = await fetch(API+'/users/'+id,{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify({password:newPass})});
+  const d = await r.json();
+  if(d.ok) alert('✅ Đã đổi mật khẩu cho '+username); else alert('❌ '+(d.error||'Lỗi'));
+}
+async function deleteUser(id,username){
+  if(!confirm(`⚠️ XÓA VĨNH VIỄN tài khoản "${username}"?\n\nHành động này không thể hoàn tác!`)) return;
+  const r = await fetch(API+'/users/'+id,{method:'DELETE'});
+  const d = await r.json();
+  if(d.ok){ alert('✅ Đã xóa '+username); loadUsers(); } else alert('❌ '+(d.error||'Lỗi'));
+}
 
 // ========== CẤU HÌNH ==========
 async function loadConfig(){
