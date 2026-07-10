@@ -386,6 +386,14 @@ app.get('/logout', (req, res) => req.session.destroy(() => res.redirect('/login'
   }
 })();
 
+// ---- GẮN MODULE OMS (DB riêng, an toàn) ----
+try {
+  const { mountOMS } = await import('./oms.js');
+  mountOMS(app, { mysql: mysql2, express });
+  console.log('✅ Module OMS đã gắn');
+} catch (e) {
+  console.error('⚠️ OMS module lỗi (app chính vẫn chạy):', e.message);
+}
 
 // Từ đây trở xuống yêu cầu đăng nhập
 app.use((req, res, next) => {
