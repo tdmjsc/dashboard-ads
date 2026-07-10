@@ -962,6 +962,111 @@ export function mountOMS(app, { mysql, express }) {
     res.json(rows.map(r => r.danh_muc));
   }));
 
+  // ===================== ĐỒNG BỘ SẢN PHẨM TỪ GOOGLE SHEET =====================
+  // Đọc SHEET_CSV_URL (đã cấu hình sẵn trong .env), lấy cột Sản phẩm + Giá nhập
+  // Upsert: nếu SP đã có (theo tên) → cập nhật giá, nếu chưa → thêm mới
+  app.post('/oms/api/products/sync-sheet', requireRole('admin'), wrap(async (req, res) => {
+    const csvUrl = process.env.SHEET_CSV_URL || '';
+    if (!csvUrl) return res.status(400).json({ error: 'Chưa khai biến SHEET_CSV_URL trên server' });
+
+    // Đọc CSV từ Google Sheet
+    const resp = await fetch(csvUrl, { redirect: 'follow' });
+    if (!resp.ok) return res.status(502).json({ error: 'Không đọc được Google Sheet: HTTP ' + resp.status });
+    const text = await resp.text();
+
+    // Parse CSV (tự nhận dấu phân tách)
+    const firstLine = (text.split(/\r?\n/)[0] || '');
+    const nch = ch => (firstLine.split(ch).length - 1);
+    let delim = ',';
+    if (nch('\t') > nch(delim)) delim = '\t';
+    if (nch(';') > nch(delim)) delim = ';';
+
+    const rows = [];
+    let row = [], cur = '', q = false;
+    for (let i = 0; i < text.length; i++) {
+      const c = text[i];
+      if (q) { if (c === '"') { if (text[i+1] === '"') { cur += '"'; i++; } else q = false; } else cur += c; }
+      else if (c === '"') q = true;
+      else if (c === delim) { row.push(cur.trim()); cur = ''; }
+      else if (c === '\n') { row.push(cur.trim()); if (row.some(c => c)) rows.push(row); row = []; cur = ''; }
+      else if (c === '\r') {}
+      else cur += c;
+    }
+    if (cur || row.length) { row.push(cur.trim()); if (row.some(c => c)) rows.push(row); }
+
+    if (rows.length < 2) return res.status(400).json({ error: 'Sheet rỗng hoặc không đọc được dữ liệu' });
+
+    // Tìm cột Sản phẩm + Giá nhập từ header
+    const hdr = rows[0].map(h => h.toLowerCase().replace(/\s+/g, ' '));
+    const find = (keys) => hdr.findIndex(h => keys.some(k => h.includes(k)));
+
+    const colSP = find(['sản phẩm', 'san pham', 'sanpham', 'product', 'tên sp', 'ten sp']);
+    const colGiaNhap = find(['giá nhập', 'gia nhap', 'gianhap', 'giá vốn', 'gia von', 'cost']);
+    const colQuanLy = find(['quản lý', 'quan ly', 'phụ trách', 'phu trach', 'manager']);
+    const colDanhMuc = find(['danh mục', 'danh muc', 'loại', 'loai', 'category']);
+    const colMaSP = find(['mã sp', 'ma sp', 'masp', 'sku', 'code']);
+    const colGiaBan = find(['giá bán', 'gia ban', 'giaban', 'price', 'selling']);
+
+    if (colSP < 0) return res.status(400).json({
+      error: 'Không tìm thấy cột "Sản phẩm" trong Sheet. Header: ' + rows[0].join(' | '),
+      hint: 'Đổi tên cột chứa tên SP thành "Sản phẩm" hoặc "Tên SP"'
+    });
+
+    const toNum = v => {
+      const n = parseInt(String(v == null ? '' : v).replace(/[^\d]/g, ''), 10);
+      return isNaN(n) ? 0 : n;
+    };
+
+    // Đọc SP hiện có trong DB (để upsert theo tên)
+    const existing = await db('SELECT id, ten_sp FROM oms_products');
+    const existMap = {};
+    existing.forEach(p => { existMap[p.ten_sp.trim().toLowerCase()] = p.id; });
+
+    let added = 0, updated = 0, skipped = 0;
+    for (let i = 1; i < rows.length; i++) {
+      const r = rows[i];
+      const tenSP = (r[colSP] || '').trim();
+      if (!tenSP) { skipped++; continue; }
+
+      const giaNhap = colGiaNhap >= 0 ? toNum(r[colGiaNhap]) : 0;
+      const giaBan = colGiaBan >= 0 ? toNum(r[colGiaBan]) : 0;
+      const quanLy = colQuanLy >= 0 ? (r[colQuanLy] || '').trim() : '';
+      const danhMuc = colDanhMuc >= 0 ? (r[colDanhMuc] || '').trim() : '';
+      const maSP = colMaSP >= 0 ? (r[colMaSP] || '').trim() : '';
+
+      const key = tenSP.toLowerCase();
+
+      if (existMap[key]) {
+        // Cập nhật giá nhập + giá bán (nếu có)
+        const sets = ['gia_nhap=?'];
+        const vals = [giaNhap];
+        if (giaBan) { sets.push('gia_ban=?'); vals.push(giaBan); }
+        if (danhMuc) { sets.push('danh_muc=?'); vals.push(danhMuc); }
+        if (maSP) { sets.push('ma_sp=?'); vals.push(maSP); }
+        vals.push(existMap[key]);
+        await db(`UPDATE oms_products SET ${sets.join(',')} WHERE id=?`, vals);
+        updated++;
+      } else {
+        // Thêm mới
+        try {
+          await db(`INSERT INTO oms_products (ma_sp, ten_sp, gia_ban, gia_nhap, danh_muc, mo_ta)
+            VALUES (?,?,?,?,?,?)`, [maSP, tenSP, giaBan, giaNhap, danhMuc, quanLy ? 'QL: ' + quanLy : '']);
+          existMap[key] = true; // tránh duplicate trong cùng lần sync
+          added++;
+        } catch(e) { skipped++; }
+      }
+    }
+
+    res.json({
+      ok: true,
+      message: `Đồng bộ xong: ${added} SP mới, ${updated} cập nhật, ${skipped} bỏ qua`,
+      added, updated, skipped,
+      sheetRows: rows.length - 1,
+      columns: { sp: colSP, giaNhap: colGiaNhap, giaBan: colGiaBan, danhMuc: colDanhMuc, quanLy: colQuanLy, maSP: colMaSP },
+      header: rows[0]
+    });
+  }));
+
   // ===================== ĐĂNG KÝ LINK (NV Marketing khai báo) =====================
   app.get('/oms/api/links', omsAuth, wrap(async (req, res) => {
     const user = req.session.omsUser;
