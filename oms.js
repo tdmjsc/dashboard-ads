@@ -497,12 +497,9 @@ export function mountOMS(app, { mysql, express }) {
     const { username, password, ho_ten, role } = req.body;
     if (!username || !password) return res.status(400).json({ error: 'Thiếu username/password' });
     await ensureTables(getPool());
-    const result = await db('INSERT INTO oms_users (username, password, ho_ten, role) VALUES (?,?,?,?)',
+    await db('INSERT INTO oms_users (username, password, ho_ten, role) VALUES (?,?,?,?)',
       [username, password, ho_ten || username, role || 'sale']);
-    // Debug: đọc lại ngay để kiểm tra
-    const check = await db('SELECT COUNT(*) as cnt FROM oms_users');
-    const allUsers = await db('SELECT id, username FROM oms_users ORDER BY id');
-    res.json({ ok: true, debug: { insertId: result.insertId, affectedRows: result.affectedRows, totalUsers: check[0]?.cnt, allUsers } });
+    res.json({ ok: true });
   }));
 
   app.put('/oms/api/users/:id', requireRole('admin'), jsonParser, wrap(async (req, res) => {
@@ -846,6 +843,14 @@ export function mountOMS(app, { mysql, express }) {
   }));
 
   // ===================== KHỞI TẠO =====================
+  // CHẶN SERVICE WORKER CACHE cho tất cả API OMS
+  app.use('/oms', (req, res, next) => {
+    res.set('Cache-Control', 'no-store, no-cache, must-revalidate, proxy-revalidate');
+    res.set('Pragma', 'no-cache');
+    res.set('Expires', '0');
+    next();
+  });
+
   // Ensure tables khi có request đầu tiên
   let tableReady = false;
   app.use('/oms', async (req, res, next) => {
