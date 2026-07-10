@@ -275,6 +275,7 @@
   <div class="flex justify-between items-center mb-4">
     <h2 class="text-lg font-semibold">Quản lý sản phẩm</h2>
     <div class="flex gap-2">
+      <button onclick="syncSheet()" class="bg-yellow-500 text-white px-4 py-1.5 rounded-lg text-sm font-medium">🔄 Đồng bộ Google Sheet</button>
       <button onclick="openAddProduct()" class="bg-green-600 text-white px-4 py-1.5 rounded-lg text-sm font-medium">+ Thêm SP</button>
       <button onclick="openImportProducts()" class="bg-blue-600 text-white px-4 py-1.5 rounded-lg text-sm font-medium">📥 Import</button>
     </div>
@@ -962,6 +963,22 @@ async function doImportProducts(){
 }
 async function toggleProduct(id,active){await fetch(API+'/products/'+id,{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify({active})});loadProducts();}
 async function deleteProduct(id){if(!confirm('Xóa SP #'+id+'?'))return;await fetch(API+'/products/'+id,{method:'DELETE'});loadProducts();}
+
+async function syncSheet(){
+  if(!confirm('Đồng bộ sản phẩm từ Google Sheet?\n\n- SP mới sẽ được thêm\n- SP đã có sẽ cập nhật giá nhập\n- Không xóa SP cũ')) return;
+  const btn=event.target; btn.disabled=true; btn.textContent='⏳ Đang đồng bộ...';
+  try{
+    const r=await fetch(API+'/products/sync-sheet',{method:'POST'});
+    const d=await r.json();
+    if(d.ok){
+      alert(`✅ ${d.message}\n\nSheet: ${d.sheetRows} dòng\nCột nhận diện: ${d.header?.join(' | ')}`);
+      loadProducts();
+    } else {
+      alert('❌ '+(d.error||'Lỗi')+'\n'+(d.hint||''));
+    }
+  }catch(e){alert('❌ Lỗi kết nối: '+e.message);}
+  finally{ btn.disabled=false; btn.textContent='🔄 Đồng bộ Google Sheet'; }
+}
 
 // ========== ĐĂNG KÝ LINK ==========
 async function loadLinks(){
