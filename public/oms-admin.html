@@ -499,6 +499,83 @@
   </div>
 </div>
 
+<!-- Modal Chốt đơn chi tiết (Sale) — giống Sandbox -->
+<div id="chotDonModal" class="fixed inset-0 modal-bg flex items-center justify-center z-50 hidden">
+  <div class="bg-white rounded-xl shadow-2xl p-6 w-full max-w-2xl mx-4 max-h-[95vh] overflow-y-auto">
+    <div class="flex justify-between items-center mb-4">
+      <h2 class="text-lg font-bold">Chốt đơn hàng #<span id="cdId"></span></h2>
+      <button onclick="closeModal('chotDonModal')" class="text-gray-400 hover:text-gray-600 text-xl">&times;</button>
+    </div>
+
+    <!-- Thông tin khách -->
+    <div class="bg-gray-50 rounded-lg p-4 mb-4">
+      <h3 class="text-sm font-semibold text-gray-600 mb-2">Thông tin khách hàng</h3>
+      <div class="grid grid-cols-2 gap-3">
+        <div><label class="text-xs text-gray-500">Họ tên KH *</label><input type="text" id="cdTen" class="w-full text-sm"></div>
+        <div><label class="text-xs text-gray-500">Số điện thoại *</label><input type="text" id="cdSdt" class="w-full text-sm"></div>
+      </div>
+      <div class="mt-2"><label class="text-xs text-gray-500">Tin nhắn gốc</label><textarea id="cdTinNhan" class="w-full text-sm bg-white" rows="2" readonly></textarea></div>
+    </div>
+
+    <!-- Địa chỉ giao hàng -->
+    <div class="bg-gray-50 rounded-lg p-4 mb-4">
+      <h3 class="text-sm font-semibold text-gray-600 mb-2">Địa chỉ giao hàng</h3>
+      <div><label class="text-xs text-gray-500">Địa chỉ đầy đủ</label><input type="text" id="cdDiaChiFull" class="w-full text-sm mb-2" placeholder="Nhập hoặc sửa địa chỉ đầy đủ"></div>
+      <div class="grid grid-cols-2 md:grid-cols-4 gap-2">
+        <div><label class="text-xs text-gray-500">Số nhà/đường</label><input type="text" id="cdDiaChi" class="w-full text-sm"></div>
+        <div><label class="text-xs text-gray-500">Tỉnh/TP</label><input type="text" id="cdTinh" class="w-full text-sm"></div>
+        <div><label class="text-xs text-gray-500">Quận/Huyện</label><input type="text" id="cdQuan" class="w-full text-sm"></div>
+        <div><label class="text-xs text-gray-500">Phường/Xã</label><input type="text" id="cdPhuong" class="w-full text-sm"></div>
+      </div>
+    </div>
+
+    <!-- Sản phẩm -->
+    <div class="bg-blue-50 rounded-lg p-4 mb-4">
+      <h3 class="text-sm font-semibold text-blue-700 mb-2">Sản phẩm</h3>
+      <div class="grid grid-cols-1 gap-2">
+        <div><label class="text-xs text-gray-500">Chọn sản phẩm</label>
+          <select id="cdSanPhamSelect" class="w-full text-sm" onchange="cdSelectProduct()">
+            <option value="">-- Chọn từ danh sách --</option>
+          </select>
+        </div>
+        <div class="grid grid-cols-4 gap-2">
+          <div class="col-span-2"><label class="text-xs text-gray-500">Tên SP / Mô tả</label><input type="text" id="cdSanPham" class="w-full text-sm"></div>
+          <div><label class="text-xs text-gray-500">Đơn giá</label><input type="number" id="cdDonGia" class="w-full text-sm" onchange="cdCalc()"></div>
+          <div><label class="text-xs text-gray-500">Số lượng</label><input type="number" id="cdSoLuong" value="1" class="w-full text-sm" onchange="cdCalc()"></div>
+        </div>
+      </div>
+      <!-- Bảng tổng -->
+      <div class="mt-3 bg-white rounded p-3 text-sm">
+        <div class="flex justify-between"><span>Thành tiền:</span><span id="cdThanhTien" class="font-medium">0đ</span></div>
+        <div class="flex justify-between mt-1">
+          <span>Phí vận chuyển:</span>
+          <input type="number" id="cdPhiShip" class="w-24 text-right text-sm" value="0" onchange="cdCalc()">
+        </div>
+        <div class="flex justify-between mt-1">
+          <span>Khách đặt cọc:</span>
+          <input type="number" id="cdDatCoc" class="w-24 text-right text-sm" value="0" onchange="cdCalc()">
+        </div>
+        <div class="flex justify-between mt-2 pt-2 border-t border-gray-200 font-bold text-base">
+          <span>Phải thu (COD):</span><span id="cdTongTien" class="text-red-600">0đ</span>
+        </div>
+      </div>
+    </div>
+
+    <!-- Ghi chú -->
+    <div class="mb-4">
+      <label class="text-xs text-gray-500">Ghi chú giao hàng</label>
+      <textarea id="cdGhiChu" class="w-full text-sm" rows="2" placeholder="Cho xem và cho thử, gọi trước khi giao..."></textarea>
+    </div>
+
+    <!-- Nút hành động -->
+    <div class="flex gap-3">
+      <button onclick="submitChotDon()" class="flex-1 bg-green-600 text-white py-2.5 rounded-lg font-medium hover:bg-green-700">✅ Xác nhận chốt đơn</button>
+      <button onclick="submitChotDon('Không mua')" class="bg-gray-400 text-white px-4 py-2.5 rounded-lg font-medium hover:bg-gray-500">❌ Không mua</button>
+      <button onclick="closeModal('chotDonModal')" class="bg-gray-200 px-4 py-2.5 rounded-lg font-medium">Hủy</button>
+    </div>
+  </div>
+</div>
+
 <!-- Print Area -->
 <div id="printArea" class="hidden"></div>
 
@@ -535,7 +612,7 @@ function onLoggedIn() {
   document.getElementById('userBadge').textContent = '👤 ' + (currentUser.ho_ten||currentUser.username) + ' (admin)';
   document.getElementById('webhookUrl').textContent = location.origin + '/oms/webhook';
   loadStats(); loadOrders(); loadUsers(); loadConfig();
-  loadEmployeeLists();
+  loadEmployeeLists(); loadProducts();
 }
 
 // ========== TABS ==========
@@ -670,12 +747,82 @@ async function loadSaleView() {
       <div class="flex gap-2 items-end mt-3">
         <textarea id="snote-${o.id}" class="flex-1 text-sm" rows="1" placeholder="Ghi chú cuộc gọi...">${esc(o.ghi_chu||'')}</textarea>
         <div class="flex gap-1">
-          <button onclick="saleUpdate(${o.id},'Đã chốt')" class="bg-green-600 text-white px-3 py-1.5 rounded text-sm font-medium">✅ Chốt</button>
+          <button onclick="openChotDon(${o.id})" class="bg-green-600 text-white px-3 py-1.5 rounded text-sm font-medium">✅ Chốt đơn</button>
           <button onclick="saleUpdate(${o.id},'Không mua')" class="bg-gray-400 text-white px-3 py-1.5 rounded text-sm font-medium">❌</button>
           <button onclick="saleSaveNote(${o.id})" class="bg-blue-500 text-white px-3 py-1.5 rounded text-sm font-medium">💾</button>
         </div>
       </div>
     </div>`).join('');
+}
+let chotDonId = null;
+function openChotDon(id){
+  const o = saleOrders.find(x=>x.id===id); if(!o) return;
+  chotDonId = id;
+  document.getElementById('cdId').textContent = id;
+  document.getElementById('cdTen').value = o.ten_kh||'';
+  document.getElementById('cdSdt').value = o.sdt||'';
+  document.getElementById('cdTinNhan').value = o.dia_chi_full||'';
+  document.getElementById('cdDiaChiFull').value = o.dia_chi_full||'';
+  document.getElementById('cdDiaChi').value = o.dia_chi||'';
+  document.getElementById('cdTinh').value = o.tinh||'';
+  document.getElementById('cdQuan').value = o.quan||'';
+  document.getElementById('cdPhuong').value = o.phuong||'';
+  document.getElementById('cdSanPham').value = o.san_pham||'';
+  document.getElementById('cdDonGia').value = o.gia_ban||0;
+  document.getElementById('cdSoLuong').value = o.so_luong||1;
+  document.getElementById('cdPhiShip').value = o.phi_ship||0;
+  document.getElementById('cdDatCoc').value = 0;
+  document.getElementById('cdGhiChu').value = o.ghi_chu||'';
+  // Load dropdown SP
+  const sel = document.getElementById('cdSanPhamSelect');
+  sel.innerHTML = '<option value="">-- Chọn từ danh sách --</option>' +
+    allProducts.filter(p=>p.active).map(p=>`<option value="${p.id}" data-gia="${p.gia_ban}" data-ten="${esc(p.ten_sp)}">${esc(p.ten_sp)} — ${fmt(p.gia_ban)}</option>`).join('');
+  cdCalc();
+  document.getElementById('chotDonModal').classList.remove('hidden');
+}
+function cdSelectProduct(){
+  const sel = document.getElementById('cdSanPhamSelect');
+  const opt = sel.options[sel.selectedIndex];
+  if(opt && opt.value){
+    document.getElementById('cdSanPham').value = opt.dataset.ten||'';
+    document.getElementById('cdDonGia').value = opt.dataset.gia||0;
+    cdCalc();
+  }
+}
+function cdCalc(){
+  const gia = parseInt(document.getElementById('cdDonGia').value)||0;
+  const sl = parseInt(document.getElementById('cdSoLuong').value)||1;
+  const ship = parseInt(document.getElementById('cdPhiShip').value)||0;
+  const coc = parseInt(document.getElementById('cdDatCoc').value)||0;
+  const thanhTien = gia * sl;
+  const cod = thanhTien + ship - coc;
+  document.getElementById('cdThanhTien').textContent = fmt(thanhTien);
+  document.getElementById('cdTongTien').textContent = fmt(cod);
+}
+async function submitChotDon(trangThai){
+  if(!chotDonId) return;
+  const tt = trangThai || 'Đã chốt';
+  const gia = parseInt(document.getElementById('cdDonGia').value)||0;
+  const sl = parseInt(document.getElementById('cdSoLuong').value)||1;
+  const body = {
+    trang_thai: tt,
+    ten_kh: document.getElementById('cdTen').value,
+    sdt: document.getElementById('cdSdt').value,
+    dia_chi_full: document.getElementById('cdDiaChiFull').value,
+    san_pham: document.getElementById('cdSanPham').value,
+    gia_ban: gia,
+    so_luong: sl,
+    tong_tien: gia * sl,
+    phi_ship: parseInt(document.getElementById('cdPhiShip').value)||0,
+    ghi_chu: document.getElementById('cdGhiChu').value,
+  };
+  const r = await fetch(API+'/orders/'+chotDonId,{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});
+  const d = await r.json();
+  if(d.ok){
+    closeModal('chotDonModal');
+    loadSaleView();
+    if(tt==='Đã chốt') alert('✅ Đã chốt đơn #'+chotDonId);
+  } else alert('❌ '+(d.error||'Lỗi'));
 }
 async function saleUpdate(id,tt){
   const note = document.getElementById('snote-'+id)?.value||'';
@@ -1025,8 +1172,15 @@ async function loadLinks(){
     </tr>`).join('')||'<tr><td colspan="6" class="p-6 text-center text-gray-400">Chưa có link nào. NV Marketing khai báo link landing page tại đây.</td></tr>';
 }
 function openAddLink(){
-  // Load danh sách SP vào dropdown nếu chưa có
   if(!allProducts.length) loadProducts();
+  // Auto-fill tên NV Marketing từ tài khoản đang đăng nhập
+  const nvField = document.getElementById('lkNv');
+  if(nvField){
+    nvField.value = currentUser?.ho_ten || '';
+    // Marketing: không cho sửa tên (gắn cố định với tài khoản)
+    if(currentUser?.role === 'marketing') nvField.readOnly = true;
+    else nvField.readOnly = false;
+  }
   document.getElementById('addLinkModal').classList.remove('hidden');
 }
 async function submitLink(){
