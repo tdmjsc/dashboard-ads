@@ -728,7 +728,8 @@ async function submitEdit(){
     trang_thai:document.getElementById('editTT').value,sale_phu_trach:document.getElementById('editSale').value,
     ghi_chu:document.getElementById('editNote').value};
   const r=await fetch(API+'/orders/'+id,{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});
-  if((await r.json()).ok){closeModal('editOrderModal');loadOrders(currentPage);} else alert('❌ Lỗi');
+  const d=await r.json();
+  if(d.ok){closeModal('editOrderModal');loadOrders(currentPage);} else alert('❌ '+(d.error||'Lỗi không xác định'));
 }
 async function deleteOrder(id){ if(!confirm('Xóa đơn #'+id+'?')) return; await fetch(API+'/orders/'+id,{method:'DELETE'}); loadOrders(currentPage); }
 
@@ -752,7 +753,8 @@ function openAddUser(){ document.getElementById('addUserModal').classList.remove
 async function submitUser(){
   const body={username:document.getElementById('newUser').value,password:document.getElementById('newPass').value,ho_ten:document.getElementById('newName').value,role:document.getElementById('newRole').value};
   const r=await fetch(API+'/users',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});
-  if((await r.json()).ok){closeModal('addUserModal');loadUsers();} else alert('Lỗi');
+  const d=await r.json();
+  if(d.ok){closeModal('addUserModal');loadUsers();alert('✅ Đã tạo tài khoản');} else alert('❌ '+(d.error||'Lỗi không xác định'));
 }
 async function toggleUser(id,active){ await fetch(API+'/users/'+id,{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify({active})}); loadUsers(); }
 
