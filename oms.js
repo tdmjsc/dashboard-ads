@@ -745,6 +745,30 @@ export function mountOMS(app, { mysql, express }) {
         if (!wCfg.ghtk_token) { results.push({ id: o.id, ok: false, error: 'Chưa cấu hình GHTK Token cho kho "'+wCfg.ten_kho+'"' }); continue; }
         if (!wCfg.pick_address) { results.push({ id: o.id, ok: false, error: 'Chưa nhập địa chỉ lấy hàng cho kho "'+wCfg.ten_kho+'"' }); continue; }
 
+        // Xử lý tỉnh/quận/phường người nhận — strip prefix
+        let recvProvince = (o.tinh || '').replace(/^(TP |Tỉnh |T\.P\.?\s*)/i, '').trim();
+        let recvDistrict = (o.quan || '').trim();
+        let recvWard = (o.phuong || '').trim();
+
+        // Nếu tỉnh trống → thử tách lại từ địa chỉ đầy đủ
+        if (!recvProvince && o.dia_chi_full) {
+          const addr = parseAddress(o.dia_chi_full);
+          recvProvince = (addr.tinh || '').replace(/^(TP |Tỉnh |T\.P\.?\s*)/i, '').trim();
+          recvDistrict = recvDistrict || addr.quan;
+          recvWard = recvWard || addr.phuong;
+          // Cập nhật lại DB để lần sau không lỗi
+          if (recvProvince) {
+            try { await db('UPDATE oms_orders SET tinh=?, quan=?, phuong=?, dia_chi=? WHERE id=?',
+              [addr.tinh, addr.quan, addr.phuong, addr.diaChi, o.id]); } catch(e) {}
+          }
+        }
+
+        if (!recvProvince) { results.push({ id: o.id, ok: false, error: `Đơn #${o.id}: Thiếu tỉnh/TP người nhận. Vui lòng sửa địa chỉ đơn hàng.` }); continue; }
+
+        // Strip prefix quận/huyện/phường cho GHTK
+        const cleanDistrict = recvDistrict.replace(/^(Quận|Huyện|Thị xã|TX\.?|Thành phố)\s*/i, '').trim();
+        const cleanWard = recvWard.replace(/^(Phường|Xã|Thị trấn|TT\.?)\s*/i, '').trim();
+
         const body = {
           products: [{ name: o.san_pham || 'Sản phẩm', weight: 0.5, quantity: o.so_luong || 1, product_code: '' }],
           order: {
@@ -757,9 +781,9 @@ export function mountOMS(app, { mysql, express }) {
             pick_tel: wCfg.pick_tel,
             name: o.ten_kh,
             address: o.dia_chi || o.dia_chi_full,
-            province: o.tinh?.replace(/^(TP |Tỉnh )/,'') || '',
-            district: o.quan || '',
-            ward: o.phuong || '',
+            province: recvProvince,
+            district: recvDistrict,
+            ward: recvWard,
             tel: o.sdt,
             email: '',
             hamlet: 'Khác',
@@ -1091,6 +1115,32 @@ export function mountOMS(app, { mysql, express }) {
     const sales = await db("SELECT DISTINCT ho_ten FROM oms_users WHERE role='sale' AND active=1");
     const mkts = await db("SELECT DISTINCT ho_ten FROM oms_users WHERE role='marketing' AND active=1");
     res.json({ sales: sales.map(r => r.ho_ten), marketings: mkts.map(r => r.ho_ten) });
+  }));
+
+  // ===================== API ĐỊA CHỈ VIỆT NAM (proxy từ API công khai) =====================
+  // Frontend gọi endpoint này → server fetch từ provinces.open-api.vn
+  app.get('/oms/api/address/provinces', wrap(async (req, res) => {
+    try {
+      const r = await fetch('https://provinces.open-api.vn/api/?depth=1');
+      const data = await r.json();
+      res.json(data);
+    } catch(e) { res.json(TINH_TP.map((t,i) => ({ code: i+1, name: t }))); }
+  }));
+
+  app.get('/oms/api/address/districts/:provinceCode', wrap(async (req, res) => {
+    try {
+      const r = await fetch(`https://provinces.open-api.vn/api/p/${req.params.provinceCode}?depth=2`);
+      const data = await r.json();
+      res.json(data.districts || []);
+    } catch(e) { res.json([]); }
+  }));
+
+  app.get('/oms/api/address/wards/:districtCode', wrap(async (req, res) => {
+    try {
+      const r = await fetch(`https://provinces.open-api.vn/api/d/${req.params.districtCode}?depth=2`);
+      const data = await r.json();
+      res.json(data.wards || []);
+    } catch(e) { res.json([]); }
   }));
 
   // ===================== WEBHOOK LOG =====================
