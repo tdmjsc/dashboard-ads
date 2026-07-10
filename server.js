@@ -424,8 +424,11 @@ app.get('/api/me', (req, res) => {
 // Chặn Dashboard, Marketing và mọi API khác.
 app.use((req, res, next) => {
   const me = req.session.user;
+  const p = req.path;
+  // Cho phép TẤT CẢ role truy cập trang OMS + /go-oms
+  if (p.startsWith('/oms') || p === '/go-oms') return next();
+
   if (me && me.role === 'product') {
-    const p = req.path;
     const allowed = ['/products.html', '/my-salary.html', '/logout', '/api/products/report', '/api/me', '/api/my-salary/months', '/api/my-salary/detail'].includes(p) || p === '/favicon.ico';
     if (!allowed) {
       if (p.startsWith('/api/')) return res.status(403).json({ error: 'Không có quyền truy cập mục này.' });

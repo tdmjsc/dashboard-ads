@@ -287,31 +287,75 @@ export function mountOMS(app, { mysql, express }) {
   };
 
   // ---- Middleware xác thực OMS ----
-  // Tự động nhận admin từ dashboard chính → không cần đăng nhập OMS riêng
-  function autoSetOmsUser(req) {
+  // Tự động đăng nhập OMS từ tài khoản dashboard chính
+  // Admin → admin OMS, Marketing/Sale → tìm khớp trong oms_users
+  async function autoSetOmsUser(req) {
     if (req.session?.omsUser) return;
-    if (req.session?.user?.role === 'admin') {
-      req.session.omsUser = { id: 0, username: req.session.user.user || 'admin', ho_ten: 'Admin', role: 'admin' };
+    if (!req.session?.user) return;
+
+    const mainUser = req.session.user;
+    const mainUsername = mainUser.user || '';
+
+    // Admin dashboard chính → admin OMS
+    if (mainUser.role === 'admin') {
+      req.session.omsUser = { id: 0, username: mainUsername, ho_ten: 'Admin', role: 'admin' };
+      return;
     }
+
+    // Tìm user OMS khớp với tài khoản dashboard chính
+    // So sánh: username, hoặc tên hiển thị (salaryName, manager, employees[0])
+    try {
+      const searchNames = [mainUsername];
+      if (mainUser.salaryName) searchNames.push(mainUser.salaryName);
+      if (mainUser.manager) searchNames.push(mainUser.manager);
+      if (mainUser.employees?.length) searchNames.push(...mainUser.employees);
+
+      for (const name of searchNames) {
+        if (!name) continue;
+        const rows = await db('SELECT * FROM oms_users WHERE (username=? OR ho_ten=?) AND active=1 LIMIT 1', [name, name]);
+        if (rows.length) {
+          req.session.omsUser = { id: rows[0].id, username: rows[0].username, ho_ten: rows[0].ho_ten, role: rows[0].role };
+          return;
+        }
+      }
+    } catch(e) { /* DB chưa sẵn sàng */ }
   }
 
   function omsAuth(req, res, next) {
-    autoSetOmsUser(req);
-    if (req.session?.omsUser) return next();
-    res.status(401).json({ error: 'Chưa đăng nhập OMS' });
+    // Phải gọi async
+    autoSetOmsUser(req).then(() => {
+      if (req.session?.omsUser) return next();
+      res.status(401).json({ error: 'Chưa đăng nhập OMS' });
+    }).catch(() => res.status(401).json({ error: 'Chưa đăng nhập OMS' }));
   }
 
   function requireRole(...roles) {
     return (req, res, next) => {
-      autoSetOmsUser(req);
-      if (!req.session?.omsUser) return res.status(401).json({ error: 'Chưa đăng nhập' });
-      if (roles.includes(req.session.omsUser.role)) return next();
-      res.status(403).json({ error: 'Không đủ quyền' });
+      autoSetOmsUser(req).then(() => {
+        if (!req.session?.omsUser) return res.status(401).json({ error: 'Chưa đăng nhập' });
+        if (roles.includes(req.session.omsUser.role)) return next();
+        res.status(403).json({ error: 'Không đủ quyền' });
+      }).catch(() => res.status(401).json({ error: 'Lỗi xác thực' }));
     };
   }
 
   const jsonParser = express.json();
   const formParser = express.urlencoded({ extended: true });
+
+  // ===================== SMART REDIRECT → OMS =====================
+  // Từ trang chủ bấm vào → tự redirect sang đúng trang OMS theo role
+  app.get('/go-oms', async (req, res) => {
+    try { await autoSetOmsUser(req); } catch(e) {}
+    const role = req.session?.omsUser?.role;
+    if (!role) return res.redirect('/oms-admin.html'); // chưa login → trang admin (có modal login)
+    const pages = {
+      admin: '/oms-admin.html',
+      sale: '/oms-admin.html',      // Sale dùng chung trang admin (tab bị ẩn theo role)
+      marketing: '/oms-admin.html',
+      warehouse: '/oms-admin.html',
+    };
+    res.redirect(pages[role] || '/oms-admin.html');
+  });
 
   // ===================== ĐĂNG NHẬP OMS =====================
   app.post('/oms/login', jsonParser, formParser, wrap(async (req, res) => {
@@ -1315,6 +1359,23 @@ export function mountOMS(app, { mysql, express }) {
 
   // Bắt đầu cronjob
   try { scheduleCronjob(); } catch(e) {}
+
+  // ---- Inject nút "Lưu đơn VN" vào trang chủ dashboard ----
+  app.get('/api/oms-button', (req, res) => {
+    res.type('text/javascript').send(`
+      (function(){
+        if(document.getElementById('oms-float-btn')) return;
+        var btn = document.createElement('a');
+        btn.id = 'oms-float-btn';
+        btn.href = '/go-oms';
+        btn.innerHTML = '📋 Lưu đơn VN';
+        btn.style.cssText = 'position:fixed;bottom:20px;right:20px;z-index:9999;background:#2563eb;color:#fff;padding:12px 20px;border-radius:12px;font-size:14px;font-weight:600;text-decoration:none;box-shadow:0 4px 12px rgba(37,99,235,.4);transition:transform .15s;font-family:sans-serif;';
+        btn.onmouseenter = function(){ btn.style.transform='scale(1.05)'; };
+        btn.onmouseleave = function(){ btn.style.transform='scale(1)'; };
+        document.body.appendChild(btn);
+      })();
+    `);
+  });
 
   console.log('[OMS] Module đã gắn thành công: /oms/*');
 }
