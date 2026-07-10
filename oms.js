@@ -576,6 +576,14 @@ export function mountOMS(app, { mysql, express }) {
     res.json({ ok: true });
   }));
 
+  // Xóa tài khoản (không cho xóa admin mặc định)
+  app.delete('/oms/api/users/:id', requireRole('admin'), wrap(async (req, res) => {
+    const [user] = await db('SELECT username FROM oms_users WHERE id=?', [req.params.id]);
+    if (user?.username === 'admin') return res.status(400).json({ error: 'Không thể xóa tài khoản admin mặc định' });
+    await db('DELETE FROM oms_users WHERE id=?', [req.params.id]);
+    res.json({ ok: true });
+  }));
+
   // ===================== CẤU HÌNH API (Admin) =====================
   app.get('/oms/api/config', requireRole('admin'), wrap(async (req, res) => {
     await ensureTables(getPool());
