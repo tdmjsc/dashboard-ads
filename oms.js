@@ -449,8 +449,19 @@ export function mountOMS(app, { mysql, express }) {
 
     const now = new Date().toISOString().slice(0, 19).replace('T', ' ');
 
-    // Ghi nhận toàn bộ tin nhắn gốc (address + message + url)
-    const tinNhanGoc = [diaChiFull, d.message || '', d.url_page || ''].filter(Boolean).join(' | ');
+    // Ghi nhận toàn bộ nội dung gốc từ webhook (bỏ URL, UTM, field hệ thống)
+    // Capture mọi field text có thể chứa thông tin sản phẩm/số lượng/giá
+    const skipKeys = new Set(['utm_source','utm_medium','utm_campaign','utm_content',
+      'url_page','page_url','referer','referrer','ip','user_agent','_token','_method']);
+    const rawParts = [];
+    for (const [key, val] of Object.entries(d)) {
+      if (skipKeys.has(key)) continue;
+      if (typeof val === 'string' && val.trim() && !val.startsWith('http')) {
+        rawParts.push(val.trim());
+      }
+    }
+    // Loại bỏ trùng lặp (name, phone đã hiện riêng)
+    const tinNhanGoc = [...new Set(rawParts)].join(' | ');
 
     await db(`INSERT INTO oms_orders
       (ngay_ve, nv_marketing, ten_kh, sdt, dia_chi_full, tinh, quan, phuong, dia_chi,
