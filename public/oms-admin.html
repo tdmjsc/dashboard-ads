@@ -61,15 +61,22 @@
 </head>
 <body class="min-h-screen">
 <script>
-// ---- XOÁ SERVICE WORKER + CACHE ngay khi load ----
-// Fix lỗi F5 hiện data cũ do SW cache của dashboard cũ
+// ---- XOÁ SERVICE WORKER + CACHE + FORCE RELOAD ----
 (async()=>{
   try{
     const regs=await navigator.serviceWorker.getRegistrations();
-    for(const r of regs) await r.unregister();
     const names=await caches.keys();
-    for(const n of names) await caches.delete(n);
-    if(regs.length) console.log('[OMS] Đã xoá',regs.length,'Service Worker +',names.length,'caches');
+    if(regs.length || names.length){
+      for(const r of regs) await r.unregister();
+      for(const n of names) await caches.delete(n);
+      console.log('[OMS] Xoá',regs.length,'SW +',names.length,'caches → reload');
+      // Force reload 1 lần duy nhất sau khi xoá SW
+      if(!sessionStorage.getItem('oms_sw_cleared')){
+        sessionStorage.setItem('oms_sw_cleared','1');
+        location.reload(true);
+        return;
+      }
+    }
   }catch(e){}
 })();
 </script>
@@ -146,7 +153,12 @@
       <div><label class="text-xs text-gray-500 block mb-1">Trạng thái</label>
         <select id="fStatus" class="text-sm"><option value="">Tất cả</option>
         <option>Đơn mới</option><option>Đã chốt</option><option>Đang ship</option>
-        <option>Ship thành công</option><option>Hoàn thành công</option><option>Không mua</option></select></div>
+        <option>Ship thành công</option><option>Hoàn thành công</option><option>Không mua</option>
+        <option>KNM lần 1</option><option>KNM lần 2</option><option>KNM lần 3</option>
+        <option>KNM lần 4</option><option>KNM lần 5</option><option>KNM lần 6</option></select></div>
+      <div><label class="text-xs text-gray-500 block mb-1">Đăng VC</label>
+        <select id="fDangKy" class="text-sm"><option value="">Tất cả</option>
+        <option value="chua_dang">Chưa đăng</option><option value="da_dang">Đã đăng</option></select></div>
       <div><label class="text-xs text-gray-500 block mb-1">Từ</label><input type="date" id="fTu" class="text-sm"></div>
       <div><label class="text-xs text-gray-500 block mb-1">Đến</label><input type="date" id="fDen" class="text-sm"></div>
       <button onclick="loadOrders()" class="bg-blue-600 text-white px-4 py-1.5 rounded-lg text-sm font-medium">🔍 Lọc</button>
@@ -198,7 +210,7 @@
           <option value="">Tất cả Sale</option>
         </select>
       </div>
-      <input type="text" id="saleSearch" placeholder="🔍 Tìm tên, SĐT..." class="text-sm flex-1 min-w-[160px]" onkeyup="if(event.key==='Enter')loadSaleView()">
+      <input type="text" id="saleSearch" placeholder="🔍 Tìm tên, SĐT..." class="text-sm flex-1 min-w-[120px]" onkeyup="if(event.key==='Enter')loadSaleView()">
       <select id="saleStatusFilter" class="text-sm" onchange="loadSaleView()">
         <option value="">Tất cả TT</option><option value="Đơn mới" selected>Đơn mới</option>
         <option value="Đã chốt">Đã chốt</option><option value="Không mua">Không mua</option>
@@ -206,6 +218,10 @@
         <option value="KNM lần 3">KNM lần 3</option><option value="KNM lần 4">KNM lần 4</option>
         <option value="KNM lần 5">KNM lần 5</option><option value="KNM lần 6">KNM lần 6</option>
       </select>
+    </div>
+    <div class="flex flex-wrap gap-3 items-center mt-2">
+      <div><label class="text-xs text-gray-500 block mb-1">Từ ngày</label><input type="date" id="saleTu" class="text-sm"></div>
+      <div><label class="text-xs text-gray-500 block mb-1">Đến ngày</label><input type="date" id="saleDen" class="text-sm"></div>
       <button onclick="loadSaleView()" class="bg-emerald-600 text-white px-4 py-1.5 rounded-lg text-sm font-medium">Lọc</button>
     </div>
   </div>
@@ -282,7 +298,17 @@
   </div>
   <!-- Shipping status filter -->
   <div class="bg-white rounded-xl p-3 shadow-sm mb-4">
-    <div class="text-xs text-gray-500 mb-2 font-medium">Lọc theo trạng thái vận chuyển:</div>
+    <div class="flex flex-wrap gap-3 items-center mb-2">
+      <div><label class="text-xs text-gray-500 block mb-1">Từ ngày</label><input type="date" id="whTu" class="text-sm"></div>
+      <div><label class="text-xs text-gray-500 block mb-1">Đến ngày</label><input type="date" id="whDen" class="text-sm"></div>
+      <select id="whDangKy" class="text-sm" onchange="loadWhView()">
+        <option value="">Tất cả</option>
+        <option value="chua_dang">Chưa đăng VC</option>
+        <option value="da_dang">Đã đăng VC</option>
+      </select>
+      <button onclick="loadWhView()" class="bg-amber-600 text-white px-4 py-1.5 rounded-lg text-sm font-medium">Lọc</button>
+    </div>
+    <div class="text-xs text-gray-500 mb-1 font-medium">Trạng thái vận chuyển:</div>
     <div id="whShipStatusTabs" class="flex flex-wrap gap-1"></div>
   </div>
   <div class="flex gap-2 mb-4 flex-wrap">
@@ -815,10 +841,17 @@ async function loadOrders(page) {
   const params = new URLSearchParams({page:currentPage,limit:30});
   const q=document.getElementById('fSearch').value, tt=document.getElementById('fStatus').value;
   const tu=document.getElementById('fTu').value, den=document.getElementById('fDen').value;
+  const dk=document.getElementById('fDangKy')?.value||'';
   if(q)params.set('q',q); if(tt)params.set('trang_thai',tt); if(tu)params.set('tu',tu); if(den)params.set('den',den);
+  if(dk)params.set('dang_ky',dk);
   const r = await fetch(API+'/orders?'+params); const d = await r.json(); allOrders = d.orders||[];
 
-  document.getElementById('orderTable').innerHTML = allOrders.map(o=>`
+  // Client-side filter đăng VC (backup nếu backend chưa hỗ trợ)
+  let displayOrders = allOrders;
+  if(dk === 'chua_dang') displayOrders = allOrders.filter(o => !o.ma_van_don);
+  else if(dk === 'da_dang') displayOrders = allOrders.filter(o => !!o.ma_van_don);
+
+  document.getElementById('orderTable').innerHTML = displayOrders.map(o=>`
     <tr class="border-t hover:bg-gray-50">
       <td class="p-2 text-center"><input type="checkbox" class="chkOrder" value="${o.id}"></td>
       <td class="p-2 font-mono text-xs">${o.id}</td><td class="p-2 text-xs">${fmtDate(o.ngay_ve)}</td>
@@ -842,11 +875,15 @@ async function loadSaleView() {
   const sale = document.getElementById('saleFilter').value;
   const q = document.getElementById('saleSearch').value;
   const tt = document.getElementById('saleStatusFilter').value;
+  const saleTu = document.getElementById('saleTu').value;
+  const saleDen = document.getElementById('saleDen').value;
 
   // 1) Fetch ALL orders (không filter trạng thái) để đếm stats
   const allParams = new URLSearchParams({limit:1000});
   if(sale) allParams.set('sale', sale);
   if(q) allParams.set('q', q);
+  if(saleTu) allParams.set('tu', saleTu);
+  if(saleDen) allParams.set('den', saleDen);
   let allForStats = [];
   try {
     const rAll = await fetch(API+'/orders?'+allParams);
@@ -859,6 +896,8 @@ async function loadSaleView() {
   if(sale) params.set('sale', sale);
   if(q) params.set('q', q);
   if(tt) params.set('trang_thai', tt);
+  if(saleTu) params.set('tu', saleTu);
+  if(saleDen) params.set('den', saleDen);
   try {
     const r = await fetch(API+'/orders?'+params);
     const d = await r.json();
@@ -1298,12 +1337,24 @@ function whFilterByTT(tt) { whFilterTT = tt; whFilterVC = ''; loadWhView(); }
 function whFilterByVC(vc) { whFilterVC = vc; whFilterTT = ''; loadWhView(); }
 
 async function loadWhView() {
-  // Lấy tất cả đơn từ Đã chốt trở đi (trừ Đơn mới, Không mua, KNM)
-  const promises = ['Đã chốt','Đang ship','Ship thành công','Hoàn thành công'].map(tt =>
-    fetch(API+'/orders?limit=500&trang_thai='+encodeURIComponent(tt)).then(r=>r.json())
-  );
+  const whTu = document.getElementById('whTu')?.value || '';
+  const whDen = document.getElementById('whDen')?.value || '';
+  const whDK = document.getElementById('whDangKy')?.value || '';
+
+  // Lấy tất cả đơn từ Đã chốt trở đi
+  const statuses = ['Đã chốt','Đang ship','Ship thành công','Hoàn thành công'];
+  const promises = statuses.map(tt => {
+    const p = new URLSearchParams({limit:500, trang_thai:tt});
+    if(whTu) p.set('tu', whTu);
+    if(whDen) p.set('den', whDen);
+    return fetch(API+'/orders?'+p).then(r=>r.json());
+  });
   const results = await Promise.all(promises);
   whOrders = results.flatMap(d => d.orders || []);
+
+  // Filter đăng VC
+  if(whDK === 'chua_dang') whOrders = whOrders.filter(o => !o.ma_van_don);
+  else if(whDK === 'da_dang') whOrders = whOrders.filter(o => !!o.ma_van_don);
 
   const ready = whOrders.filter(o=>o.trang_thai==='Đã chốt').length;
   const shipping = whOrders.filter(o=>o.trang_thai==='Đang ship').length;
@@ -1362,23 +1413,34 @@ async function loadWhView() {
           </div>
           ${o.ma_van_don?`
             <div class="mt-2 bg-blue-50 rounded px-3 py-2">
-              <div class="flex items-center gap-2">
-                <span class="text-xs font-medium text-blue-700">Mã vận đơn:</span>
-                <code class="text-sm font-mono text-blue-900 select-all">${esc(o.ma_van_don)}</code>
+              <div class="flex items-center gap-2 flex-wrap">
+                <span class="text-xs font-medium text-blue-700">MVĐ:</span>
+                <code class="text-xs font-mono text-blue-900 select-all">${esc(o.ma_van_don)}</code>
                 <span class="badge badge-shipping ml-auto">${esc(o.don_vi_vc)}</span>
               </div>
+              <div class="flex items-center gap-2 mt-1">
+                <span class="text-xs text-gray-400">MĐH:</span>
+                <code class="text-[10px] font-mono text-gray-500">${esc(o.ma_don_hang||'')}</code>
+              </div>
               ${o.trang_thai_vc?`<div class="text-xs text-gray-500 mt-1">📋 ${esc(o.trang_thai_vc)}</div>`:''}
-              <div class="flex gap-2 mt-2">
+              <div class="flex gap-2 mt-2 flex-wrap">
                 ${o.don_vi_vc==='GHTK'?`<button onclick="whCancelGHTK(${o.id},this)" class="bg-red-100 text-red-700 px-3 py-1 rounded text-xs font-medium hover:bg-red-200">❌ Huỷ đăng</button>`:''}
-                <button onclick="whSyncSingle(${o.id},this)" class="bg-yellow-100 text-yellow-700 px-3 py-1 rounded text-xs font-medium hover:bg-yellow-200">🔄 Cập nhật TT</button>
-                <button onclick="whPrintOne(${o.id})" class="bg-gray-100 text-gray-700 px-3 py-1 rounded text-xs font-medium hover:bg-gray-200">🖨️ In</button>
+                <button onclick="whSyncSingle(${o.id},this)" class="bg-yellow-100 text-yellow-700 px-3 py-1 rounded text-xs font-medium hover:bg-yellow-200">🔄 TT</button>
+                <button onclick="whPrintOne(${o.id})" class="bg-gray-100 text-gray-700 px-3 py-1 rounded text-xs font-medium hover:bg-gray-200">🖨️</button>
               </div>
             </div>`:`
-            <div class="mt-2 flex gap-2 flex-wrap">
-              <button onclick="whPushSingle(${o.id},'ghtk',this)" class="bg-green-100 text-green-700 px-3 py-1 rounded text-xs font-medium hover:bg-green-200">🚚 GHTK</button>
-              <button onclick="whPushSingle(${o.id},'vtp',this)" class="bg-red-100 text-red-700 px-3 py-1 rounded text-xs font-medium hover:bg-red-200">🚚 VTP</button>
-              <button onclick="whPrintOne(${o.id})" class="bg-gray-100 text-gray-700 px-3 py-1 rounded text-xs font-medium hover:bg-gray-200">🖨️ In phiếu</button>
-              <button onclick="openChotDon(${o.id})" class="bg-blue-100 text-blue-700 px-3 py-1 rounded text-xs font-medium hover:bg-blue-200">✏️ Sửa đơn</button>
+            <div class="mt-2">
+              <div class="flex items-center gap-2 mb-2">
+                <span class="text-xs text-gray-400">MĐH:</span>
+                <code class="text-[10px] font-mono text-gray-500">${esc(o.ma_don_hang||'(tự sinh)')}</code>
+                <button onclick="whChangeOrderCode(${o.id})" class="text-[10px] text-blue-600 hover:underline">✏️ Đổi mã</button>
+              </div>
+              <div class="flex gap-2 flex-wrap">
+                <button onclick="whPushSingle(${o.id},'ghtk',this)" class="bg-green-100 text-green-700 px-3 py-1 rounded text-xs font-medium hover:bg-green-200">🚚 GHTK</button>
+                <button onclick="whPushSingle(${o.id},'vtp',this)" class="bg-red-100 text-red-700 px-3 py-1 rounded text-xs font-medium hover:bg-red-200">🚚 VTP</button>
+                <button onclick="whPrintOne(${o.id})" class="bg-gray-100 text-gray-700 px-3 py-1 rounded text-xs font-medium hover:bg-gray-200">🖨️ In</button>
+                <button onclick="openChotDon(${o.id})" class="bg-blue-100 text-blue-700 px-3 py-1 rounded text-xs font-medium hover:bg-blue-200">✏️ Sửa</button>
+              </div>
             </div>`}
           ${o.ghi_chu?`<div class="text-xs text-gray-400 mt-1 italic">📝 ${esc(o.ghi_chu)}</div>`:''}
         </div>
@@ -1446,6 +1508,19 @@ async function whSyncSingle(id,btn){
   loadWhView();
 }
 function whPrintOne(id){ const o=whOrders.find(x=>x.id===id); if(o) printShipLabel([o]); }
+
+async function whChangeOrderCode(id){
+  const o = whOrders.find(x=>x.id===id);
+  const current = o?.ma_don_hang || '';
+  const newCode = prompt('Nhập mã đơn hàng mới (để trống = tự sinh):', current);
+  if(newCode === null) return; // cancelled
+  try {
+    const r = await fetch(API+'/change-order-code',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({id, ma_don_hang: newCode})});
+    const d = await r.json();
+    if(d.ok) { alert('✅ Mã đơn hàng mới: '+d.ma_don_hang); loadWhView(); }
+    else alert('❌ '+(d.error||'Lỗi'));
+  } catch(e) { alert('❌ '+e.message); }
+}
 function whPrintSelected(){ const ids=getWhSelectedIds(); if(!ids.length) return alert('Chọn đơn'); printShipLabel(whOrders.filter(o=>ids.includes(o.id))); }
 
 // ========== THÊM / SỬA / XÓA ĐƠN ==========
