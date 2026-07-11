@@ -265,12 +265,33 @@
     <h3 class="font-semibold mb-3 text-gray-700">📊 Phễu chuyển đổi</h3>
     <div id="mktFunnel" class="space-y-2"></div>
   </div>
+  <!-- Analytics: Thống kê theo NV + nguồn -->
+  <div class="grid grid-cols-1 md:grid-cols-2 gap-4 mb-6">
+    <div class="bg-white rounded-xl p-4 shadow-sm">
+      <div class="flex justify-between items-center mb-3">
+        <h3 class="font-semibold text-gray-700">👤 Theo NV Marketing</h3>
+        <button onclick="sortMktTable('nv')" class="text-xs text-blue-600 hover:underline">↕️ Sắp xếp</button>
+      </div>
+      <table class="w-full text-sm"><thead><tr class="bg-gray-50 text-gray-600 text-left text-xs">
+        <th class="p-2">NV</th><th class="p-2 text-right">Tổng</th><th class="p-2 text-right">Chốt</th><th class="p-2 text-right">KNM</th><th class="p-2 text-right">K.Mua</th>
+      </tr></thead><tbody id="mktByNvTable"></tbody></table>
+    </div>
+    <div class="bg-white rounded-xl p-4 shadow-sm">
+      <div class="flex justify-between items-center mb-3">
+        <h3 class="font-semibold text-gray-700">📡 Theo nguồn dữ liệu</h3>
+        <button onclick="sortMktTable('nguon')" class="text-xs text-blue-600 hover:underline">↕️ Sắp xếp</button>
+      </div>
+      <table class="w-full text-sm"><thead><tr class="bg-gray-50 text-gray-600 text-left text-xs">
+        <th class="p-2">Nguồn</th><th class="p-2 text-right">Tổng</th><th class="p-2 text-right">Chốt</th><th class="p-2 text-right">Doanh thu</th>
+      </tr></thead><tbody id="mktByNguonTable"></tbody></table>
+    </div>
+  </div>
   <!-- Table -->
   <div class="bg-white rounded-xl shadow-sm overflow-x-auto">
     <table class="w-full text-sm">
       <thead><tr class="bg-gray-50 text-gray-600 text-left">
         <th class="p-3">#</th><th class="p-3">Thời gian</th><th class="p-3">Khách hàng</th>
-        <th class="p-3">SĐT</th><th class="p-3">SP</th><th class="p-3 text-right">Giá trị</th><th class="p-3 text-center">Trạng thái</th>
+        <th class="p-3">SĐT</th><th class="p-3">SP</th><th class="p-3">Nguồn</th><th class="p-3 text-right">Giá trị</th><th class="p-3 text-center">Trạng thái</th>
       </tr></thead>
       <tbody id="mktOrderTable"></tbody>
     </table>
@@ -581,6 +602,7 @@
       <div><label class="text-xs text-gray-500">URL landing page *</label><input type="text" id="lkUrl" class="w-full text-sm" placeholder="sp-phuong.ladipage.com"></div>
       <div><label class="text-xs text-gray-500">Sản phẩm *</label><select id="lkProduct" class="w-full text-sm"><option value="">-- Chọn SP --</option></select></div>
       <div><label class="text-xs text-gray-500">NV Marketing *</label><input type="text" id="lkNv" class="w-full text-sm" placeholder="Tên đầy đủ NV"></div>
+      <div><label class="text-xs text-gray-500">Nguồn dữ liệu</label><input type="text" id="lkNguon" class="w-full text-sm" placeholder="Facebook, Google, Tiktok..."></div>
       <div><label class="text-xs text-gray-500">Ghi chú</label><input type="text" id="lkNote" class="w-full text-sm"></div>
     </div>
     <div class="flex gap-3 mt-5">
@@ -1499,8 +1521,12 @@ async function loadMktView() {
   document.getElementById('mktOrderTable').innerHTML = orders.map((o,i)=>`
     <tr class="border-t hover:bg-orange-50/40"><td class="p-3 text-gray-400">${i+1}</td><td class="p-3 text-xs">${fmtDate(o.ngay_ve)}</td>
     <td class="p-3 font-medium">${esc(o.ten_kh)}</td><td class="p-3">${esc(maskPhone(o.sdt))}</td><td class="p-3 text-xs">${esc(o.san_pham||'')}</td>
+    <td class="p-3 text-xs">${esc(o.nguon_du_lieu||'')}</td>
     <td class="p-3 text-right">${fmt(o.tong_tien)}</td><td class="p-3 text-center">${badgeTT(o.trang_thai)}</td></tr>
-  `).join('')||'<tr><td colspan="7" class="p-6 text-center text-gray-400">Chưa có đơn</td></tr>';
+  `).join('')||'<tr><td colspan="8" class="p-6 text-center text-gray-400">Chưa có đơn</td></tr>';
+
+  // Load analytics
+  loadMktAnalytics();
   document.getElementById('mktOrderCount').textContent = `${orders.length} / ${d.total||0} đơn` + (nv ? ` — NV: ${nv}` : ' — Tất cả Marketing');
 }
 
@@ -1952,13 +1978,64 @@ function openAddLink(){
 }
 async function submitLink(){
   const body={url_pattern:document.getElementById('lkUrl').value,product_id:parseInt(document.getElementById('lkProduct').value)||0,
-    nv_marketing:document.getElementById('lkNv').value,ghi_chu:document.getElementById('lkNote').value};
+    nv_marketing:document.getElementById('lkNv').value,nguon_du_lieu:document.getElementById('lkNguon').value,ghi_chu:document.getElementById('lkNote').value};
   const r=await fetch(API+'/links',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});
   const d=await r.json();
   if(d.ok){closeModal('addLinkModal');loadLinks();alert('✅ Đã đăng ký link');} else alert('❌ '+(d.error||'Lỗi'));
 }
 async function toggleLink(id,active){await fetch(API+'/links/'+id,{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify({active})});loadLinks();}
 async function deleteLink(id){if(!confirm('Xóa link #'+id+'?'))return;await fetch(API+'/links/'+id,{method:'DELETE'});loadLinks();}
+
+// ========== MARKETING ANALYTICS ==========
+let mktNvData = [], mktNguonData = [];
+let mktNvSortAsc = false, mktNguonSortAsc = false;
+
+async function loadMktAnalytics() {
+  const tu = document.getElementById('mktTu')?.value || '';
+  const den = document.getElementById('mktDen')?.value || '';
+  const params = new URLSearchParams();
+  if(tu) params.set('tu', tu);
+  if(den) params.set('den', den);
+  try {
+    const r = await fetch(API+'/mkt-stats?'+params);
+    const d = await r.json();
+    mktNvData = d.byNV || [];
+    mktNguonData = d.byNguon || [];
+    renderMktNvTable();
+    renderMktNguonTable();
+  } catch(e) {}
+}
+
+function renderMktNvTable() {
+  document.getElementById('mktByNvTable').innerHTML = mktNvData.map(r => `
+    <tr class="border-t"><td class="p-2 font-medium">${esc(r.ten)}</td>
+    <td class="p-2 text-right font-bold">${r.tongDon}</td>
+    <td class="p-2 text-right text-green-600">${r.daChot}</td>
+    <td class="p-2 text-right text-orange-500">${r.knm}</td>
+    <td class="p-2 text-right text-gray-400">${r.khongMua}</td></tr>
+  `).join('') || '<tr><td colspan="5" class="p-3 text-center text-gray-400">Chưa có</td></tr>';
+}
+
+function renderMktNguonTable() {
+  document.getElementById('mktByNguonTable').innerHTML = mktNguonData.map(r => `
+    <tr class="border-t"><td class="p-2 font-medium">${esc(r.nguon)}</td>
+    <td class="p-2 text-right font-bold">${r.tongDon}</td>
+    <td class="p-2 text-right text-green-600">${r.daChot}</td>
+    <td class="p-2 text-right">${fmt(r.doanhThu)}</td></tr>
+  `).join('') || '<tr><td colspan="4" class="p-3 text-center text-gray-400">Chưa có</td></tr>';
+}
+
+function sortMktTable(type) {
+  if(type === 'nv') {
+    mktNvSortAsc = !mktNvSortAsc;
+    mktNvData.sort((a,b) => mktNvSortAsc ? a.tongDon - b.tongDon : b.tongDon - a.tongDon);
+    renderMktNvTable();
+  } else {
+    mktNguonSortAsc = !mktNguonSortAsc;
+    mktNguonData.sort((a,b) => mktNguonSortAsc ? a.tongDon - b.tongDon : b.tongDon - a.tongDon);
+    renderMktNguonTable();
+  }
+}
 
 // ========== KHO ==========
 let allWarehouses = [];
