@@ -952,16 +952,15 @@ export function mountOMS(app, { mysql, express }) {
           const data = await resp.json();
           if (data.success && data.order) {
             const st = data.order.status;
-            let newStatus = '';
-            if (st === 5 || st === 6) newStatus = 'Ship thành công'; // Đã giao
-            else if (st === 13 || st === 21) newStatus = 'Hoàn thành công'; // Đã hoàn
-            if (newStatus) {
-              await db('UPDATE oms_orders SET trang_thai=?, trang_thai_vc=? WHERE id=?',
-                [newStatus, data.order.status_text || String(st), o.id]);
-              // Nếu ship thành công → push Misa
-              if (newStatus === 'Ship thành công') {
-                try { await pushToMisa(o.id); } catch(e) {}
-              }
+            const statusText = data.order.status_text || String(st);
+            let newTrangThai = 'Đang ship'; // giữ nguyên mặc định
+            if (st === 5 || st === 6) newTrangThai = 'Ship thành công';
+            else if (st === 13 || st === 21) newTrangThai = 'Hoàn thành công';
+            // Luôn cập nhật trang_thai_vc cho mọi trạng thái
+            await db('UPDATE oms_orders SET trang_thai=?, trang_thai_vc=? WHERE id=?',
+              [newTrangThai, statusText, o.id]);
+            if (newTrangThai === 'Ship thành công') {
+              try { await pushToMisa(o.id); } catch(e) {}
             }
           }
         } catch(e) { console.error('[OMS] GHTK sync error:', o.id, e.message); }
@@ -981,15 +980,14 @@ export function mountOMS(app, { mysql, express }) {
           const data = await resp.json();
           if (data.status === 200 && data.data) {
             const st = data.data.ORDER_STATUS;
-            let newStatus = '';
-            if (st === 501 || st === 503) newStatus = 'Ship thành công';
-            else if (st === 504 || st === 505) newStatus = 'Hoàn thành công';
-            if (newStatus) {
-              await db('UPDATE oms_orders SET trang_thai=?, trang_thai_vc=? WHERE id=?',
-                [newStatus, data.data.ORDER_STATUSTEXT || String(st), o.id]);
-              if (newStatus === 'Ship thành công') {
-                try { await pushToMisa(o.id); } catch(e) {}
-              }
+            const statusText = data.data.ORDER_STATUSTEXT || String(st);
+            let newTrangThai = 'Đang ship';
+            if (st === 501 || st === 503) newTrangThai = 'Ship thành công';
+            else if (st === 504 || st === 505) newTrangThai = 'Hoàn thành công';
+            await db('UPDATE oms_orders SET trang_thai=?, trang_thai_vc=? WHERE id=?',
+              [newTrangThai, statusText, o.id]);
+            if (newTrangThai === 'Ship thành công') {
+              try { await pushToMisa(o.id); } catch(e) {}
             }
           }
         } catch(e) { console.error('[OMS] VTP sync error:', o.id, e.message); }
