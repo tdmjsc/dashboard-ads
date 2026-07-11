@@ -1227,10 +1227,18 @@ async function loadWhView() {
             ${o.tinh?`<div class="text-xs text-gray-400">🏘️ ${[o.phuong,o.quan,o.tinh].filter(Boolean).join(', ')}</div>`:''}
           </div>
           ${o.ma_van_don?`
-            <div class="mt-2 bg-blue-50 rounded px-3 py-2 flex items-center gap-2">
-              <span class="text-xs font-medium text-blue-700">Mã vận đơn:</span>
-              <code class="text-sm font-mono text-blue-900 select-all">${esc(o.ma_van_don)}</code>
-              <span class="badge badge-shipping ml-auto">${esc(o.don_vi_vc)}</span>
+            <div class="mt-2 bg-blue-50 rounded px-3 py-2">
+              <div class="flex items-center gap-2">
+                <span class="text-xs font-medium text-blue-700">Mã vận đơn:</span>
+                <code class="text-sm font-mono text-blue-900 select-all">${esc(o.ma_van_don)}</code>
+                <span class="badge badge-shipping ml-auto">${esc(o.don_vi_vc)}</span>
+              </div>
+              ${o.trang_thai_vc?`<div class="text-xs text-gray-500 mt-1">📋 ${esc(o.trang_thai_vc)}</div>`:''}
+              <div class="flex gap-2 mt-2">
+                <button onclick="whCancelGHTK(${o.id})" class="bg-red-100 text-red-700 px-3 py-1 rounded text-xs font-medium hover:bg-red-200">❌ Huỷ đăng</button>
+                <button onclick="whSyncSingle(${o.id})" class="bg-yellow-100 text-yellow-700 px-3 py-1 rounded text-xs font-medium hover:bg-yellow-200">🔄 Cập nhật TT</button>
+                <button onclick="whPrintOne(${o.id})" class="bg-gray-100 text-gray-700 px-3 py-1 rounded text-xs font-medium hover:bg-gray-200">🖨️ In</button>
+              </div>
             </div>`:`
             <div class="mt-2 flex gap-2">
               <button onclick="whPushSingle(${o.id},'ghtk')" class="bg-green-100 text-green-700 px-3 py-1 rounded text-xs font-medium hover:bg-green-200">🚚 GHTK</button>
@@ -1256,19 +1264,52 @@ async function whBulkPush(carrier){
   const name=carrier==='ghtk'?'GHTK':'Viettel Post';
   if(!confirm(`Đẩy ${ids.length} đơn sang ${name}?`)) return;
   const ep=carrier==='ghtk'?'/push-ghtk':'/push-vtp';
-  const r=await fetch(API+ep,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({ids})});
-  const d=await r.json(); const ok=(d.results||[]).filter(x=>x.ok).length;
-  const fail=(d.results||[]).filter(x=>!x.ok);
-  alert(`✅ ${ok}/${ids.length}`+(fail.length?'\n❌:\n'+fail.map(f=>`#${f.id}: ${f.error}`).join('\n'):''));
+  document.getElementById('whSelectedInfo').textContent='⏳ Đang đẩy đơn...';
+  try{
+    const r=await fetch(API+ep,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({ids})});
+    const d=await r.json(); const ok=(d.results||[]).filter(x=>x.ok).length;
+    const fail=(d.results||[]).filter(x=>!x.ok);
+    let msg=`✅ Đẩy thành công ${ok}/${ids.length} đơn sang ${name}`;
+    if(ok>0) msg+='\n\nMã vận đơn:\n'+(d.results||[]).filter(x=>x.ok).map(x=>`#${x.id} → ${x.label}`).join('\n');
+    if(fail.length) msg+='\n\n❌ Lỗi:\n'+fail.map(f=>`#${f.id}: ${f.error}`).join('\n');
+    alert(msg);
+  }catch(e){ alert('❌ Lỗi kết nối: '+e.message); }
   loadWhView();
 }
 async function whPushSingle(id,carrier){
   const name=carrier==='ghtk'?'GHTK':'VTP';
   if(!confirm(`Đẩy đơn #${id} sang ${name}?`)) return;
   const ep=carrier==='ghtk'?'/push-ghtk':'/push-vtp';
-  const r=await fetch(API+ep,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({ids:[id]})});
-  const d=await r.json(); const res=d.results?.[0];
-  if(res?.ok) alert('✅ Mã vận đơn: '+(res.label||'')); else alert('❌ '+( res?.error||'Lỗi'));
+  // Disable button and show loading
+  event.target.disabled=true; event.target.textContent='⏳ Đang đẩy...';
+  try{
+    const r=await fetch(API+ep,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({ids:[id]})});
+    const d=await r.json(); const res=d.results?.[0];
+    if(res?.ok) alert(`✅ Đã đẩy đơn #${id} sang ${name} thành công!\n\nMã vận đơn: ${res.label||'(chờ)'}`);
+    else alert('❌ Lỗi đẩy đơn #'+id+':\n'+(res?.error||'Lỗi không xác định'));
+  }catch(e){ alert('❌ Lỗi kết nối: '+e.message); }
+  loadWhView();
+}
+
+async function whCancelGHTK(id){
+  if(!confirm(`⚠️ Huỷ đăng đơn #${id} trên GHTK?\n\nĐơn sẽ quay về trạng thái "Đã chốt" để đăng lại.`)) return;
+  event.target.disabled=true; event.target.textContent='⏳ Đang huỷ...';
+  try{
+    const r=await fetch(API+'/cancel-ghtk',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({ids:[id]})});
+    const d=await r.json(); const res=d.results?.[0];
+    if(res?.ok) alert('✅ Đã huỷ đơn #'+id+' trên GHTK');
+    else alert('❌ Không huỷ được: '+(res?.error||'Lỗi'));
+  }catch(e){ alert('❌ Lỗi: '+e.message); }
+  loadWhView();
+}
+
+async function whSyncSingle(id){
+  event.target.disabled=true; event.target.textContent='⏳ ...';
+  try{
+    const r=await fetch(API+'/sync-shipping',{method:'POST'});
+    const d=await r.json();
+    alert('✅ Đã cập nhật trạng thái vận chuyển');
+  }catch(e){ alert('❌ Lỗi: '+e.message); }
   loadWhView();
 }
 function whPrintOne(id){ const o=whOrders.find(x=>x.id===id); if(o) printShipLabel([o]); }
@@ -1312,8 +1353,34 @@ async function deleteOrder(id){ if(!confirm('Xóa đơn #'+id+'?')) return; awai
 
 // ========== BULK (Tab đơn hàng) ==========
 async function bulkAssign(){ const ids=getSelectedIds(); if(!ids.length) return alert('Chọn đơn'); const s=prompt('Tên Sale:'); if(!s)return; await fetch(API+'/assign-sale',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({ids,sale:s})}); loadOrders(currentPage); }
-async function bulkPushGHTK(){ const ids=getSelectedIds(); if(!ids.length) return alert('Chọn đơn'); if(!confirm(`Đẩy ${ids.length} đơn GHTK?`))return; const r=await fetch(API+'/push-ghtk',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({ids})}); const d=await r.json(); alert(`✅ ${(d.results||[]).filter(x=>x.ok).length}/${ids.length}`); loadOrders(currentPage); }
-async function bulkPushVTP(){ const ids=getSelectedIds(); if(!ids.length) return alert('Chọn đơn'); if(!confirm(`Đẩy ${ids.length} đơn VTP?`))return; const r=await fetch(API+'/push-vtp',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({ids})}); const d=await r.json(); alert(`✅ ${(d.results||[]).filter(x=>x.ok).length}/${ids.length}`); loadOrders(currentPage); }
+async function bulkPushGHTK(){
+  const ids=getSelectedIds(); if(!ids.length) return alert('Chọn đơn');
+  if(!confirm(`Đẩy ${ids.length} đơn GHTK?`))return;
+  try{
+    const r=await fetch(API+'/push-ghtk',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({ids})});
+    const d=await r.json();
+    const ok=(d.results||[]).filter(x=>x.ok); const fail=(d.results||[]).filter(x=>!x.ok);
+    let msg=`✅ Đẩy thành công ${ok.length}/${ids.length} đơn`;
+    if(ok.length) msg+='\n\nMã vận đơn:\n'+ok.map(x=>`#${x.id} → ${x.label}`).join('\n');
+    if(fail.length) msg+='\n\n❌ Lỗi:\n'+fail.map(f=>`#${f.id}: ${f.error}`).join('\n');
+    alert(msg);
+  }catch(e){ alert('❌ Lỗi kết nối: '+e.message); }
+  loadOrders(currentPage);
+}
+async function bulkPushVTP(){
+  const ids=getSelectedIds(); if(!ids.length) return alert('Chọn đơn');
+  if(!confirm(`Đẩy ${ids.length} đơn VTP?`))return;
+  try{
+    const r=await fetch(API+'/push-vtp',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({ids})});
+    const d=await r.json();
+    const ok=(d.results||[]).filter(x=>x.ok); const fail=(d.results||[]).filter(x=>!x.ok);
+    let msg=`✅ Đẩy thành công ${ok.length}/${ids.length} đơn`;
+    if(ok.length) msg+='\n\nMã vận đơn:\n'+ok.map(x=>`#${x.id} → ${x.label}`).join('\n');
+    if(fail.length) msg+='\n\n❌ Lỗi:\n'+fail.map(f=>`#${f.id}: ${f.error}`).join('\n');
+    alert(msg);
+  }catch(e){ alert('❌ Lỗi kết nối: '+e.message); }
+  loadOrders(currentPage);
+}
 async function syncShipping(){ if(!confirm('Đồng bộ vận chuyển?'))return; const r=await fetch(API+'/sync-shipping',{method:'POST'}); alert((await r.json()).message||'Xong'); loadOrders(currentPage); }
 
 // ========== TÀI KHOẢN ==========
