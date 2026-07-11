@@ -122,6 +122,7 @@ async function ensureTables(pool) {
       utm_content VARCHAR(255) DEFAULT '',
       don_vi_vc VARCHAR(40) DEFAULT '' COMMENT 'GHTK hoặc VTP',
       ma_van_don VARCHAR(100) DEFAULT '' COMMENT 'Tracking ID từ GHTK/VTP',
+      ma_don_hang VARCHAR(50) DEFAULT '' COMMENT 'Mã đơn hàng gửi VC (unique, có thể đổi)',
       trang_thai_vc VARCHAR(100) DEFAULT '' COMMENT 'Trạng thái từ đơn vị vận chuyển',
       da_xuat_hd TINYINT DEFAULT 0 COMMENT 'Đã xuất hóa đơn Misa chưa',
       misa_invoice_id VARCHAR(100) DEFAULT '',
@@ -176,6 +177,7 @@ async function ensureTables(pool) {
     "tong_tien BIGINT DEFAULT 0",
     "phi_ship BIGINT DEFAULT 0",
     "da_thanh_toan TINYINT DEFAULT 0",
+    "ma_don_hang VARCHAR(50) DEFAULT ''",
   ];
   for (const col of addCols) {
     try { await pool.query(`ALTER TABLE oms_orders ADD COLUMN ${col}`); } catch(e) {}
@@ -342,6 +344,14 @@ export function mountOMS(app, { mysql, express }) {
 
   const jsonParser = express.json();
   const formParser = express.urlencoded({ extended: true });
+
+  // CHẶN CACHE cho file HTML OMS — phải đặt TRƯỚC express.static
+  app.get('/oms-admin.html', (req, res, next) => {
+    res.set('Cache-Control', 'no-store, no-cache, must-revalidate, proxy-revalidate');
+    res.set('Pragma', 'no-cache');
+    res.set('Expires', '0');
+    next();
+  });
 
   // ===================== SMART REDIRECT → OMS =====================
   // Từ trang chủ bấm vào → tự redirect sang đúng trang OMS theo role
@@ -795,10 +805,17 @@ export function mountOMS(app, { mysql, express }) {
         const cleanDistrict = recvDistrict.replace(/^(Quận|Huyện|Thị xã|TX\.?|Thành phố)\s*/i, '').trim();
         const cleanWard = recvWard.replace(/^(Phường|Xã|Thị trấn|TT\.?)\s*/i, '').trim();
 
+        // Sinh/lấy mã đơn hàng unique
+        let maDonHang = o.ma_don_hang;
+        if (!maDonHang) {
+          maDonHang = `OMS-${o.id}-${Date.now().toString(36).toUpperCase()}`;
+          await db('UPDATE oms_orders SET ma_don_hang=? WHERE id=?', [maDonHang, o.id]);
+        }
+
         const body = {
           products: [{ name: o.san_pham || 'Sản phẩm', weight: 0.5, quantity: o.so_luong || 1, product_code: '' }],
           order: {
-            id: `OMS-${o.id}`,
+            id: maDonHang,
             pick_name: wCfg.pick_name,
             pick_money: o.tong_tien || 0,
             pick_address: wCfg.pick_address,
@@ -881,8 +898,14 @@ export function mountOMS(app, { mysql, express }) {
 
     for (const o of orders) {
       try {
+        // Sinh mã đơn hàng nếu chưa có
+        let maDonHang = o.ma_don_hang;
+        if (!maDonHang) {
+          maDonHang = `OMS-${o.id}-${Date.now().toString(36).toUpperCase()}`;
+          await db('UPDATE oms_orders SET ma_don_hang=? WHERE id=?', [maDonHang, o.id]);
+        }
         const body = {
-          ORDER_NUMBER: `OMS-${o.id}`,
+          ORDER_NUMBER: maDonHang,
           SENDER_FULLNAME: process.env.VTP_SENDER_NAME || 'Shop',
           SENDER_ADDRESS: process.env.VTP_SENDER_ADDRESS || '',
           SENDER_PHONE: process.env.VTP_SENDER_PHONE || '',
@@ -920,6 +943,15 @@ export function mountOMS(app, { mysql, express }) {
     res.json({ results });
   }));
 
+  // ===================== ĐỔI MÃ ĐƠN HÀNG =====================
+  app.post('/oms/api/change-order-code', requireRole('admin', 'warehouse'), jsonParser, wrap(async (req, res) => {
+    const { id, ma_don_hang } = req.body;
+    if (!id) return res.status(400).json({ error: 'Thiếu ID đơn' });
+    const newCode = ma_don_hang || `OMS-${id}-${Date.now().toString(36).toUpperCase()}`;
+    await db('UPDATE oms_orders SET ma_don_hang=? WHERE id=?', [newCode, id]);
+    res.json({ ok: true, ma_don_hang: newCode });
+  }));
+
   // ===================== HUỶ ĐƠN GHTK =====================
   app.post('/oms/api/cancel-ghtk', requireRole('admin', 'warehouse'), jsonParser, wrap(async (req, res) => {
     const { ids } = req.body;
@@ -944,7 +976,9 @@ export function mountOMS(app, { mysql, express }) {
         const data = await resp.json();
 
         if (data.success) {
-          await db(`UPDATE oms_orders SET don_vi_vc='', ma_van_don='', trang_thai='Đã chốt', trang_thai_vc='Đã huỷ GHTK' WHERE id=?`, [o.id]);
+          // Sinh mã đơn hàng mới để lần đăng lại không bị trùng
+          const newMaDH = `OMS-${o.id}-${Date.now().toString(36).toUpperCase()}`;
+          await db(`UPDATE oms_orders SET don_vi_vc='', ma_van_don='', ma_don_hang=?, trang_thai='Đã chốt', trang_thai_vc='Đã huỷ GHTK' WHERE id=?`, [newMaDH, o.id]);
           results.push({ id: o.id, ok: true, message: 'Đã huỷ trên GHTK' });
         } else {
           results.push({ id: o.id, ok: false, error: data.message || 'GHTK từ chối huỷ' });
@@ -1446,7 +1480,7 @@ export function mountOMS(app, { mysql, express }) {
   }));
 
   // ===================== KHỞI TẠO =====================
-  // CHẶN SERVICE WORKER CACHE cho tất cả API OMS
+  // CHẶN CACHE cho tất cả API OMS
   app.use('/oms', (req, res, next) => {
     res.set('Cache-Control', 'no-store, no-cache, must-revalidate, proxy-revalidate');
     res.set('Pragma', 'no-cache');
