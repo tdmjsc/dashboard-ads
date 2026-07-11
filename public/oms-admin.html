@@ -997,7 +997,7 @@ async function loadSaleView() {
         </div>
         ${o.nv_marketing?`<div class="text-xs text-gray-400 mt-1">MKT: ${esc(o.nv_marketing)}</div>`:''}
         ${o.sale_phu_trach?`<div class="text-xs text-purple-500 mt-1">👤 Sale: ${esc(o.sale_phu_trach)}</div>`:''}
-        ${(o.tin_nhan_goc||o.dia_chi_full||'').length > (o.dia_chi_full||'').length ? `<div class="text-xs bg-yellow-50 rounded px-2 py-1 mt-1">💬 ${esc(o.tin_nhan_goc)}</div>` : ''}
+        ${(o.tin_nhan_goc||o.dia_chi_full||'')?`<div class="text-xs bg-yellow-50 rounded px-2 py-1 mt-1 break-words">💬 ${esc(o.tin_nhan_goc||o.dia_chi_full||'')}</div>`:''}
       </div>
       <div class="flex gap-2 items-end mt-3">
         <textarea id="snote-${o.id}" class="flex-1 text-sm" rows="1" placeholder="Ghi chú cuộc gọi...">${esc((o.ghi_chu||'').startsWith('http')?'':o.ghi_chu||'')}</textarea>
