@@ -266,16 +266,21 @@
       <button onclick="loadWhView()" class="bg-gray-200 px-3 py-1.5 rounded-lg text-sm font-medium">🔄 Tải lại</button>
     </div>
   </div>
-  <div class="grid grid-cols-3 gap-3 mb-5">
-    <div class="bg-white rounded-xl p-4 shadow-sm text-center border-l-4 border-green-500">
+  <div class="grid grid-cols-3 gap-3 mb-4">
+    <div class="bg-white rounded-xl p-4 shadow-sm text-center border-l-4 border-green-500 cursor-pointer hover:shadow-md" onclick="whFilterByTT('Đã chốt')">
       <div class="text-2xl font-bold text-green-600" id="whStatReady">0</div><div class="text-xs text-gray-500">Chờ đóng gói</div>
     </div>
-    <div class="bg-white rounded-xl p-4 shadow-sm text-center border-l-4 border-yellow-500">
+    <div class="bg-white rounded-xl p-4 shadow-sm text-center border-l-4 border-yellow-500 cursor-pointer hover:shadow-md" onclick="whFilterByTT('Đang ship')">
       <div class="text-2xl font-bold text-yellow-600" id="whStatShipping">0</div><div class="text-xs text-gray-500">Đang ship</div>
     </div>
-    <div class="bg-white rounded-xl p-4 shadow-sm text-center border-l-4 border-blue-500">
+    <div class="bg-white rounded-xl p-4 shadow-sm text-center border-l-4 border-blue-500 cursor-pointer hover:shadow-md" onclick="whFilterByTT('')">
       <div class="text-2xl font-bold text-blue-600" id="whStatTotal">0</div><div class="text-xs text-gray-500">Tổng</div>
     </div>
+  </div>
+  <!-- Shipping status filter -->
+  <div class="bg-white rounded-xl p-3 shadow-sm mb-4">
+    <div class="text-xs text-gray-500 mb-2 font-medium">Lọc theo trạng thái vận chuyển:</div>
+    <div id="whShipStatusTabs" class="flex flex-wrap gap-1"></div>
   </div>
   <div class="flex gap-2 mb-4 flex-wrap">
     <button onclick="whSelectAll()" class="bg-gray-200 px-3 py-1.5 rounded text-sm font-medium">☑️ Chọn tất cả</button>
@@ -1239,13 +1244,19 @@ async function loadMktView() {
 }
 
 // ========== TAB 5: KHO VIEW ==========
+let whFilterTT = ''; // filter by trang_thai
+let whFilterVC = ''; // filter by trang_thai_vc
+
+function whFilterByTT(tt) { whFilterTT = tt; whFilterVC = ''; loadWhView(); }
+function whFilterByVC(vc) { whFilterVC = vc; whFilterTT = ''; loadWhView(); }
+
 async function loadWhView() {
-  const params = new URLSearchParams({limit:200, trang_thai:''});
-  // Kho: lấy đơn Đã chốt + Đang ship
-  const r1 = await fetch(API+'/orders?limit=200&trang_thai=Đã chốt');
-  const r2 = await fetch(API+'/orders?limit=200&trang_thai=Đang ship');
-  const d1 = await r1.json(); const d2 = await r2.json();
-  whOrders = [...(d1.orders||[]), ...(d2.orders||[])];
+  // Lấy tất cả đơn từ Đã chốt trở đi (trừ Đơn mới, Không mua, KNM)
+  const promises = ['Đã chốt','Đang ship','Ship thành công','Hoàn thành công'].map(tt =>
+    fetch(API+'/orders?limit=500&trang_thai='+encodeURIComponent(tt)).then(r=>r.json())
+  );
+  const results = await Promise.all(promises);
+  whOrders = results.flatMap(d => d.orders || []);
 
   const ready = whOrders.filter(o=>o.trang_thai==='Đã chốt').length;
   const shipping = whOrders.filter(o=>o.trang_thai==='Đang ship').length;
@@ -1253,7 +1264,38 @@ async function loadWhView() {
   document.getElementById('whStatShipping').textContent = shipping;
   document.getElementById('whStatTotal').textContent = whOrders.length;
 
-  if(!whOrders.length){ document.getElementById('whOrderGrid').innerHTML='<div class="col-span-2 text-center text-gray-400 py-8">Không có đơn cần đóng gói</div>'; return; }
+  // Đếm theo trang_thai_vc
+  const vcCounts = {};
+  whOrders.forEach(o => {
+    const vc = o.trang_thai_vc || '(Chưa có)';
+    vcCounts[vc] = (vcCounts[vc]||0) + 1;
+  });
+
+  // Render shipping status tabs
+  const vcColors = {
+    'Chờ lấy hàng':'bg-yellow-100 text-yellow-700', 'Đã lấy hàng':'bg-blue-100 text-blue-700',
+    'Đang giao hàng':'bg-orange-100 text-orange-700', 'Đã giao hàng':'bg-green-100 text-green-700',
+    'Đã thanh toán':'bg-emerald-100 text-emerald-700', 'Không giao được':'bg-red-100 text-red-700',
+    'Đang hoàn':'bg-purple-100 text-purple-700', 'Đã hoàn':'bg-red-100 text-red-700',
+    'Huỷ vận đơn':'bg-gray-200 text-gray-600', 'Đã huỷ GHTK':'bg-gray-200 text-gray-600',
+    'Yêu cầu giao lại':'bg-amber-100 text-amber-700', 'Bồi hoàn':'bg-pink-100 text-pink-700',
+  };
+  const tabsHtml = Object.entries(vcCounts)
+    .sort((a,b) => b[1] - a[1])
+    .map(([vc, cnt]) => {
+      const active = whFilterVC === vc ? 'ring-2 ring-offset-1 ring-blue-500 font-bold' : '';
+      const color = vcColors[vc] || 'bg-gray-100 text-gray-600';
+      return `<button onclick="whFilterByVC('${vc.replace(/'/g,"\\'")}')" class="px-2 py-1 rounded-full text-xs ${color} ${active}">${esc(vc)} <b>${cnt}</b></button>`;
+    }).join('');
+  document.getElementById('whShipStatusTabs').innerHTML =
+    `<button onclick="whFilterByVC('')" class="px-2 py-1 rounded-full text-xs ${!whFilterVC?'bg-blue-600 text-white':'bg-gray-100 text-gray-600'}">Tất cả <b>${whOrders.length}</b></button>` + tabsHtml;
+
+  // Apply filters
+  let filtered = whOrders;
+  if (whFilterTT) filtered = filtered.filter(o => o.trang_thai === whFilterTT);
+  if (whFilterVC) filtered = filtered.filter(o => (o.trang_thai_vc || '(Chưa có)') === whFilterVC);
+
+  if(!filtered.length){ document.getElementById('whOrderGrid').innerHTML='<div class="col-span-2 text-center text-gray-400 py-8">Không có đơn nào</div>'; return; }
 
   document.getElementById('whOrderGrid').innerHTML = whOrders.map(o=>`
     <div class="ship-card bg-white rounded-xl p-4 shadow-sm border ${o.trang_thai==='Đã chốt'?'border-green-200':'border-yellow-200'}">
