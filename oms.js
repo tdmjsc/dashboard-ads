@@ -449,18 +449,24 @@ export function mountOMS(app, { mysql, express }) {
 
     const now = new Date().toISOString().slice(0, 19).replace('T', ' ');
 
-    // Ghi nhận toàn bộ nội dung gốc từ webhook (bỏ URL, UTM, field hệ thống)
-    // Capture mọi field text có thể chứa thông tin sản phẩm/số lượng/giá
+    // Ghi nhận nội dung gốc từ webhook (bỏ URL, UTM, tracking, field hệ thống)
     const skipKeys = new Set(['utm_source','utm_medium','utm_campaign','utm_content',
-      'url_page','page_url','referer','referrer','ip','user_agent','_token','_method']);
+      'url_page','page_url','referer','referrer','ip','user_agent','_token','_method',
+      'form_id','variant_id','form_type','page_id','landing_page']);
+    const isJunk = (v) => {
+      if (v.startsWith('http') || v.startsWith('fb.') || v.startsWith('ladi.')) return true;
+      if (/^FORM\d/i.test(v)) return true;
+      if (/^[0-9a-f]{8}-[0-9a-f]{4}-/i.test(v)) return true; // UUID
+      if (v.length > 80) return true; // tracking strings
+      return false;
+    };
     const rawParts = [];
     for (const [key, val] of Object.entries(d)) {
       if (skipKeys.has(key)) continue;
-      if (typeof val === 'string' && val.trim() && !val.startsWith('http')) {
+      if (typeof val === 'string' && val.trim() && !isJunk(val.trim())) {
         rawParts.push(val.trim());
       }
     }
-    // Loại bỏ trùng lặp (name, phone đã hiện riêng)
     const tinNhanGoc = [...new Set(rawParts)].join(' | ');
 
     await db(`INSERT INTO oms_orders
