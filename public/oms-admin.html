@@ -199,7 +199,7 @@
     </div>
     <div class="flex gap-2">
       <button onclick="autoAssignFromSale()" class="bg-indigo-600 text-white px-3 py-1.5 rounded-lg text-sm font-medium">🔄 Chia đều Sale</button>
-      <button onclick="loadSaleView()" class="bg-gray-200 px-3 py-1.5 rounded-lg text-sm font-medium">🔄 Tải lại</button>
+      <button onclick="loadSaleView();" class="bg-gray-200 px-3 py-1.5 rounded-lg text-sm font-medium">🔄 Tải lại</button>
     </div>
   </div>
   <!-- Chọn Sale -->
@@ -212,7 +212,7 @@
       </div>
       <input type="text" id="saleSearch" placeholder="🔍 Tìm tên, SĐT..." class="text-sm flex-1 min-w-[120px]" onkeyup="if(event.key==='Enter')loadSaleView()">
       <select id="saleStatusFilter" class="text-sm" onchange="loadSaleView()">
-        <option value="">Tất cả TT</option><option value="Đơn mới" selected>Đơn mới</option>
+        <option value="">Tất cả TT</option><option value="Đơn mới">Đơn mới</option>
         <option value="Đã chốt">Đã chốt</option><option value="Không mua">Không mua</option>
         <option value="KNM lần 1">KNM lần 1</option><option value="KNM lần 2">KNM lần 2</option>
         <option value="KNM lần 3">KNM lần 3</option><option value="KNM lần 4">KNM lần 4</option>
@@ -774,8 +774,17 @@ async function logout() {
   window.location.href = '/logout'; 
 }
 function onLoggedIn() {
-  document.getElementById('userBadge').textContent = '👤 ' + (currentUser.ho_ten||currentUser.username) + ' (admin)';
+  document.getElementById('userBadge').textContent = '👤 ' + (currentUser.ho_ten||currentUser.username) + ' ('+currentUser.role+')';
   document.getElementById('webhookUrl').textContent = location.origin + '/oms/webhook';
+
+  // Default date range: 7 ngày gần nhất
+  const today = new Date();
+  const weekAgo = new Date(today);
+  weekAgo.setDate(weekAgo.getDate() - 7);
+  const fmtD = d => d.toISOString().slice(0,10);
+  ['saleTu','whTu','fTu','mktTu'].forEach(id => { const el=document.getElementById(id); if(el && !el.value) el.value=fmtD(weekAgo); });
+  ['saleDen','whDen','fDen','mktDen'].forEach(id => { const el=document.getElementById(id); if(el && !el.value) el.value=fmtD(today); });
+
   loadStats(); loadOrders(); loadUsers(); loadConfig();
   loadEmployeeLists(); loadProducts(); loadWarehouses();
 
@@ -988,7 +997,7 @@ async function loadSaleView() {
         </div>
         ${o.nv_marketing?`<div class="text-xs text-gray-400 mt-1">MKT: ${esc(o.nv_marketing)}</div>`:''}
         ${o.sale_phu_trach?`<div class="text-xs text-purple-500 mt-1">👤 Sale: ${esc(o.sale_phu_trach)}</div>`:''}
-      </div>
+        ${o.tin_nhan_goc?`<div class="text-xs bg-yellow-50 rounded px-2 py-1 mt-1">💬 ${esc(o.tin_nhan_goc)}</div>`:''}
       <div class="flex gap-2 items-end mt-3">
         <textarea id="snote-${o.id}" class="flex-1 text-sm" rows="1" placeholder="Ghi chú cuộc gọi...">${esc(o.ghi_chu||'')}</textarea>
         <div class="flex gap-1 flex-wrap">
@@ -1169,10 +1178,18 @@ class SearchableSelect {
   }
   _open() {
     this.el.classList.add('open');
-    this.input.select();
+    // Show all items when opening (clear filter text if a value was selected)
+    if(this.value && this.input.value === this.value) {
+      this.input.value = '';
+    }
+    this.input.focus();
     this._filter();
   }
-  _close() { this.el.classList.remove('open'); }
+  _close() {
+    this.el.classList.remove('open');
+    // Restore display value if nothing new was selected
+    if(this.value && !this.input.value) this.input.value = this.value;
+  }
   _filter() {
     const q = this.input.value.toLowerCase().trim();
     const norm = s => s.normalize('NFD').replace(/[\u0300-\u036f]/g,'').replace(/đ/g,'d').replace(/Đ/g,'D').toLowerCase();
@@ -1278,14 +1295,14 @@ async function openChotDon(id){
   document.getElementById('cdId').textContent = id;
   document.getElementById('cdTen').value = o.ten_kh||'';
   document.getElementById('cdSdt').value = o.sdt||'';
-  document.getElementById('cdTinNhan').value = o.dia_chi_full||'';
+  document.getElementById('cdTinNhan').value = o.tin_nhan_goc || o.dia_chi_full || '';
   document.getElementById('cdDiaChiFull').value = o.dia_chi_full||'';
   document.getElementById('cdDiaChi').value = o.dia_chi||'';
   document.getElementById('cdSanPham').value = o.san_pham||'';
   document.getElementById('cdDonGia').value = o.gia_ban||0;
   document.getElementById('cdSoLuong').value = o.so_luong||1;
   document.getElementById('cdPhiShip').value = o.phi_ship||0;
-  document.getElementById('cdDatCoc').value = 0;
+  document.getElementById('cdDatCoc').value = o.dat_coc||0;
   const defaultNote = 'Cho xem hàng cho thử hàng, khách không nghe máy gọi điện cho shop không tự ý huỷ đơn';
   document.getElementById('cdGhiChu').value = o.ghi_chu || defaultNote;
   // Load dropdown SP
@@ -1364,6 +1381,7 @@ async function submitChotDon(trangThai){
     so_luong: sl,
     tong_tien: gia * sl,
     phi_ship: parseInt(document.getElementById('cdPhiShip').value)||0,
+    dat_coc: parseInt(document.getElementById('cdDatCoc').value)||0,
     ghi_chu: document.getElementById('cdGhiChu').value,
     kho_id: parseInt(document.getElementById('cdKho').value)||0,
   };
