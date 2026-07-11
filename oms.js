@@ -445,6 +445,30 @@ export function mountOMS(app, { mysql, express }) {
        utmSource, utmMedium, utmCampaign, utmContent,
        d.url_page || d.ghi_chu || '']);
 
+    // Auto-assign Sale round-robin
+    try {
+      const [inserted] = await db('SELECT id FROM oms_orders WHERE sdt=? ORDER BY id DESC LIMIT 1', [sdt]);
+      if (inserted) {
+        const sales = await db("SELECT ho_ten FROM oms_users WHERE role='sale' AND active=1 ORDER BY ho_ten");
+        if (sales.length) {
+          // Đếm số đơn mỗi sale hiện có (hôm nay) để chia đều
+          const today = now.slice(0, 10);
+          const counts = await db(`SELECT sale_phu_trach, COUNT(*) as cnt FROM oms_orders 
+            WHERE sale_phu_trach != '' AND DATE(ngay_ve) = ? GROUP BY sale_phu_trach`, [today]);
+          const countMap = {};
+          counts.forEach(c => { countMap[c.sale_phu_trach] = c.cnt; });
+          // Chọn sale có ít đơn nhất
+          let minSale = sales[0].ho_ten;
+          let minCount = countMap[minSale] || 0;
+          for (const s of sales) {
+            const cnt = countMap[s.ho_ten] || 0;
+            if (cnt < minCount) { minCount = cnt; minSale = s.ho_ten; }
+          }
+          await db('UPDATE oms_orders SET sale_phu_trach=? WHERE id=?', [minSale, inserted.id]);
+        }
+      }
+    } catch(e) { console.error('[OMS] Auto-assign sale error:', e.message); }
+
     // Log webhook
     try {
       const DATA_DIR = process.env.DATA_DIR || '/home/u422036594/data';
