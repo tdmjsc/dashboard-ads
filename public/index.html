@@ -153,8 +153,21 @@
   .note{margin-top:18px;font-size:12.5px;color:var(--muted);display:flex;gap:9px;align-items:flex-start;background:#FBFCFD;border:1px dashed var(--line);border-radius:10px;padding:13px 15px;}
   .note svg{flex:none;margin-top:1px;color:var(--faint);}
 
+
+  /* Menu links + hamburger */
+  .navlinks{display:flex;align-items:center;gap:10px;flex-wrap:wrap;}
+  .menu-toggle{display:none;background:rgba(255,255,255,.08);color:#E7EEF8;border:1px solid rgba(255,255,255,.16);border-radius:9px;font-size:20px;line-height:1;padding:7px 12px;cursor:pointer;}
+
   @media (max-width:720px){
     body{overflow-x:hidden;}
+    /* Menu: gom vào nút hamburger */
+    .menu-toggle{display:inline-block;}
+    .navlinks{display:none;position:absolute;top:100%;right:12px;left:12px;flex-direction:column;align-items:stretch;gap:6px;background:#10192B;border:1px solid rgba(255,255,255,.12);border-radius:12px;padding:10px;margin-top:8px;z-index:50;box-shadow:0 8px 24px rgba(0,0,0,.4);}
+    .navlinks.open{display:flex;}
+    .navlinks .logout{padding:11px 14px;border-radius:8px;text-align:left;}
+    .topbar{position:relative;}
+    .topbar-inner{position:relative;}
+
     .wrap{padding:0 12px 56px;}
 
     /* Thanh tiêu đề: xếp gọn, vẫn hiện ô chọn ngày */
@@ -224,14 +237,17 @@
       </div>
       <button type="button" id="searchBtn" class="searchbtn">Tìm kiếm</button>
       <button type="button" id="reloadCacheBtn" class="logout" style="display:none;cursor:pointer" title="Xóa dữ liệu ngân sách đã lưu của khoảng ngày này rồi tải lại từ Facebook">🔄 Tải lại cache</button>
-      <a href="/marketing.html" class="logout">Marketing</a>
-      <a href="/products.html" class="logout" id="navProducts">Sản phẩm</a>
-      <a href="/salary.html" class="logout" id="navSalary">Lương MKT</a>
-      <a href="/salary-product.html" class="logout" id="navSalaryProduct">Lương PTSP</a>
-      <a href="/my-salary.html" class="logout" id="navMySalary">Lương của tôi</a>
-      <span class="user-badge" id="userBadge"></span>
-      <a href="/thailand" class="logout" id="navThailand">🇹🇭 Đơn Thái Lan</a>
-      <a href="/logout" class="logout">Đăng xuất</a>
+      <button type="button" id="menuToggle" class="menu-toggle" aria-label="Menu">☰</button>
+      <div class="navlinks" id="navlinks">
+        <a href="/marketing.html" class="logout">Marketing</a>
+        <a href="/products.html" class="logout" id="navProducts">Sản phẩm</a>
+        <a href="/salary.html" class="logout" id="navSalary">Lương MKT</a>
+        <a href="/salary-product.html" class="logout" id="navSalaryProduct">Lương PTSP</a>
+        <a href="/my-salary.html" class="logout" id="navMySalary">Lương của tôi</a>
+        <a href="/thailand" class="logout" id="navThailand">🇹🇭 Đơn Thái Lan</a>
+        <span class="user-badge" id="userBadge"></span>
+        <a href="/logout" class="logout">Đăng xuất</a>
+      </div>
       <div class="avatar" id="avatar" title="">QT</div>
     </div>
   </div>
@@ -405,6 +421,10 @@ document.getElementById('statusfilter').addEventListener('change',e=>{state.stat
 document.getElementById('sortby').addEventListener('change',e=>{state.sort=e.target.value;render();});
 document.getElementById('hidezero').addEventListener('change',e=>{state.hideZero=e.target.checked;render();});
 document.getElementById('searchBtn').addEventListener('click',loadData);
+// Menu hamburger mobile
+const _mt=document.getElementById('menuToggle'), _nl=document.getElementById('navlinks');
+if(_mt&&_nl){ _mt.addEventListener('click',()=>_nl.classList.toggle('open'));
+  _nl.querySelectorAll('a').forEach(a=>a.addEventListener('click',()=>_nl.classList.remove('open'))); }
 // Nút Tải lại cache: xóa cache khoảng ngày đang chọn rồi tải lại
 const _rcBtn = document.getElementById('reloadCacheBtn');
 if(_rcBtn) _rcBtn.addEventListener('click', async ()=>{
