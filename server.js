@@ -29,9 +29,11 @@ const BASE = `https://graph.facebook.com/${V}`;
    Nếu chưa có file users.js, hệ thống dùng tạm 1 tài khoản admin mặc định.
    ========================================================================= */
 let USERS = [{ user: 'admin', pass: 'DOI_MAT_KHAU_NAY', role: 'admin' }];
+let TELEGRAM_CHAT_IDS = {};
 import('./users.js')
   .then(mod => {
     if (Array.isArray(mod.USERS) && mod.USERS.length) USERS = mod.USERS;
+    if (mod.TELEGRAM_CHAT_IDS) TELEGRAM_CHAT_IDS = mod.TELEGRAM_CHAT_IDS;
   })
   .catch(() => console.log('Chưa tìm thấy users.js — đang dùng tài khoản admin mặc định.'));
 
@@ -55,10 +57,7 @@ const EMPLOYEES = [
   { code: 'TD7',  short: 'Minh',    full: 'Dương Văn Minh',    bhxh: 577500 },
   { code: 'TD8',  short: 'Giang',   full: 'Vũ Hà Giang',       bhxh: 577500 },
   { code: 'TD9',  short: 'Việt Hà', full: 'Đoàn Việt Hà',      bhxh: 577500 },
-  { code: 'TD11',  short: 'Ánh Tuyết', full: 'Lê Thị Ánh Tuyết',      bhxh: 0 },
-  { code: 'TD12',  short: 'Tùng', full: 'Phạm Quang Tùng',      bhxh: 0 }, 
   { code: 'TD10', short: 'Thuý An', full: 'Vũ Thuý An', aliases: ['Thúy An'], bhxh: 0 },
-   
   // Nhân viên cũ (chiến dịch cũ chưa có mã) — giữ để vẫn nhận ra, xóa nếu không cần:
   { code: '',     short: 'Thắng',   full: 'Thắng', bhxh: 0 },
 ];
@@ -386,27 +385,12 @@ app.get('/logout', (req, res) => req.session.destroy(() => res.redirect('/login'
   }
 })();
 
-// ---- GẮN MODULE OMS (DB riêng, an toàn — giống Thailand) ----
-(async () => {
-  try {
-    const [{ mountOMS }, mysqlMod] = await Promise.all([
-      import('./oms.js'),
-      import('mysql2/promise'),
-    ]);
-    const mysql = mysqlMod.default || mysqlMod;
-    mountOMS(app, { mysql, express });
-    console.log('✅ Module OMS đã gắn');
-  } catch (e) {
-    console.error('⚠️ OMS module lỗi (app chính vẫn chạy):', e.message);
-  }
-})();
 
 // Từ đây trở xuống yêu cầu đăng nhập
 app.use((req, res, next) => {
   // BỎ QUA mọi đường dẫn /thailand — module Thailand TỰ LO auth riêng (webhook + login riêng)
   // (mountThailand chạy async nên route /thailand đăng ký SAU middleware này → phải loại trừ ở đây)
   if (req.path === '/thailand' || req.path.startsWith('/thailand/')) return next();
-  if (req.path === '/oms' || req.path.startsWith('/oms/')) return next();
   if (req.session && req.session.user) return next();
   if (req.path.startsWith('/api/')) return res.status(401).json({ error: 'Chưa đăng nhập' });
   res.redirect('/login');
@@ -424,11 +408,8 @@ app.get('/api/me', (req, res) => {
 // Chặn Dashboard, Marketing và mọi API khác.
 app.use((req, res, next) => {
   const me = req.session.user;
-  const p = req.path;
-  // Cho phép TẤT CẢ role truy cập trang OMS + /go-oms
-  if (p.startsWith('/oms') || p === '/go-oms') return next();
-
   if (me && me.role === 'product') {
+    const p = req.path;
     const allowed = ['/products.html', '/my-salary.html', '/logout', '/api/products/report', '/api/me', '/api/my-salary/months', '/api/my-salary/detail'].includes(p) || p === '/favicon.ico';
     if (!allowed) {
       if (p.startsWith('/api/')) return res.status(403).json({ error: 'Không có quyền truy cập mục này.' });
@@ -515,26 +496,83 @@ async function getCampaigns(since, until) {
   const cached = DATA_CACHE.get(key);
   if (cached && cached.complete && Date.now() - cached.at < CACHE_MS) return cached.campaigns;
 
-  // (3) Gọi API Facebook
-  const tasks = [];
+  // (3) Gọi API Facebook — theo dõi TỪNG tài khoản
+  const accList = [];
   for (const src of SOURCES)
     for (const acc of src.accounts)
-      tasks.push(fetchAccountRetry(acc, src.token, days, since, until));
+      accList.push({ acc, token: src.token });
+
+  const tasks = accList.map(a => fetchAccountRetry(a.acc, a.token, days, since, until));
   const results = await Promise.allSettled(tasks);
   const campaigns = [];
   let failed = 0;
-  for (const r of results) { if (r.status === 'fulfilled') campaigns.push(...r.value); else failed++; }
-
-  if (failed === 0) {
-    DATA_CACHE.set(key, { at: Date.now(), campaigns, complete: true });
-    // Khoảng đã qua + lấy đủ tất cả tài khoản → LƯU VĨNH VIỄN (chi tiêu không đổi nữa)
-    if (past) {
-      META_CACHE[key] = { at: new Date().toISOString(), campaigns };
-      saveMetaCache();
+  const emptyAccts = [];   // tài khoản trả về THÀNH CÔNG nhưng RỖNG (nghi lỗi tạm của Facebook)
+  results.forEach((r, i) => {
+    if (r.status === 'fulfilled') {
+      const arr = r.value || [];
+      campaigns.push(...arr);
+      if (arr.length === 0) emptyAccts.push(accList[i].acc);  // 0 campaign → đáng ngờ
+    } else {
+      failed++;
     }
+  });
+
+  // CHỈ coi là "đủ dữ liệu" khi: không tài khoản nào lỗi VÀ không tài khoản nào rỗng bất thường.
+  // (Một số tài khoản có thể thật sự không có campaign — nhưng để AN TOÀN cho cache vĩnh viễn,
+  //  ta KHÔNG lưu vĩnh viễn nếu có bất kỳ tài khoản nào rỗng, tránh lưu nhầm dữ liệu thiếu.)
+  const complete = (failed === 0);
+  const fullData = (failed === 0 && emptyAccts.length === 0);
+
+  if (complete) {
+    DATA_CACHE.set(key, { at: Date.now(), campaigns, complete: true });
   }
-  return campaigns; // thiếu tài khoản -> trả tạm, KHÔNG lưu, lần sau nạp lại
+  // Khoảng đã qua + lấy ĐỦ (không lỗi, không rỗng) → LƯU VĨNH VIỄN
+  if (past && fullData) {
+    META_CACHE[key] = { at: new Date().toISOString(), campaigns };
+    saveMetaCache();
+  }
+  // Nếu có tài khoản rỗng/lỗi: KHÔNG lưu vĩnh viễn, log lại để biết
+  if (past && !fullData) {
+    console.warn(`[getCampaigns] KHÔNG lưu cache vĩnh viễn cho ${key}: failed=${failed}, rỗng=[${emptyAccts.join(',')}]`);
+  }
+  return campaigns;
 }
+
+// XÓA CACHE ngân sách Meta đã lưu (dùng khi cache bị lưu nhầm dữ liệu thiếu)
+//  - Xóa 1 khoảng:  /api/admin/clear-cache?since=2026-06-11&until=2026-06-24
+//  - Xóa KHOẢNG GIAO nhau: /api/admin/clear-cache?overlaps=2026-06-11..2026-06-24  (xóa mọi key có ngày nằm trong vùng này)
+//  - Xóa tất cả:    /api/admin/clear-cache?all=1
+app.get('/api/admin/clear-cache', (req, res) => {
+  const me = req.session && req.session.user;
+  if (!me || me.role !== 'admin') return res.status(403).json({ ok: false, message: 'Chỉ admin' });
+
+  const before = Object.keys(META_CACHE).length;
+  const removed = [];
+
+  if (req.query.all === '1') {
+    for (const k of Object.keys(META_CACHE)) removed.push(k);
+    META_CACHE = {};
+  } else if (req.query.overlaps) {
+    // overlaps=YYYY-MM-DD..YYYY-MM-DD : xóa mọi cache key mà khoảng của nó GIAO với vùng này
+    const [a, b] = String(req.query.overlaps).split('..');
+    if (a && b) {
+      for (const k of Object.keys(META_CACHE)) {
+        const [ks, ku] = k.split('|');
+        // giao nhau nếu ks <= b && ku >= a
+        if (ks && ku && ks <= b && ku >= a) { removed.push(k); delete META_CACHE[k]; }
+      }
+    }
+  } else if (req.query.since && req.query.until) {
+    const key = req.query.since + '|' + req.query.until;
+    if (META_CACHE[key]) { removed.push(key); delete META_CACHE[key]; }
+  } else {
+    return res.json({ ok: false, message: 'Cần tham số: ?all=1 HOẶC ?since=..&until=.. HOẶC ?overlaps=A..B' });
+  }
+
+  // Lưu lại file cache sau khi xóa
+  try { fs.writeFileSync(META_CACHE_FILE, JSON.stringify(META_CACHE)); } catch (e) {}
+  res.json({ ok: true, đã_xóa: removed.length, còn_lại: Object.keys(META_CACHE).length, cac_key_da_xoa: removed });
+});
 
 app.get('/api/data', async (req, res) => {
   try {
@@ -1850,6 +1888,12 @@ app.post('/api/salary/manual', (req, res) => {
   res.json({ ok: true });
 });
 
+/* ===================== CÔNG KHAI LƯƠNG QUA TELEGRAM =====================
+   - Gửi bảng lương riêng cho từng nhân viên qua Telegram.
+   - Điều kiện: lương tháng X chỉ gửi được SAU ngày 10 tháng X+1.
+   - Cần TELEGRAM_BOT_TOKEN trong .env và Chat ID trong users.js.
+   ====================================================================== */
+const TELEGRAM_BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN || '';
 
 // Lưu lịch sử công khai (tháng nào đã gửi) trong DATA_DIR
 const PUBLISH_FILE = path.join(DATA_DIR, 'salary-published.json');
@@ -1873,9 +1917,43 @@ function canPublish(monthStr) {
   return now >= unlock;
 }
 
+// Gửi 1 tin nhắn Telegram
+async function sendTelegram(chatId, text) {
+  if (!TELEGRAM_BOT_TOKEN) throw new Error('Chưa cấu hình TELEGRAM_BOT_TOKEN');
+  const url = `https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/sendMessage`;
+  const r = await fetch(url, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ chat_id: chatId, text, parse_mode: 'HTML' }),
+  });
+  const j = await r.json().catch(() => ({}));
+  return { ok: r.ok && j.ok, error: j.description };
+}
 
 const fmtVnd = n => (Math.round(Number(n) || 0)).toLocaleString('vi-VN');
 
+// Soạn nội dung lương Marketing cho 1 nhân viên
+function buildMktMessage(row, monthStr, extra) {
+  const e = extra || {};
+  const thuc = (row.luong || 0) + (e.hoaHongLeader || 0) + (e.luongCung || 0) + (e.thuong || 0) - (e.phat || 0) - (e.bhxh || 0);
+  let t = `<b>💰 BẢNG LƯƠNG THÁNG ${monthStr}</b>\n`;
+  t += `Nhân viên: <b>${row.name}</b>\n`;
+  t += `━━━━━━━━━━━━━━\n`;
+  t += `Doanh thu: <b>${fmtVnd(row.doanhthu)}</b> đ\n`;
+  t += `Chi phí QC: ${fmtVnd(row.chiPhiQC)} đ\n`;
+  t += `Giá vốn: ${fmtVnd(row.giaVon)} đ\n`;
+  t += `Phí ship: ${fmtVnd(row.phiShip)} đ\n`;
+  t += `━━━━━━━━━━━━━━\n`;
+  t += `Lương 2%: <b>${fmtVnd(row.luong)}</b> đ\n`;
+  if (e.hoaHongLeader) t += `Hoa hồng Leader: ${fmtVnd(e.hoaHongLeader)} đ\n`;
+  if (e.luongCung) t += `Lương cứng: ${fmtVnd(e.luongCung)} đ\n`;
+  if (e.thuong) t += `Thưởng: ${fmtVnd(e.thuong)} đ\n`;
+  if (e.phat) t += `Phạt: -${fmtVnd(e.phat)} đ\n`;
+  if (e.bhxh) t += `BHXH: -${fmtVnd(e.bhxh)} đ\n`;
+  t += `━━━━━━━━━━━━━━\n`;
+  t += `<b>💵 THỰC NHẬN: ${fmtVnd(thuc)} đ</b>`;
+  return t;
+}
 
 // API công khai lương Marketing: nhận danh sách rows đã tính từ client
 app.post('/api/salary/publish', express.json({ limit: '2mb' }), async (req, res) => {
@@ -1887,7 +1965,7 @@ app.post('/api/salary/publish', express.json({ limit: '2mb' }), async (req, res)
     const [y, m] = month.split('-').map(Number);
     return res.json({ ok: false, message: `Chưa đến hạn công khai. Lương tháng ${month} chỉ gửi được từ ngày 10/${m + 1}/${y} trở đi.` });
   }
-  // Lưu snapshot để nhân viên xem lương trên web
+  // Lưu snapshot để nhân viên xem trên web (KHÔNG gửi Telegram)
   SNAPSHOTS['mkt-' + month] = { at: new Date().toISOString(), month, type: 'mkt', rows };
   saveSnapshots();
   PUBLISHED['mkt-' + month] = { at: new Date().toISOString(), count: rows.length };
@@ -1895,6 +1973,26 @@ app.post('/api/salary/publish', express.json({ limit: '2mb' }), async (req, res)
   res.json({ ok: true, count: rows.length });
 });
 
+// Soạn nội dung lương PTSP cho 1 người
+function buildPtspMessage(row, monthStr) {
+  const thuc = (row.hoaHong || 0) + (row.luongCung || 0) + (row.thuong || 0) - (row.phat || 0) - (row.bhxh || 0);
+  let t = `<b>💼 BẢNG LƯƠNG PTSP THÁNG ${monthStr}</b>\n`;
+  t += `Nhân viên: <b>${row.manager}</b>\n`;
+  t += `━━━━━━━━━━━━━━\n`;
+  t += `Số SP: ${fmtVnd(row.soSP)} (mới ${fmtVnd(row.soSPmoi)}, cũ ${fmtVnd(row.soSPcu)})\n`;
+  t += `Đơn ship: ${fmtVnd(row.soDon)} · SL: ${fmtVnd(row.soLuongSP)}\n`;
+  t += `Doanh thu: <b>${fmtVnd(row.doanhThu)}</b> đ\n`;
+  t += `Giá vốn: ${fmtVnd(row.giaVon)} đ\n`;
+  t += `━━━━━━━━━━━━━━\n`;
+  t += `Hoa hồng: <b>${fmtVnd(row.hoaHong)}</b> đ\n`;
+  if (row.luongCung) t += `Lương cứng: ${fmtVnd(row.luongCung)} đ\n`;
+  if (row.thuong) t += `Thưởng: ${fmtVnd(row.thuong)} đ\n`;
+  if (row.phat) t += `Phạt: -${fmtVnd(row.phat)} đ\n`;
+  if (row.bhxh) t += `BHXH: -${fmtVnd(row.bhxh)} đ\n`;
+  t += `━━━━━━━━━━━━━━\n`;
+  t += `<b>💵 THỰC NHẬN: ${fmtVnd(thuc)} đ</b>`;
+  return t;
+}
 
 // API công khai lương PTSP
 app.post('/api/salary-product/publish', express.json({ limit: '2mb' }), async (req, res) => {
@@ -1906,7 +2004,7 @@ app.post('/api/salary-product/publish', express.json({ limit: '2mb' }), async (r
     const [y, m] = month.split('-').map(Number);
     return res.json({ ok: false, message: `Chưa đến hạn công khai. Lương tháng ${month} chỉ gửi được từ ngày 10/${m + 1}/${y} trở đi.` });
   }
-  // Lưu snapshot để nhân viên xem lương trên web
+  // Lưu snapshot để nhân viên xem trên web (KHÔNG gửi Telegram)
   SNAPSHOTS['ptsp-' + month] = { at: new Date().toISOString(), month, type: 'ptsp', rows };
   saveSnapshots();
   PUBLISHED['ptsp-' + month] = { at: new Date().toISOString(), count: rows.length };
@@ -1971,34 +2069,6 @@ app.post('/api/meta-cache/clear', express.json(), (req, res) => {
   else return res.json({ ok: false, message: 'Không tìm thấy khoảng cần xoá' });
   saveMetaCache();
   res.json({ ok: true });
-});
-
-// ---- Inject nút "Lưu đơn VN" vào TẤT CẢ trang HTML dashboard ----
-app.use((req, res, next) => {
-  // Chỉ inject cho HTML pages (không phải API, CSS, JS, ảnh)
-  const p = req.path;
-  if (p.startsWith('/oms') || p.startsWith('/api/') || !req.session?.user) return next();
-  
-  // Override res.send để chèn script trước </body>
-  const originalSend = res.send.bind(res);
-  res.send = function(body) {
-    if (typeof body === 'string' && body.includes('</body>')) {
-      const btnScript = `<script>
-(function(){
-  if(document.getElementById('oms-go-btn'))return;
-  var a=document.createElement('a');a.id='oms-go-btn';a.href='/go-oms';
-  a.innerHTML='📋 Lưu đơn VN';
-  a.style.cssText='position:fixed;bottom:20px;right:20px;z-index:99999;background:linear-gradient(135deg,#2563eb,#7c3aed);color:#fff;padding:12px 22px;border-radius:14px;font-size:14px;font-weight:700;text-decoration:none;box-shadow:0 4px 15px rgba(37,99,235,.45);font-family:system-ui,sans-serif;transition:transform .15s,box-shadow .15s;';
-  a.onmouseenter=function(){a.style.transform='scale(1.08)';a.style.boxShadow='0 6px 20px rgba(37,99,235,.55)';};
-  a.onmouseleave=function(){a.style.transform='scale(1)';a.style.boxShadow='0 4px 15px rgba(37,99,235,.45)';};
-  document.body.appendChild(a);
-})();
-</script>`;
-      body = body.replace('</body>', btnScript + '</body>');
-    }
-    return originalSend(body);
-  };
-  next();
 });
 
 app.use(express.static(path.join(__dirname, 'public')));
