@@ -632,10 +632,15 @@ export function mountOMS(app, { mysql, express }) {
   }));
 
   // ===================== THỐNG KÊ / BÁO CÁO (Admin) =====================
-  app.get('/oms/api/stats', requireRole('admin'), wrap(async (req, res) => {
+  app.get('/oms/api/stats', omsAuth, wrap(async (req, res) => {
     const { tu, den } = req.query;
+    const user = req.session.omsUser;
     let dateFilter = '';
     let params = [];
+    // Marketing/Sale: chỉ xem dữ liệu của mình
+    let userFilter = '';
+    if (user.role === 'marketing') { userFilter = ' AND nv_marketing = ?'; params.push(user.ho_ten); }
+    else if (user.role === 'sale') { userFilter = ' AND sale_phu_trach = ?'; params.push(user.ho_ten); }
     if (tu) { dateFilter += ' AND ngay_ve >= ?'; params.push(tu); }
     if (den) { dateFilter += ' AND ngay_ve <= ?'; params.push(den + ' 23:59:59'); }
 
@@ -649,27 +654,27 @@ export function mountOMS(app, { mysql, express }) {
       SUM(CASE WHEN trang_thai='Ship thành công' THEN 1 ELSE 0 END) as shipOK,
       SUM(CASE WHEN trang_thai='Hoàn thành công' THEN 1 ELSE 0 END) as hoanHang,
       SUM(CASE WHEN trang_thai='Không mua' THEN 1 ELSE 0 END) as khongMua
-      FROM oms_orders WHERE 1=1 ${dateFilter}`, params);
+      FROM oms_orders WHERE 1=1 ${userFilter} ${dateFilter}`, params);
 
     // Theo Sale
     const bySale = await db(`SELECT sale_phu_trach as ten,
       COUNT(*) as tongDon,
       SUM(CASE WHEN trang_thai IN ('Đã chốt','Đang ship','Ship thành công') THEN 1 ELSE 0 END) as daChot,
       ROUND(SUM(CASE WHEN trang_thai IN ('Đã chốt','Đang ship','Ship thành công') THEN 1 ELSE 0 END)*100/COUNT(*),1) as tyLeChot
-      FROM oms_orders WHERE sale_phu_trach != '' ${dateFilter}
+      FROM oms_orders WHERE sale_phu_trach != '' ${userFilter} ${dateFilter}
       GROUP BY sale_phu_trach ORDER BY daChot DESC`, params);
 
     // Theo Marketing
     const byMkt = await db(`SELECT nv_marketing as ten,
       COUNT(*) as tongDon,
       SUM(CASE WHEN trang_thai IN ('Đã chốt','Đang ship','Ship thành công') THEN 1 ELSE 0 END) as daChot
-      FROM oms_orders WHERE nv_marketing != '' ${dateFilter}
+      FROM oms_orders WHERE nv_marketing != '' ${userFilter} ${dateFilter}
       GROUP BY nv_marketing ORDER BY tongDon DESC`, params);
 
     // Theo ngày (7 ngày gần nhất)
     const byDay = await db(`SELECT DATE(ngay_ve) as ngay, COUNT(*) as soDon,
       SUM(CASE WHEN trang_thai='Ship thành công' THEN tong_tien ELSE 0 END) as doanhThu
-      FROM oms_orders WHERE ngay_ve >= DATE_SUB(CURDATE(), INTERVAL 7 DAY) ${dateFilter}
+      FROM oms_orders WHERE ngay_ve >= DATE_SUB(CURDATE(), INTERVAL 7 DAY) ${userFilter} ${dateFilter}
       GROUP BY DATE(ngay_ve) ORDER BY ngay DESC`, params);
 
     res.json({ overview: overview || {}, bySale, byMkt, byDay });
