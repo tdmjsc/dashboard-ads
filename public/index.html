@@ -161,12 +161,23 @@
   @media (max-width:720px){
     body{overflow-x:hidden;}
     /* Menu: gom vào nút hamburger */
-    .menu-toggle{display:inline-block;}
-    .navlinks{display:none;position:absolute;top:100%;right:12px;left:12px;flex-direction:column;align-items:stretch;gap:6px;background:#10192B;border:1px solid rgba(255,255,255,.12);border-radius:12px;padding:10px;margin-top:8px;z-index:50;box-shadow:0 8px 24px rgba(0,0,0,.4);}
+    .menu-toggle{display:inline-block;flex-shrink:0;font-size:22px;padding:8px 14px;}
+    .topbar{position:relative;overflow:visible;}
+    .topbar-inner{position:relative;overflow:visible;}
+    /* Hàng nút: xuống dòng gọn */
+    .topbar .right{width:100%;display:flex;flex-wrap:wrap;align-items:center;gap:8px;}
+    .daterange{flex:1 1 100%;order:1;}
+    /* Hàng 2: Tìm kiếm chiếm phần lớn, ☰ + avatar bên phải */
+    .searchbtn{order:2;flex:1 1 auto;}
+    .menu-toggle{order:3;flex-shrink:0;}
+    .avatar{order:4;flex-shrink:0;}
+    /* Hàng 3 RIÊNG: Tải lại cache full chiều ngang, chữ nhỏ */
+    #reloadCacheBtn{order:5;flex:1 1 100%;text-align:center;font-size:12px;padding:8px;}
+    /* Menu xổ: canh trong màn hình */
+    .navlinks{display:none;position:absolute;top:100%;left:12px;right:12px;width:auto;flex-direction:column;align-items:stretch;gap:6px;background:#10192B;border:1px solid rgba(255,255,255,.14);border-radius:12px;padding:10px;margin-top:8px;z-index:100;box-shadow:0 8px 24px rgba(0,0,0,.5);box-sizing:border-box;}
     .navlinks.open{display:flex;}
-    .navlinks .logout{padding:11px 14px;border-radius:8px;text-align:left;}
-    .topbar{position:relative;}
-    .topbar-inner{position:relative;}
+    .navlinks .logout{padding:12px 14px;border-radius:8px;text-align:left;width:100%;box-sizing:border-box;}
+    .navlinks .user-badge{text-align:left;}
 
     .wrap{padding:0 12px 56px;}
 
