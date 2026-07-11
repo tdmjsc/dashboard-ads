@@ -195,6 +195,9 @@ async function ensureTables(pool) {
     try { await pool.query(`ALTER TABLE oms_orders ADD COLUMN ${col}`); } catch(e) {}
   }
 
+  // Thêm cột mới cho link_registry (nếu chưa có)
+  try { await pool.query(`ALTER TABLE oms_link_registry ADD COLUMN nguon_du_lieu VARCHAR(120) DEFAULT ''`); } catch(e) {}
+
   // Bảng kho hàng (mỗi kho có GHTK/VTP riêng)
   await pool.query(`
     CREATE TABLE IF NOT EXISTS oms_warehouses (
