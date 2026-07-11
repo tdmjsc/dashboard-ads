@@ -774,7 +774,7 @@ export function mountOMS(app, { mysql, express }) {
           order: {
             id: `OMS-${o.id}`,
             pick_name: wCfg.pick_name,
-            pick_money: 0,
+            pick_money: o.tong_tien || 0,
             pick_address: wCfg.pick_address,
             pick_province: wCfg.pick_province,
             pick_district: wCfg.pick_district,
@@ -894,6 +894,43 @@ export function mountOMS(app, { mysql, express }) {
     res.json({ results });
   }));
 
+  // ===================== HUỶ ĐƠN GHTK =====================
+  app.post('/oms/api/cancel-ghtk', requireRole('admin', 'warehouse'), jsonParser, wrap(async (req, res) => {
+    const { ids } = req.body;
+    if (!ids?.length) return res.status(400).json({ error: 'Chưa chọn đơn' });
+
+    const orders = await db(`SELECT * FROM oms_orders WHERE id IN (${ids.map(()=>'?').join(',')})`, ids);
+    const results = [];
+
+    for (const o of orders) {
+      if (o.don_vi_vc !== 'GHTK' || !o.ma_van_don) {
+        results.push({ id: o.id, ok: false, error: 'Đơn chưa đăng GHTK hoặc thiếu mã vận đơn' });
+        continue;
+      }
+      try {
+        const wCfg = await getWarehouseConfig(o.kho_id);
+        if (!wCfg.ghtk_token) { results.push({ id: o.id, ok: false, error: 'Thiếu GHTK Token' }); continue; }
+
+        const resp = await fetch(`https://services.giaohangtietkiem.vn/services/shipment/cancel/${o.ma_van_don}`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', 'Token': wCfg.ghtk_token },
+        });
+        const data = await resp.json();
+
+        if (data.success) {
+          await db(`UPDATE oms_orders SET don_vi_vc='', ma_van_don='', trang_thai='Đã chốt', trang_thai_vc='Đã huỷ GHTK' WHERE id=?`, [o.id]);
+          results.push({ id: o.id, ok: true, message: 'Đã huỷ trên GHTK' });
+        } else {
+          results.push({ id: o.id, ok: false, error: data.message || 'GHTK từ chối huỷ' });
+        }
+      } catch(e) {
+        results.push({ id: o.id, ok: false, error: e.message });
+      }
+    }
+
+    res.json({ results });
+  }));
+
   // ===================== ĐỒNG BỘ TRẠNG THÁI VẬN CHUYỂN =====================
   async function syncShippingStatus() {
     console.log('[OMS] Bắt đầu đồng bộ trạng thái vận chuyển...');
@@ -960,18 +997,13 @@ export function mountOMS(app, { mysql, express }) {
     } catch(e) { console.error('[OMS] Sync error:', e.message); }
   }
 
-  // Cronjob 8h sáng mỗi ngày (giờ VN = UTC+7 = 1h UTC)
+  // Cronjob mỗi 30 phút đồng bộ trạng thái vận chuyển
   function scheduleCronjob() {
-    const check = () => {
-      const now = new Date();
-      const vnHour = (now.getUTCHours() + 7) % 24;
-      const vnMin = now.getUTCMinutes();
-      if (vnHour === 8 && vnMin === 0) {
-        syncShippingStatus();
-      }
-    };
-    setInterval(check, 60000); // Kiểm tra mỗi phút
-    console.log('[OMS] Cronjob đồng bộ vận chuyển: 8h sáng mỗi ngày (VN)');
+    // Chạy lần đầu sau 2 phút khởi động
+    setTimeout(() => syncShippingStatus(), 2 * 60 * 1000);
+    // Sau đó mỗi 30 phút
+    setInterval(() => syncShippingStatus(), 30 * 60 * 1000);
+    console.log('[OMS] Cronjob đồng bộ vận chuyển: mỗi 30 phút');
   }
 
   // API thủ công đồng bộ (admin)
