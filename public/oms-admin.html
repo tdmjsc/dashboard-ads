@@ -227,6 +227,13 @@
   </div>
   <!-- Stats -->
   <div id="saleStatsGrid" class="grid grid-cols-3 md:grid-cols-5 gap-2 mb-4"></div>
+  <!-- Bulk actions -->
+  <div class="flex gap-2 mb-3 flex-wrap items-center">
+    <button onclick="saleSelectAll()" class="bg-gray-200 px-3 py-1.5 rounded text-sm font-medium">☑️ Chọn tất cả</button>
+    <button onclick="openTransferSale()" class="bg-purple-600 text-white px-3 py-1.5 rounded text-sm font-medium">🔄 Chuyển Sale</button>
+    <span id="saleBulkAdmin"></span>
+    <span id="saleSelectedInfo" class="text-sm text-gray-500 ml-2"></span>
+  </div>
   <div id="saleOrderList" class="space-y-3"></div>
 </div>
 
@@ -315,6 +322,7 @@
     <button onclick="whSelectAll()" class="bg-gray-200 px-3 py-1.5 rounded text-sm font-medium">☑️ Chọn tất cả</button>
     <button onclick="whBulkPush('ghtk')" class="bg-green-600 text-white px-4 py-1.5 rounded text-sm font-medium">🚚 Đẩy GHTK</button>
     <button onclick="whBulkPush('vtp')" class="bg-red-500 text-white px-4 py-1.5 rounded text-sm font-medium">🚚 Đẩy VTP</button>
+    <button onclick="whBulkCancel()" class="bg-red-100 text-red-700 px-4 py-1.5 rounded text-sm font-medium">❌ Huỷ đăng</button>
     <button onclick="whPrintSelected()" class="bg-blue-600 text-white px-4 py-1.5 rounded text-sm font-medium">🖨️ In phiếu giao</button>
     <span id="whSelectedInfo" class="text-sm text-gray-500 leading-8 ml-2"></span>
   </div>
@@ -717,6 +725,25 @@
 <!-- Print Area -->
 <div id="printArea" class="hidden"></div>
 
+<!-- Modal: Chuyển Sale -->
+<div id="transferSaleModal" class="fixed inset-0 bg-black/50 z-50 flex items-center justify-center hidden">
+  <div class="bg-white rounded-2xl shadow-xl w-full max-w-md mx-4 p-6">
+    <h3 class="text-lg font-bold mb-4">🔄 Chuyển đơn sang Sale khác</h3>
+    <p class="text-sm text-gray-500 mb-3" id="transferInfo">0 đơn đã chọn</p>
+    <select id="transferSaleSelect" class="w-full text-sm mb-4 p-2 border rounded-lg">
+      <option value="">-- Chọn Sale nhận đơn --</option>
+    </select>
+    <label class="flex items-center gap-2 text-sm text-gray-600 mb-4">
+      <input type="checkbox" id="transferResetStatus" checked>
+      Chuyển trạng thái về "Đơn mới"
+    </label>
+    <div class="flex gap-3">
+      <button onclick="submitTransferSale()" class="flex-1 bg-purple-600 text-white py-2.5 rounded-lg font-medium hover:bg-purple-700">✅ Chuyển</button>
+      <button onclick="closeModal('transferSaleModal')" class="bg-gray-200 px-4 py-2.5 rounded-lg font-medium">Hủy</button>
+    </div>
+  </div>
+</div>
+
 <!-- ============================================================ -->
 <script>
 const API = '/oms/api';
@@ -932,16 +959,24 @@ async function loadSaleView() {
 
   if(!saleOrders.length){ document.getElementById('saleOrderList').innerHTML='<div class="text-center text-gray-400 py-8">Không có đơn nào</div>'; return; }
 
+  // Show admin-only bulk delete button
+  const adminEl = document.getElementById('saleBulkAdmin');
+  if(adminEl) adminEl.innerHTML = currentUser?.role==='admin' ? '<button onclick="saleBulkDelete()" class="bg-red-500 text-white px-3 py-1.5 rounded text-sm font-medium">🗑️ Xóa đơn</button>' : '';
+
   document.getElementById('saleOrderList').innerHTML = saleOrders.map(o => {
     const borderColor = o.trang_thai==='Đơn mới'?'border-blue-500':o.trang_thai==='Đã chốt'?'border-green-500':o.trang_thai.startsWith('KNM')?'border-orange-400':'border-gray-300';
     const badgeCls = o.trang_thai==='Đơn mới'?'badge-new':o.trang_thai==='Đã chốt'?'badge-confirmed':o.trang_thai.startsWith('KNM')?'badge-shipping':'badge-cancel';
+    const isAdmin = currentUser?.role === 'admin';
+    // Marketing: mask middle 3 digits
+    const isMkt = currentUser?.role === 'marketing';
+    const displayPhone = isMkt && o.sdt?.length >= 7 ? o.sdt.slice(0,o.sdt.length-7) + o.sdt.slice(o.sdt.length-7,o.sdt.length-7+Math.floor((o.sdt.length-4)/2)) + '***' + o.sdt.slice(-4) : o.sdt;
     return `
     <div class="order-card bg-white rounded-xl p-4 shadow-sm border-l-4 ${borderColor}">
       <div class="flex justify-between items-start mb-2">
-        <div>
+        <div class="flex items-center gap-2">
+          <input type="checkbox" class="saleChk" value="${o.id}" onchange="updateSaleSelected()">
           <span class="font-bold text-gray-800">${esc(o.ten_kh)}</span>
-          <a href="tel:${o.sdt}" class="call-btn ml-2 inline-block bg-green-100 text-green-700 px-3 py-0.5 rounded-full text-sm font-medium hover:bg-green-200">📞 ${esc(o.sdt)}</a>
-          ${o.sale_phu_trach ? `<span class="ml-2 text-xs text-purple-600 bg-purple-50 px-2 py-0.5 rounded">👤 ${esc(o.sale_phu_trach)}</span>` : ''}
+          <a href="tel:${isMkt?'':o.sdt}" class="call-btn inline-block bg-green-100 text-green-700 px-3 py-0.5 rounded-full text-sm font-medium hover:bg-green-200">📞 ${esc(displayPhone||'')}</a>
         </div>
         <span class="badge ${badgeCls}">${esc(o.trang_thai)}</span>
       </div>
@@ -952,13 +987,14 @@ async function loadSaleView() {
           <span class="text-gray-400">🕐 ${fmtDate(o.ngay_ve)}</span>
         </div>
         ${o.nv_marketing?`<div class="text-xs text-gray-400 mt-1">MKT: ${esc(o.nv_marketing)}</div>`:''}
+        ${o.sale_phu_trach?`<div class="text-xs text-purple-500 mt-1">👤 Sale: ${esc(o.sale_phu_trach)}</div>`:''}
       </div>
       <div class="flex gap-2 items-end mt-3">
         <textarea id="snote-${o.id}" class="flex-1 text-sm" rows="1" placeholder="Ghi chú cuộc gọi...">${esc(o.ghi_chu||'')}</textarea>
         <div class="flex gap-1 flex-wrap">
           <div class="relative">
-            <button onclick="toggleSaleMenu(${o.id})" class="bg-emerald-600 text-white px-3 py-1.5 rounded text-sm font-medium">📋 Cập nhật ▾</button>
-            <div id="saleMenu-${o.id}" class="hidden absolute right-0 bottom-full mb-1 bg-white border rounded-lg shadow-xl z-50 w-48 py-1" style="max-height:280px;overflow-y:auto">
+            <button onclick="toggleSaleMenu(${o.id})" class="bg-emerald-600 text-white px-3 py-1.5 rounded text-sm font-medium">📋 ▾</button>
+            <div id="saleMenu-${o.id}" class="hidden absolute right-0 bottom-full mb-1 bg-white border rounded-lg shadow-xl z-50 w-48 py-1" style="max-height:300px;overflow-y:auto">
               <div onclick="openChotDon(${o.id});closeSaleMenu(${o.id})" class="px-3 py-2 text-sm hover:bg-green-50 cursor-pointer text-green-700 font-medium">✅ Chốt thành công</div>
               <div onclick="saleUpdateStatus(${o.id},'Không mua')" class="px-3 py-2 text-sm hover:bg-red-50 cursor-pointer text-red-600">❌ Không mua</div>
               <hr class="my-1">
@@ -969,6 +1005,7 @@ async function loadSaleView() {
               <div onclick="saleUpdateStatus(${o.id},'KNM lần 5')" class="px-3 py-2 text-sm hover:bg-orange-50 cursor-pointer">📵 KNM lần 5</div>
               <div onclick="saleUpdateStatus(${o.id},'KNM lần 6')" class="px-3 py-2 text-sm hover:bg-orange-50 cursor-pointer">📵 KNM lần 6</div>
               ${o.trang_thai!=='Đơn mới'?`<hr class="my-1"><div onclick="saleUpdateStatus(${o.id},'Đơn mới')" class="px-3 py-2 text-sm hover:bg-yellow-50 cursor-pointer text-yellow-700">↩️ Quay lại Đơn mới</div>`:''}
+              ${isAdmin?`<hr class="my-1"><div onclick="saleDeleteOne(${o.id})" class="px-3 py-2 text-sm hover:bg-red-50 cursor-pointer text-red-600 font-medium">🗑️ Xóa đơn</div>`:''}
             </div>
           </div>
           <button onclick="saleSaveNote(${o.id})" class="bg-blue-500 text-white px-3 py-1.5 rounded text-sm font-medium" title="Lưu ghi chú">💾</button>
@@ -990,6 +1027,97 @@ document.addEventListener('click', e => {
     document.querySelectorAll('[id^="saleMenu-"]').forEach(el=>el.classList.add('hidden'));
   }
 });
+
+// ---- Sale bulk helpers ----
+function getSaleSelectedIds(){ return [...document.querySelectorAll('.saleChk:checked')].map(cb=>parseInt(cb.value)); }
+function updateSaleSelected(){ document.getElementById('saleSelectedInfo').textContent = getSaleSelectedIds().length+' đơn đã chọn'; }
+function saleSelectAll(){
+  const boxes=document.querySelectorAll('.saleChk');
+  const allChecked=[...boxes].every(b=>b.checked);
+  boxes.forEach(b=>b.checked=!allChecked);
+  updateSaleSelected();
+}
+
+async function saleDeleteOne(id){
+  closeSaleMenu(id);
+  if(!confirm('⚠️ Xóa đơn #'+id+'? Không thể hoàn tác!')) return;
+  try{
+    const r=await fetch(API+'/orders/'+id,{method:'DELETE'});
+    const d=await r.json();
+    if(d.ok) { alert('✅ Đã xóa đơn #'+id); loadSaleView(); }
+    else alert('❌ '+(d.error||'Lỗi'));
+  }catch(e){ alert('❌ '+e.message); }
+}
+
+async function saleBulkDelete(){
+  const ids=getSaleSelectedIds();
+  if(!ids.length) return alert('Chọn đơn trước');
+  if(!confirm('⚠️ Xóa '+ids.length+' đơn? Không thể hoàn tác!')) return;
+  let ok=0,fail=0;
+  for(const id of ids){
+    try{
+      const r=await fetch(API+'/orders/'+id,{method:'DELETE'});
+      const d=await r.json();
+      if(d.ok) ok++; else fail++;
+    }catch(e){ fail++; }
+  }
+  alert('✅ Đã xóa '+ok+'/'+ids.length+' đơn'+(fail?' | ❌ Lỗi '+fail:''));
+  loadSaleView();
+}
+
+function openTransferSale(){
+  const ids=getSaleSelectedIds();
+  if(!ids.length) return alert('Chọn đơn cần chuyển trước');
+  document.getElementById('transferInfo').textContent = ids.length+' đơn đã chọn';
+  // Fill sale list
+  const sel=document.getElementById('transferSaleSelect');
+  sel.innerHTML='<option value="">-- Chọn Sale nhận đơn --</option>';
+  const saleOpts=document.getElementById('saleFilter');
+  [...saleOpts.options].forEach(opt=>{
+    if(opt.value) sel.innerHTML+=`<option value="${esc(opt.value)}">${esc(opt.textContent)}</option>`;
+  });
+  document.getElementById('transferSaleModal').classList.remove('hidden');
+}
+
+async function submitTransferSale(){
+  const ids=getSaleSelectedIds();
+  const newSale=document.getElementById('transferSaleSelect').value;
+  if(!newSale) return alert('Chọn Sale nhận đơn');
+  const resetStatus=document.getElementById('transferResetStatus').checked;
+  let ok=0,fail=0;
+  for(const id of ids){
+    try{
+      const body={sale_phu_trach:newSale};
+      if(resetStatus) body.trang_thai='Đơn mới';
+      const r=await fetch(API+'/orders/'+id,{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});
+      const d=await r.json();
+      if(d.ok||!d.error) ok++; else fail++;
+    }catch(e){ fail++; }
+  }
+  closeModal('transferSaleModal');
+  alert('✅ Đã chuyển '+ok+'/'+ids.length+' đơn sang '+newSale+(fail?' | ❌ Lỗi '+fail:''));
+  loadSaleView();
+}
+
+// ---- Warehouse bulk cancel ----
+async function whBulkCancel(){
+  const ids=getWhSelectedIds();
+  if(!ids.length) return alert('Chọn đơn trước');
+  const ghtkIds=whOrders.filter(o=>ids.includes(o.id)&&o.don_vi_vc==='GHTK'&&o.ma_van_don).map(o=>o.id);
+  if(!ghtkIds.length) return alert('Không có đơn GHTK nào đã đăng trong số đơn đã chọn');
+  if(!confirm('⚠️ Huỷ đăng '+ghtkIds.length+' đơn trên GHTK?')) return;
+  document.getElementById('whSelectedInfo').textContent='⏳ Đang huỷ...';
+  try{
+    const r=await fetch(API+'/cancel-ghtk',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({ids:ghtkIds})});
+    const d=await r.json();
+    const ok=(d.results||[]).filter(x=>x.ok).length;
+    const fail=(d.results||[]).filter(x=>!x.ok);
+    let msg='✅ Huỷ thành công '+ok+'/'+ghtkIds.length+' đơn';
+    if(fail.length) msg+='\n\n❌ Lỗi:\n'+fail.map(f=>'#'+f.id+': '+f.error).join('\n');
+    alert(msg);
+  }catch(e){ alert('❌ '+e.message); }
+  loadWhView();
+}
 let chotDonId = null;
 let addressProvinces = [];
 let addressDistricts = [];
@@ -1158,7 +1286,8 @@ async function openChotDon(id){
   document.getElementById('cdSoLuong').value = o.so_luong||1;
   document.getElementById('cdPhiShip').value = o.phi_ship||0;
   document.getElementById('cdDatCoc').value = 0;
-  document.getElementById('cdGhiChu').value = o.ghi_chu||'';
+  const defaultNote = 'Cho xem hàng cho thử hàng, khách không nghe máy gọi điện cho shop không tự ý huỷ đơn';
+  document.getElementById('cdGhiChu').value = o.ghi_chu || defaultNote;
   // Load dropdown SP
   const sel = document.getElementById('cdSanPhamSelect');
   sel.innerHTML = '<option value="">-- Chọn từ danh sách --</option>' +
