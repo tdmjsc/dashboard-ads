@@ -131,6 +131,8 @@ async function ensureTables(pool) {
       gia_ban BIGINT DEFAULT 0 COMMENT 'Giá bán (VND)',
       tong_tien BIGINT DEFAULT 0 COMMENT 'Tổng tiền (VND)',
       phi_ship BIGINT DEFAULT 0,
+      dat_coc BIGINT DEFAULT 0 COMMENT 'Tiền khách đặt cọc',
+      tin_nhan_goc TEXT COMMENT 'Tin nhắn gốc từ Ladipage (giữ nguyên toàn bộ)',
       da_thanh_toan TINYINT DEFAULT 0,
       INDEX idx_ngay (ngay_ve),
       INDEX idx_tt (trang_thai),
@@ -178,6 +180,8 @@ async function ensureTables(pool) {
     "phi_ship BIGINT DEFAULT 0",
     "da_thanh_toan TINYINT DEFAULT 0",
     "ma_don_hang VARCHAR(50) DEFAULT ''",
+    "dat_coc BIGINT DEFAULT 0",
+    "tin_nhan_goc TEXT",
   ];
   for (const col of addCols) {
     try { await pool.query(`ALTER TABLE oms_orders ADD COLUMN ${col}`); } catch(e) {}
@@ -445,15 +449,18 @@ export function mountOMS(app, { mysql, express }) {
 
     const now = new Date().toISOString().slice(0, 19).replace('T', ' ');
 
+    // Ghi nhận toàn bộ tin nhắn gốc (address + message + url)
+    const tinNhanGoc = [diaChiFull, d.message || '', d.url_page || ''].filter(Boolean).join(' | ');
+
     await db(`INSERT INTO oms_orders
       (ngay_ve, nv_marketing, ten_kh, sdt, dia_chi_full, tinh, quan, phuong, dia_chi,
        trang_thai, san_pham, so_luong, gia_ban, tong_tien,
-       utm_source, utm_medium, utm_campaign, utm_content, ghi_chu)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'Đơn mới', ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+       utm_source, utm_medium, utm_campaign, utm_content, ghi_chu, tin_nhan_goc)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'Đơn mới', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       [now, nvMarketing, ten, sdt, diaChiFull, addr.tinh, addr.quan, addr.phuong, addr.diaChi,
        sanPham, soLuong, gia, gia * soLuong,
        utmSource, utmMedium, utmCampaign, utmContent,
-       d.url_page || d.ghi_chu || '']);
+       d.ghi_chu || '', tinNhanGoc]);
 
     // Auto-assign Sale round-robin
     try {
@@ -564,7 +571,7 @@ export function mountOMS(app, { mysql, express }) {
     // Sale: sửa được thông tin đơn + chốt/huỷ chốt/không mua/quay lại đơn mới
     if (user.role === 'sale') {
       const saleAllowed = ['trang_thai','ghi_chu','sale_phu_trach','ten_kh','sdt',
-        'dia_chi_full','san_pham','so_luong','gia_ban','tong_tien','phi_ship','kho_id'];
+        'dia_chi_full','san_pham','so_luong','gia_ban','tong_tien','phi_ship','dat_coc','kho_id'];
       // Sale được phép: Đơn mới, Đã chốt, Không mua, KNM lần 1-6
       const saleStatuses = ['Đơn mới','Đã chốt','Không mua','KNM lần 1','KNM lần 2','KNM lần 3','KNM lần 4','KNM lần 5','KNM lần 6'];
       if (d.trang_thai && !saleStatuses.includes(d.trang_thai)) {
@@ -590,7 +597,7 @@ export function mountOMS(app, { mysql, express }) {
     // Admin/Warehouse có thể cập nhật hầu hết trường
     const allowedFields = ['trang_thai','ghi_chu','sale_phu_trach','don_vi_vc','ma_van_don',
       'trang_thai_vc','nv_marketing','ten_kh','sdt','dia_chi_full','san_pham',
-      'so_luong','gia_ban','tong_tien','phi_ship','da_thanh_toan','kho_id'];
+      'so_luong','gia_ban','tong_tien','phi_ship','dat_coc','da_thanh_toan','kho_id'];
 
     const sets = [];
     const vals = [];
@@ -808,16 +815,18 @@ export function mountOMS(app, { mysql, express }) {
         // Sinh/lấy mã đơn hàng unique
         let maDonHang = o.ma_don_hang;
         if (!maDonHang) {
-          maDonHang = `OMS-${o.id}-${Date.now().toString(36).toUpperCase()}`;
+          maDonHang = `OM${String(Math.floor(100000+Math.random()*900000))}`;
           await db('UPDATE oms_orders SET ma_don_hang=? WHERE id=?', [maDonHang, o.id]);
         }
+
+        const codAmount = Math.max(0, (o.tong_tien || 0) - (o.dat_coc || 0));
 
         const body = {
           products: [{ name: o.san_pham || 'Sản phẩm', weight: 0.5, quantity: o.so_luong || 1, product_code: '' }],
           order: {
             id: maDonHang,
             pick_name: wCfg.pick_name,
-            pick_money: o.tong_tien || 0,
+            pick_money: codAmount,
             pick_address: wCfg.pick_address,
             pick_province: wCfg.pick_province,
             pick_district: wCfg.pick_district,
@@ -830,7 +839,7 @@ export function mountOMS(app, { mysql, express }) {
             tel: o.sdt,
             email: '',
             hamlet: 'Khác',
-            is_freeship: 0,
+            is_freeship: 1,
             value: o.tong_tien || 0,
             pick_option: 'cod',
             note: o.ghi_chu || '',
@@ -901,7 +910,7 @@ export function mountOMS(app, { mysql, express }) {
         // Sinh mã đơn hàng nếu chưa có
         let maDonHang = o.ma_don_hang;
         if (!maDonHang) {
-          maDonHang = `OMS-${o.id}-${Date.now().toString(36).toUpperCase()}`;
+          maDonHang = `OM${String(Math.floor(100000+Math.random()*900000))}`;
           await db('UPDATE oms_orders SET ma_don_hang=? WHERE id=?', [maDonHang, o.id]);
         }
         const body = {
@@ -947,7 +956,7 @@ export function mountOMS(app, { mysql, express }) {
   app.post('/oms/api/change-order-code', requireRole('admin', 'warehouse'), jsonParser, wrap(async (req, res) => {
     const { id, ma_don_hang } = req.body;
     if (!id) return res.status(400).json({ error: 'Thiếu ID đơn' });
-    const newCode = ma_don_hang || `OMS-${id}-${Date.now().toString(36).toUpperCase()}`;
+    const newCode = ma_don_hang || `OM${String(Math.floor(100000+Math.random()*900000))}`;
     await db('UPDATE oms_orders SET ma_don_hang=? WHERE id=?', [newCode, id]);
     res.json({ ok: true, ma_don_hang: newCode });
   }));
@@ -977,7 +986,7 @@ export function mountOMS(app, { mysql, express }) {
 
         if (data.success) {
           // Sinh mã đơn hàng mới để lần đăng lại không bị trùng
-          const newMaDH = `OMS-${o.id}-${Date.now().toString(36).toUpperCase()}`;
+          const newMaDH = `OM${String(Math.floor(100000+Math.random()*900000))}`;
           await db(`UPDATE oms_orders SET don_vi_vc='', ma_van_don='', ma_don_hang=?, trang_thai='Đã chốt', trang_thai_vc='Đã huỷ GHTK' WHERE id=?`, [newMaDH, o.id]);
           results.push({ id: o.id, ok: true, message: 'Đã huỷ trên GHTK' });
         } else {
