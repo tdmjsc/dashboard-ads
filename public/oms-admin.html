@@ -185,7 +185,10 @@
       <div class="w-8 h-8 rounded-lg bg-emerald-600 flex items-center justify-center text-white font-bold text-sm">S</div>
       <h2 class="text-lg font-semibold text-gray-800">Góc nhìn Sale — Trực đơn</h2>
     </div>
-    <button onclick="loadSaleView()" class="bg-gray-200 px-3 py-1.5 rounded-lg text-sm font-medium">🔄 Tải lại</button>
+    <div class="flex gap-2">
+      <button onclick="autoAssignFromSale()" class="bg-indigo-600 text-white px-3 py-1.5 rounded-lg text-sm font-medium">🔄 Chia đều Sale</button>
+      <button onclick="loadSaleView()" class="bg-gray-200 px-3 py-1.5 rounded-lg text-sm font-medium">🔄 Tải lại</button>
+    </div>
   </div>
   <!-- Chọn Sale -->
   <div class="bg-white rounded-xl p-4 shadow-sm mb-4">
@@ -315,7 +318,7 @@
   <div class="flex justify-between items-center mb-4">
     <h2 class="text-lg font-semibold">Quản lý sản phẩm</h2>
     <div class="flex gap-2">
-      <button onclick="syncSheet()" class="bg-yellow-500 text-white px-4 py-1.5 rounded-lg text-sm font-medium">🔄 Đồng bộ Google Sheet</button>
+      <button onclick="syncSheet(this)" class="bg-yellow-500 text-white px-4 py-1.5 rounded-lg text-sm font-medium">🔄 Đồng bộ Google Sheet</button>
       <button onclick="openAddProduct()" class="bg-green-600 text-white px-4 py-1.5 rounded-lg text-sm font-medium">+ Thêm SP</button>
       <button onclick="openImportProducts()" class="bg-blue-600 text-white px-4 py-1.5 rounded-lg text-sm font-medium">📥 Import</button>
     </div>
@@ -836,22 +839,36 @@ function getSelectedIds(){ return [...document.querySelectorAll('.chkOrder:check
 
 // ========== TAB 3: SALE VIEW ==========
 async function loadSaleView() {
-  const params = new URLSearchParams({limit:500});
   const sale = document.getElementById('saleFilter').value;
   const q = document.getElementById('saleSearch').value;
   const tt = document.getElementById('saleStatusFilter').value;
+
+  // 1) Fetch ALL orders (không filter trạng thái) để đếm stats
+  const allParams = new URLSearchParams({limit:1000});
+  if(sale) allParams.set('sale', sale);
+  if(q) allParams.set('q', q);
+  let allForStats = [];
+  try {
+    const rAll = await fetch(API+'/orders?'+allParams);
+    const dAll = await rAll.json();
+    allForStats = dAll.orders || [];
+  } catch(e) {}
+
+  // 2) Fetch đơn theo filter trạng thái để hiển thị
+  const params = new URLSearchParams({limit:500});
   if(sale) params.set('sale', sale);
   if(q) params.set('q', q);
   if(tt) params.set('trang_thai', tt);
+  try {
+    const r = await fetch(API+'/orders?'+params);
+    const d = await r.json();
+    saleOrders = d.orders || [];
+  } catch(e) { saleOrders = []; }
 
-  const r = await fetch(API+'/orders?'+params); const d = await r.json();
-  saleOrders = d.orders||[];
-  let filtered = saleOrders;
-
-  // Stats — đếm theo trạng thái
+  // Stats — đếm trên TẤT CẢ đơn
   const statDefs = [
     {key:'Đơn mới', label:'Chưa gọi', icon:'📞', color:'blue'},
-    {key:'Đã chốt', label:'Chốt thành công', icon:'✅', color:'green'},
+    {key:'Đã chốt', label:'Chốt OK', icon:'✅', color:'green'},
     {key:'Không mua', label:'Không mua', icon:'❌', color:'gray'},
     {key:'KNM lần 1', label:'KNM L1', icon:'📵', color:'orange'},
     {key:'KNM lần 2', label:'KNM L2', icon:'📵', color:'orange'},
@@ -860,23 +877,23 @@ async function loadSaleView() {
     {key:'KNM lần 5', label:'KNM L5', icon:'📵', color:'red'},
     {key:'KNM lần 6', label:'KNM L6', icon:'📵', color:'red'},
   ];
-  // Đếm trên TẤT CẢ đơn (không theo filter hiện tại)
   const allCounts = {};
-  saleOrders.forEach(o => { allCounts[o.trang_thai] = (allCounts[o.trang_thai]||0)+1; });
+  allForStats.forEach(o => { allCounts[o.trang_thai] = (allCounts[o.trang_thai]||0)+1; });
 
   document.getElementById('saleStatsGrid').innerHTML = statDefs.map(s => {
     const cnt = allCounts[s.key]||0;
-    const active = tt === s.key ? 'ring-2 ring-offset-1 ring-'+s.color+'-500' : '';
-    return `<div class="bg-white rounded-xl p-3 shadow-sm text-center border-t-3 border-${s.color}-400 cursor-pointer hover:shadow-md ${active}"
+    const isActive = tt === s.key;
+    const ring = isActive ? 'ring-2 ring-blue-500' : '';
+    return `<div class="bg-white rounded-xl p-3 shadow-sm text-center cursor-pointer hover:shadow-md ${ring}" style="border-top:3px solid"
       onclick="document.getElementById('saleStatusFilter').value='${s.key}';loadSaleView()">
-      <div class="text-xl font-bold text-${s.color}-600">${cnt}</div>
+      <div class="text-xl font-bold">${cnt}</div>
       <div class="text-[10px] text-gray-500 leading-tight">${s.icon} ${s.label}</div>
     </div>`;
   }).join('');
 
-  if(!filtered.length){ document.getElementById('saleOrderList').innerHTML='<div class="text-center text-gray-400 py-8">Không có đơn nào</div>'; return; }
+  if(!saleOrders.length){ document.getElementById('saleOrderList').innerHTML='<div class="text-center text-gray-400 py-8">Không có đơn nào</div>'; return; }
 
-  document.getElementById('saleOrderList').innerHTML = filtered.map(o => {
+  document.getElementById('saleOrderList').innerHTML = saleOrders.map(o => {
     const borderColor = o.trang_thai==='Đơn mới'?'border-blue-500':o.trang_thai==='Đã chốt'?'border-green-500':o.trang_thai.startsWith('KNM')?'border-orange-400':'border-gray-300';
     const badgeCls = o.trang_thai==='Đơn mới'?'badge-new':o.trang_thai==='Đã chốt'?'badge-confirmed':o.trang_thai.startsWith('KNM')?'badge-shipping':'badge-cancel';
     return `
@@ -887,7 +904,7 @@ async function loadSaleView() {
           <a href="tel:${o.sdt}" class="call-btn ml-2 inline-block bg-green-100 text-green-700 px-3 py-0.5 rounded-full text-sm font-medium hover:bg-green-200">📞 ${esc(o.sdt)}</a>
           ${o.sale_phu_trach ? `<span class="ml-2 text-xs text-purple-600 bg-purple-50 px-2 py-0.5 rounded">👤 ${esc(o.sale_phu_trach)}</span>` : ''}
         </div>
-        <span class="badge ${badgeCls}">${o.trang_thai}</span>
+        <span class="badge ${badgeCls}">${esc(o.trang_thai)}</span>
       </div>
       <div class="text-sm text-gray-600 mb-2">
         <div>📍 ${esc(o.dia_chi_full||'Chưa có')}</div>
@@ -902,20 +919,20 @@ async function loadSaleView() {
         <div class="flex gap-1 flex-wrap">
           <div class="relative">
             <button onclick="toggleSaleMenu(${o.id})" class="bg-emerald-600 text-white px-3 py-1.5 rounded text-sm font-medium">📋 Cập nhật ▾</button>
-            <div id="saleMenu-${o.id}" class="hidden absolute right-0 bottom-full mb-1 bg-white border rounded-lg shadow-xl z-50 w-48 py-1">
+            <div id="saleMenu-${o.id}" class="hidden absolute right-0 bottom-full mb-1 bg-white border rounded-lg shadow-xl z-50 w-48 py-1" style="max-height:280px;overflow-y:auto">
               <div onclick="openChotDon(${o.id});closeSaleMenu(${o.id})" class="px-3 py-2 text-sm hover:bg-green-50 cursor-pointer text-green-700 font-medium">✅ Chốt thành công</div>
-              <div onclick="saleUpdate(${o.id},'Không mua');closeSaleMenu(${o.id})" class="px-3 py-2 text-sm hover:bg-red-50 cursor-pointer text-red-600">❌ Không mua</div>
+              <div onclick="saleUpdateStatus(${o.id},'Không mua')" class="px-3 py-2 text-sm hover:bg-red-50 cursor-pointer text-red-600">❌ Không mua</div>
               <hr class="my-1">
-              <div onclick="saleUpdate(${o.id},'KNM lần 1');closeSaleMenu(${o.id})" class="px-3 py-2 text-sm hover:bg-orange-50 cursor-pointer">📵 KNM lần 1</div>
-              <div onclick="saleUpdate(${o.id},'KNM lần 2');closeSaleMenu(${o.id})" class="px-3 py-2 text-sm hover:bg-orange-50 cursor-pointer">📵 KNM lần 2</div>
-              <div onclick="saleUpdate(${o.id},'KNM lần 3');closeSaleMenu(${o.id})" class="px-3 py-2 text-sm hover:bg-orange-50 cursor-pointer">📵 KNM lần 3</div>
-              <div onclick="saleUpdate(${o.id},'KNM lần 4');closeSaleMenu(${o.id})" class="px-3 py-2 text-sm hover:bg-orange-50 cursor-pointer">📵 KNM lần 4</div>
-              <div onclick="saleUpdate(${o.id},'KNM lần 5');closeSaleMenu(${o.id})" class="px-3 py-2 text-sm hover:bg-orange-50 cursor-pointer">📵 KNM lần 5</div>
-              <div onclick="saleUpdate(${o.id},'KNM lần 6');closeSaleMenu(${o.id})" class="px-3 py-2 text-sm hover:bg-orange-50 cursor-pointer">📵 KNM lần 6</div>
-              ${o.trang_thai!=='Đơn mới'?`<hr class="my-1"><div onclick="saleUpdate(${o.id},'Đơn mới');closeSaleMenu(${o.id})" class="px-3 py-2 text-sm hover:bg-yellow-50 cursor-pointer text-yellow-700">↩️ Quay lại Đơn mới</div>`:''}
+              <div onclick="saleUpdateStatus(${o.id},'KNM lần 1')" class="px-3 py-2 text-sm hover:bg-orange-50 cursor-pointer">📵 KNM lần 1</div>
+              <div onclick="saleUpdateStatus(${o.id},'KNM lần 2')" class="px-3 py-2 text-sm hover:bg-orange-50 cursor-pointer">📵 KNM lần 2</div>
+              <div onclick="saleUpdateStatus(${o.id},'KNM lần 3')" class="px-3 py-2 text-sm hover:bg-orange-50 cursor-pointer">📵 KNM lần 3</div>
+              <div onclick="saleUpdateStatus(${o.id},'KNM lần 4')" class="px-3 py-2 text-sm hover:bg-orange-50 cursor-pointer">📵 KNM lần 4</div>
+              <div onclick="saleUpdateStatus(${o.id},'KNM lần 5')" class="px-3 py-2 text-sm hover:bg-orange-50 cursor-pointer">📵 KNM lần 5</div>
+              <div onclick="saleUpdateStatus(${o.id},'KNM lần 6')" class="px-3 py-2 text-sm hover:bg-orange-50 cursor-pointer">📵 KNM lần 6</div>
+              ${o.trang_thai!=='Đơn mới'?`<hr class="my-1"><div onclick="saleUpdateStatus(${o.id},'Đơn mới')" class="px-3 py-2 text-sm hover:bg-yellow-50 cursor-pointer text-yellow-700">↩️ Quay lại Đơn mới</div>`:''}
             </div>
           </div>
-          <button onclick="saleSaveNote(${o.id})" class="bg-blue-500 text-white px-3 py-1.5 rounded text-sm font-medium">💾</button>
+          <button onclick="saleSaveNote(${o.id})" class="bg-blue-500 text-white px-3 py-1.5 rounded text-sm font-medium" title="Lưu ghi chú">💾</button>
         </div>
       </div>
     </div>`;
@@ -923,12 +940,12 @@ async function loadSaleView() {
 }
 
 function toggleSaleMenu(id){
-  // Close all other menus first
-  document.querySelectorAll('[id^="saleMenu-"]').forEach(el=>el.classList.add('hidden'));
-  document.getElementById('saleMenu-'+id).classList.toggle('hidden');
+  const el = document.getElementById('saleMenu-'+id);
+  const wasHidden = el.classList.contains('hidden');
+  document.querySelectorAll('[id^="saleMenu-"]').forEach(m=>m.classList.add('hidden'));
+  if(wasHidden) el.classList.remove('hidden');
 }
 function closeSaleMenu(id){ document.getElementById('saleMenu-'+id)?.classList.add('hidden'); }
-// Close menu on outside click
 document.addEventListener('click', e => {
   if(!e.target.closest('[id^="saleMenu-"]') && !e.target.closest('button[onclick*="toggleSaleMenu"]')){
     document.querySelectorAll('[id^="saleMenu-"]').forEach(el=>el.classList.add('hidden'));
@@ -1186,20 +1203,50 @@ async function submitChotDon(trangThai){
   const d = await r.json();
   if(d.ok){
     closeModal('chotDonModal');
-    loadSaleView();
-    if(tt==='Đã chốt') alert('✅ Đã chốt đơn #'+chotDonId);
+    alert('✅ Đã lưu đơn #'+chotDonId+' → '+tt);
+    try{loadSaleView();}catch(e){}
+    try{loadWhView();}catch(e){}
+    try{loadOrders(currentPage);}catch(e){}
   } else alert('❌ '+(d.error||'Lỗi'));
 }
-async function saleUpdate(id,tt){
-  const note = document.getElementById('snote-'+id)?.value||'';
-  await fetch(API+'/orders/'+id,{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify({trang_thai:tt,ghi_chu:note})});
-  loadSaleView();
+async function saleUpdateStatus(id, tt){
+  closeSaleMenu(id);
+  try {
+    const note = document.getElementById('snote-'+id)?.value||'';
+    const r = await fetch(API+'/orders/'+id,{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify({trang_thai:tt,ghi_chu:note})});
+    const d = await r.json();
+    if(d.ok || d.error === undefined) {
+      alert('✅ Đơn #'+id+' → '+tt);
+      loadSaleView();
+    } else {
+      alert('❌ Lỗi: '+(d.error||'Không xác định'));
+    }
+  } catch(e) { alert('❌ Lỗi kết nối: '+e.message); }
 }
+// Keep old name as alias for backward compat
+async function saleUpdate(id,tt){ return saleUpdateStatus(id,tt); }
+
+async function autoAssignFromSale(){
+  if(!confirm('Tự động chia đều TẤT CẢ đơn mới chưa phân cho Sale?')) return;
+  try {
+    const r=await fetch(API+'/auto-assign',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({})});
+    const d=await r.json();
+    if(d.ok) { alert('✅ '+d.message); loadSaleView(); }
+    else alert('❌ '+(d.error||'Lỗi'));
+  } catch(e) { alert('❌ Lỗi: '+e.message); }
+}
+
 async function saleSaveNote(id){
-  const note = document.getElementById('snote-'+id)?.value||'';
-  await fetch(API+'/orders/'+id,{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify({ghi_chu:note})});
-  const el = document.getElementById('snote-'+id);
-  if(el){el.style.borderColor='#10b981'; setTimeout(()=>el.style.borderColor='',1000);}
+  try {
+    const note = document.getElementById('snote-'+id)?.value||'';
+    const r = await fetch(API+'/orders/'+id,{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify({ghi_chu:note})});
+    const d = await r.json();
+    if(d.ok || d.error === undefined) {
+      alert('✅ Đã lưu ghi chú đơn #'+id);
+    } else {
+      alert('❌ Lỗi: '+(d.error||'Không xác định'));
+    }
+  } catch(e) { alert('❌ Lỗi kết nối: '+e.message); }
 }
 
 // ========== TAB 4: MARKETING VIEW ==========
@@ -1322,14 +1369,14 @@ async function loadWhView() {
               </div>
               ${o.trang_thai_vc?`<div class="text-xs text-gray-500 mt-1">📋 ${esc(o.trang_thai_vc)}</div>`:''}
               <div class="flex gap-2 mt-2">
-                ${o.don_vi_vc==='GHTK'?`<button onclick="whCancelGHTK(${o.id})" class="bg-red-100 text-red-700 px-3 py-1 rounded text-xs font-medium hover:bg-red-200">❌ Huỷ đăng</button>`:''}
-                <button onclick="whSyncSingle(${o.id})" class="bg-yellow-100 text-yellow-700 px-3 py-1 rounded text-xs font-medium hover:bg-yellow-200">🔄 Cập nhật TT</button>
+                ${o.don_vi_vc==='GHTK'?`<button onclick="whCancelGHTK(${o.id},this)" class="bg-red-100 text-red-700 px-3 py-1 rounded text-xs font-medium hover:bg-red-200">❌ Huỷ đăng</button>`:''}
+                <button onclick="whSyncSingle(${o.id},this)" class="bg-yellow-100 text-yellow-700 px-3 py-1 rounded text-xs font-medium hover:bg-yellow-200">🔄 Cập nhật TT</button>
                 <button onclick="whPrintOne(${o.id})" class="bg-gray-100 text-gray-700 px-3 py-1 rounded text-xs font-medium hover:bg-gray-200">🖨️ In</button>
               </div>
             </div>`:`
             <div class="mt-2 flex gap-2 flex-wrap">
-              <button onclick="whPushSingle(${o.id},'ghtk')" class="bg-green-100 text-green-700 px-3 py-1 rounded text-xs font-medium hover:bg-green-200">🚚 GHTK</button>
-              <button onclick="whPushSingle(${o.id},'vtp')" class="bg-red-100 text-red-700 px-3 py-1 rounded text-xs font-medium hover:bg-red-200">🚚 VTP</button>
+              <button onclick="whPushSingle(${o.id},'ghtk',this)" class="bg-green-100 text-green-700 px-3 py-1 rounded text-xs font-medium hover:bg-green-200">🚚 GHTK</button>
+              <button onclick="whPushSingle(${o.id},'vtp',this)" class="bg-red-100 text-red-700 px-3 py-1 rounded text-xs font-medium hover:bg-red-200">🚚 VTP</button>
               <button onclick="whPrintOne(${o.id})" class="bg-gray-100 text-gray-700 px-3 py-1 rounded text-xs font-medium hover:bg-gray-200">🖨️ In phiếu</button>
               <button onclick="openChotDon(${o.id})" class="bg-blue-100 text-blue-700 px-3 py-1 rounded text-xs font-medium hover:bg-blue-200">✏️ Sửa đơn</button>
             </div>`}
@@ -1363,12 +1410,11 @@ async function whBulkPush(carrier){
   }catch(e){ alert('❌ Lỗi kết nối: '+e.message); }
   loadWhView();
 }
-async function whPushSingle(id,carrier){
+async function whPushSingle(id,carrier,btn){
   const name=carrier==='ghtk'?'GHTK':'VTP';
   if(!confirm(`Đẩy đơn #${id} sang ${name}?`)) return;
   const ep=carrier==='ghtk'?'/push-ghtk':'/push-vtp';
-  // Disable button and show loading
-  event.target.disabled=true; event.target.textContent='⏳ Đang đẩy...';
+  if(btn){btn.disabled=true; btn.textContent='⏳ Đang đẩy...';}
   try{
     const r=await fetch(API+ep,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({ids:[id]})});
     const d=await r.json(); const res=d.results?.[0];
@@ -1378,9 +1424,9 @@ async function whPushSingle(id,carrier){
   loadWhView();
 }
 
-async function whCancelGHTK(id){
+async function whCancelGHTK(id,btn){
   if(!confirm(`⚠️ Huỷ đăng đơn #${id} trên GHTK?\n\nĐơn sẽ quay về trạng thái "Đã chốt" để đăng lại.`)) return;
-  event.target.disabled=true; event.target.textContent='⏳ Đang huỷ...';
+  if(btn){btn.disabled=true; btn.textContent='⏳ Đang huỷ...';}
   try{
     const r=await fetch(API+'/cancel-ghtk',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({ids:[id]})});
     const d=await r.json(); const res=d.results?.[0];
@@ -1390,8 +1436,8 @@ async function whCancelGHTK(id){
   loadWhView();
 }
 
-async function whSyncSingle(id){
-  event.target.disabled=true; event.target.textContent='⏳ ...';
+async function whSyncSingle(id,btn){
+  if(btn){btn.disabled=true; btn.textContent='⏳ ...';}
   try{
     const r=await fetch(API+'/sync-shipping',{method:'POST'});
     const d=await r.json();
@@ -1434,7 +1480,7 @@ async function submitEdit(){
     ghi_chu:document.getElementById('editNote').value};
   const r=await fetch(API+'/orders/'+id,{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});
   const d=await r.json();
-  if(d.ok){closeModal('editOrderModal');loadOrders(currentPage);} else alert('❌ '+(d.error||'Lỗi không xác định'));
+  if(d.ok){closeModal('editOrderModal');alert('✅ Đã lưu đơn #'+id);loadOrders(currentPage);} else alert('❌ '+(d.error||'Lỗi không xác định'));
 }
 async function deleteOrder(id){ if(!confirm('Xóa đơn #'+id+'?')) return; await fetch(API+'/orders/'+id,{method:'DELETE'}); loadOrders(currentPage); }
 
@@ -1609,9 +1655,9 @@ async function doImportProducts(){
 async function toggleProduct(id,active){await fetch(API+'/products/'+id,{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify({active})});loadProducts();}
 async function deleteProduct(id){if(!confirm('Xóa SP #'+id+'?'))return;await fetch(API+'/products/'+id,{method:'DELETE'});loadProducts();}
 
-async function syncSheet(){
+async function syncSheet(btn){
   if(!confirm('Đồng bộ sản phẩm từ Google Sheet?\n\n- SP mới sẽ được thêm\n- SP đã có sẽ cập nhật giá nhập\n- Không xóa SP cũ')) return;
-  const btn=event.target; btn.disabled=true; btn.textContent='⏳ Đang đồng bộ...';
+  if(btn){btn.disabled=true; btn.textContent='⏳ Đang đồng bộ...';}
   try{
     const r=await fetch(API+'/products/sync-sheet',{method:'POST'});
     const d=await r.json();
