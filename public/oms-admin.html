@@ -180,9 +180,12 @@
 <!-- TAB 3: SALE VIEW (Admin xem góc nhìn Sale) -->
 <!-- ============================================================ -->
 <div id="tab-sale" class="tab-content p-4 max-w-5xl mx-auto hidden">
-  <div class="flex items-center gap-2 mb-4">
-    <div class="w-8 h-8 rounded-lg bg-emerald-600 flex items-center justify-center text-white font-bold text-sm">S</div>
-    <h2 class="text-lg font-semibold text-gray-800">Góc nhìn Sale — Trực đơn</h2>
+  <div class="flex items-center justify-between mb-4">
+    <div class="flex items-center gap-2">
+      <div class="w-8 h-8 rounded-lg bg-emerald-600 flex items-center justify-center text-white font-bold text-sm">S</div>
+      <h2 class="text-lg font-semibold text-gray-800">Góc nhìn Sale — Trực đơn</h2>
+    </div>
+    <button onclick="loadSaleView()" class="bg-gray-200 px-3 py-1.5 rounded-lg text-sm font-medium">🔄 Tải lại</button>
   </div>
   <!-- Chọn Sale -->
   <div class="bg-white rounded-xl p-4 shadow-sm mb-4">
@@ -194,26 +197,17 @@
       </div>
       <input type="text" id="saleSearch" placeholder="🔍 Tìm tên, SĐT..." class="text-sm flex-1 min-w-[160px]" onkeyup="if(event.key==='Enter')loadSaleView()">
       <select id="saleStatusFilter" class="text-sm" onchange="loadSaleView()">
-        <option value="">Tất cả TT</option><option value="Đơn mới" selected>Đơn mới</option><option value="Đã chốt">Đã chốt</option><option value="Không mua">Không mua</option>
-      </select>
-      <select id="saleCallFilter" class="text-sm">
-        <option value="">Tất cả</option><option value="uncalled">Chưa ghi chú</option><option value="called">Đã ghi chú</option>
+        <option value="">Tất cả TT</option><option value="Đơn mới" selected>Đơn mới</option>
+        <option value="Đã chốt">Đã chốt</option><option value="Không mua">Không mua</option>
+        <option value="KNM lần 1">KNM lần 1</option><option value="KNM lần 2">KNM lần 2</option>
+        <option value="KNM lần 3">KNM lần 3</option><option value="KNM lần 4">KNM lần 4</option>
+        <option value="KNM lần 5">KNM lần 5</option><option value="KNM lần 6">KNM lần 6</option>
       </select>
       <button onclick="loadSaleView()" class="bg-emerald-600 text-white px-4 py-1.5 rounded-lg text-sm font-medium">Lọc</button>
     </div>
   </div>
   <!-- Stats -->
-  <div class="grid grid-cols-3 gap-3 mb-4">
-    <div class="bg-white rounded-xl p-4 shadow-sm text-center border-t-4 border-blue-500">
-      <div class="text-2xl font-bold text-blue-600" id="saleStatNew">0</div><div class="text-xs text-gray-500">Đơn mới</div>
-    </div>
-    <div class="bg-white rounded-xl p-4 shadow-sm text-center border-t-4 border-green-500">
-      <div class="text-2xl font-bold text-green-600" id="saleStatConfirmed">0</div><div class="text-xs text-gray-500">Đã chốt</div>
-    </div>
-    <div class="bg-white rounded-xl p-4 shadow-sm text-center border-t-4 border-gray-400">
-      <div class="text-2xl font-bold text-gray-500" id="saleStatCancel">0</div><div class="text-xs text-gray-500">Không mua</div>
-    </div>
-  </div>
+  <div id="saleStatsGrid" class="grid grid-cols-3 md:grid-cols-5 gap-2 mb-4"></div>
   <div id="saleOrderList" class="space-y-3"></div>
 </div>
 
@@ -262,9 +256,15 @@
 <!-- TAB 5: KHO VIEW (Admin xem góc nhìn Kho) -->
 <!-- ============================================================ -->
 <div id="tab-warehouse" class="tab-content p-4 max-w-6xl mx-auto hidden">
-  <div class="flex items-center gap-2 mb-4">
-    <div class="w-8 h-8 rounded-lg bg-amber-600 flex items-center justify-center text-white font-bold text-sm">K</div>
-    <h2 class="text-lg font-semibold text-gray-800">Góc nhìn Kho — Đóng gói & Vận chuyển</h2>
+  <div class="flex items-center justify-between mb-4">
+    <div class="flex items-center gap-2">
+      <div class="w-8 h-8 rounded-lg bg-amber-600 flex items-center justify-center text-white font-bold text-sm">K</div>
+      <h2 class="text-lg font-semibold text-gray-800">Góc nhìn Kho — Đóng gói & Vận chuyển</h2>
+    </div>
+    <div class="flex gap-2">
+      <button onclick="syncShipping()" class="bg-yellow-500 text-white px-3 py-1.5 rounded-lg text-sm font-medium">🔄 Đồng bộ VC</button>
+      <button onclick="loadWhView()" class="bg-gray-200 px-3 py-1.5 rounded-lg text-sm font-medium">🔄 Tải lại</button>
+    </div>
   </div>
   <div class="grid grid-cols-3 gap-3 mb-5">
     <div class="bg-white rounded-xl p-4 shadow-sm text-center border-l-4 border-green-500">
@@ -831,7 +831,7 @@ function getSelectedIds(){ return [...document.querySelectorAll('.chkOrder:check
 
 // ========== TAB 3: SALE VIEW ==========
 async function loadSaleView() {
-  const params = new URLSearchParams({limit:200});
+  const params = new URLSearchParams({limit:500});
   const sale = document.getElementById('saleFilter').value;
   const q = document.getElementById('saleSearch').value;
   const tt = document.getElementById('saleStatusFilter').value;
@@ -841,28 +841,48 @@ async function loadSaleView() {
 
   const r = await fetch(API+'/orders?'+params); const d = await r.json();
   saleOrders = d.orders||[];
-
-  // Bộ lọc gọi điện
-  const cf = document.getElementById('saleCallFilter').value;
   let filtered = saleOrders;
-  if(cf==='uncalled') filtered = saleOrders.filter(o=>!o.ghi_chu);
-  else if(cf==='called') filtered = saleOrders.filter(o=>o.ghi_chu);
 
-  document.getElementById('saleStatNew').textContent = saleOrders.filter(o=>o.trang_thai==='Đơn mới').length;
-  document.getElementById('saleStatConfirmed').textContent = saleOrders.filter(o=>o.trang_thai==='Đã chốt').length;
-  document.getElementById('saleStatCancel').textContent = saleOrders.filter(o=>o.trang_thai==='Không mua').length;
+  // Stats — đếm theo trạng thái
+  const statDefs = [
+    {key:'Đơn mới', label:'Chưa gọi', icon:'📞', color:'blue'},
+    {key:'Đã chốt', label:'Chốt thành công', icon:'✅', color:'green'},
+    {key:'Không mua', label:'Không mua', icon:'❌', color:'gray'},
+    {key:'KNM lần 1', label:'KNM L1', icon:'📵', color:'orange'},
+    {key:'KNM lần 2', label:'KNM L2', icon:'📵', color:'orange'},
+    {key:'KNM lần 3', label:'KNM L3', icon:'📵', color:'yellow'},
+    {key:'KNM lần 4', label:'KNM L4', icon:'📵', color:'yellow'},
+    {key:'KNM lần 5', label:'KNM L5', icon:'📵', color:'red'},
+    {key:'KNM lần 6', label:'KNM L6', icon:'📵', color:'red'},
+  ];
+  // Đếm trên TẤT CẢ đơn (không theo filter hiện tại)
+  const allCounts = {};
+  saleOrders.forEach(o => { allCounts[o.trang_thai] = (allCounts[o.trang_thai]||0)+1; });
+
+  document.getElementById('saleStatsGrid').innerHTML = statDefs.map(s => {
+    const cnt = allCounts[s.key]||0;
+    const active = tt === s.key ? 'ring-2 ring-offset-1 ring-'+s.color+'-500' : '';
+    return `<div class="bg-white rounded-xl p-3 shadow-sm text-center border-t-3 border-${s.color}-400 cursor-pointer hover:shadow-md ${active}"
+      onclick="document.getElementById('saleStatusFilter').value='${s.key}';loadSaleView()">
+      <div class="text-xl font-bold text-${s.color}-600">${cnt}</div>
+      <div class="text-[10px] text-gray-500 leading-tight">${s.icon} ${s.label}</div>
+    </div>`;
+  }).join('');
 
   if(!filtered.length){ document.getElementById('saleOrderList').innerHTML='<div class="text-center text-gray-400 py-8">Không có đơn nào</div>'; return; }
 
-  document.getElementById('saleOrderList').innerHTML = filtered.map(o=>`
-    <div class="order-card bg-white rounded-xl p-4 shadow-sm border-l-4 ${o.trang_thai==='Đơn mới'?'border-blue-500':o.trang_thai==='Đã chốt'?'border-green-500':'border-gray-300'}">
+  document.getElementById('saleOrderList').innerHTML = filtered.map(o => {
+    const borderColor = o.trang_thai==='Đơn mới'?'border-blue-500':o.trang_thai==='Đã chốt'?'border-green-500':o.trang_thai.startsWith('KNM')?'border-orange-400':'border-gray-300';
+    const badgeCls = o.trang_thai==='Đơn mới'?'badge-new':o.trang_thai==='Đã chốt'?'badge-confirmed':o.trang_thai.startsWith('KNM')?'badge-shipping':'badge-cancel';
+    return `
+    <div class="order-card bg-white rounded-xl p-4 shadow-sm border-l-4 ${borderColor}">
       <div class="flex justify-between items-start mb-2">
         <div>
           <span class="font-bold text-gray-800">${esc(o.ten_kh)}</span>
           <a href="tel:${o.sdt}" class="call-btn ml-2 inline-block bg-green-100 text-green-700 px-3 py-0.5 rounded-full text-sm font-medium hover:bg-green-200">📞 ${esc(o.sdt)}</a>
           ${o.sale_phu_trach ? `<span class="ml-2 text-xs text-purple-600 bg-purple-50 px-2 py-0.5 rounded">👤 ${esc(o.sale_phu_trach)}</span>` : ''}
         </div>
-        <span class="badge ${o.trang_thai==='Đơn mới'?'badge-new':o.trang_thai==='Đã chốt'?'badge-confirmed':'badge-cancel'}">${o.trang_thai}</span>
+        <span class="badge ${badgeCls}">${o.trang_thai}</span>
       </div>
       <div class="text-sm text-gray-600 mb-2">
         <div>📍 ${esc(o.dia_chi_full||'Chưa có')}</div>
@@ -874,16 +894,41 @@ async function loadSaleView() {
       </div>
       <div class="flex gap-2 items-end mt-3">
         <textarea id="snote-${o.id}" class="flex-1 text-sm" rows="1" placeholder="Ghi chú cuộc gọi...">${esc(o.ghi_chu||'')}</textarea>
-        <div class="flex gap-1">
-          <button onclick="openChotDon(${o.id})" class="bg-green-600 text-white px-3 py-1.5 rounded text-sm font-medium">✅ Chốt đơn</button>
-          <button onclick="saleUpdate(${o.id},'Không mua')" class="bg-gray-400 text-white px-3 py-1.5 rounded text-sm font-medium">❌</button>
-          ${o.trang_thai==='Đã chốt'?`<button onclick="saleUpdate(${o.id},'Đơn mới')" class="bg-yellow-500 text-white px-2 py-1.5 rounded text-xs font-medium" title="Huỷ chốt → Đơn mới">↩️ Huỷ chốt</button>`:''}
-          ${o.trang_thai==='Không mua'?`<button onclick="saleUpdate(${o.id},'Đơn mới')" class="bg-yellow-500 text-white px-2 py-1.5 rounded text-xs font-medium" title="Quay lại Đơn mới">↩️ Mở lại</button>`:''}
+        <div class="flex gap-1 flex-wrap">
+          <div class="relative">
+            <button onclick="toggleSaleMenu(${o.id})" class="bg-emerald-600 text-white px-3 py-1.5 rounded text-sm font-medium">📋 Cập nhật ▾</button>
+            <div id="saleMenu-${o.id}" class="hidden absolute right-0 bottom-full mb-1 bg-white border rounded-lg shadow-xl z-50 w-48 py-1">
+              <div onclick="openChotDon(${o.id});closeSaleMenu(${o.id})" class="px-3 py-2 text-sm hover:bg-green-50 cursor-pointer text-green-700 font-medium">✅ Chốt thành công</div>
+              <div onclick="saleUpdate(${o.id},'Không mua');closeSaleMenu(${o.id})" class="px-3 py-2 text-sm hover:bg-red-50 cursor-pointer text-red-600">❌ Không mua</div>
+              <hr class="my-1">
+              <div onclick="saleUpdate(${o.id},'KNM lần 1');closeSaleMenu(${o.id})" class="px-3 py-2 text-sm hover:bg-orange-50 cursor-pointer">📵 KNM lần 1</div>
+              <div onclick="saleUpdate(${o.id},'KNM lần 2');closeSaleMenu(${o.id})" class="px-3 py-2 text-sm hover:bg-orange-50 cursor-pointer">📵 KNM lần 2</div>
+              <div onclick="saleUpdate(${o.id},'KNM lần 3');closeSaleMenu(${o.id})" class="px-3 py-2 text-sm hover:bg-orange-50 cursor-pointer">📵 KNM lần 3</div>
+              <div onclick="saleUpdate(${o.id},'KNM lần 4');closeSaleMenu(${o.id})" class="px-3 py-2 text-sm hover:bg-orange-50 cursor-pointer">📵 KNM lần 4</div>
+              <div onclick="saleUpdate(${o.id},'KNM lần 5');closeSaleMenu(${o.id})" class="px-3 py-2 text-sm hover:bg-orange-50 cursor-pointer">📵 KNM lần 5</div>
+              <div onclick="saleUpdate(${o.id},'KNM lần 6');closeSaleMenu(${o.id})" class="px-3 py-2 text-sm hover:bg-orange-50 cursor-pointer">📵 KNM lần 6</div>
+              ${o.trang_thai!=='Đơn mới'?`<hr class="my-1"><div onclick="saleUpdate(${o.id},'Đơn mới');closeSaleMenu(${o.id})" class="px-3 py-2 text-sm hover:bg-yellow-50 cursor-pointer text-yellow-700">↩️ Quay lại Đơn mới</div>`:''}
+            </div>
+          </div>
           <button onclick="saleSaveNote(${o.id})" class="bg-blue-500 text-white px-3 py-1.5 rounded text-sm font-medium">💾</button>
         </div>
       </div>
-    </div>`).join('');
+    </div>`;
+  }).join('');
 }
+
+function toggleSaleMenu(id){
+  // Close all other menus first
+  document.querySelectorAll('[id^="saleMenu-"]').forEach(el=>el.classList.add('hidden'));
+  document.getElementById('saleMenu-'+id).classList.toggle('hidden');
+}
+function closeSaleMenu(id){ document.getElementById('saleMenu-'+id)?.classList.add('hidden'); }
+// Close menu on outside click
+document.addEventListener('click', e => {
+  if(!e.target.closest('[id^="saleMenu-"]') && !e.target.closest('button[onclick*="toggleSaleMenu"]')){
+    document.querySelectorAll('[id^="saleMenu-"]').forEach(el=>el.classList.add('hidden'));
+  }
+});
 let chotDonId = null;
 let addressProvinces = [];
 let addressDistricts = [];
@@ -1235,12 +1280,12 @@ async function loadWhView() {
               </div>
               ${o.trang_thai_vc?`<div class="text-xs text-gray-500 mt-1">📋 ${esc(o.trang_thai_vc)}</div>`:''}
               <div class="flex gap-2 mt-2">
-                <button onclick="whCancelGHTK(${o.id})" class="bg-red-100 text-red-700 px-3 py-1 rounded text-xs font-medium hover:bg-red-200">❌ Huỷ đăng</button>
+                ${o.don_vi_vc==='GHTK'?`<button onclick="whCancelGHTK(${o.id})" class="bg-red-100 text-red-700 px-3 py-1 rounded text-xs font-medium hover:bg-red-200">❌ Huỷ đăng</button>`:''}
                 <button onclick="whSyncSingle(${o.id})" class="bg-yellow-100 text-yellow-700 px-3 py-1 rounded text-xs font-medium hover:bg-yellow-200">🔄 Cập nhật TT</button>
                 <button onclick="whPrintOne(${o.id})" class="bg-gray-100 text-gray-700 px-3 py-1 rounded text-xs font-medium hover:bg-gray-200">🖨️ In</button>
               </div>
             </div>`:`
-            <div class="mt-2 flex gap-2">
+            <div class="mt-2 flex gap-2 flex-wrap">
               <button onclick="whPushSingle(${o.id},'ghtk')" class="bg-green-100 text-green-700 px-3 py-1 rounded text-xs font-medium hover:bg-green-200">🚚 GHTK</button>
               <button onclick="whPushSingle(${o.id},'vtp')" class="bg-red-100 text-red-700 px-3 py-1 rounded text-xs font-medium hover:bg-red-200">🚚 VTP</button>
               <button onclick="whPrintOne(${o.id})" class="bg-gray-100 text-gray-700 px-3 py-1 rounded text-xs font-medium hover:bg-gray-200">🖨️ In phiếu</button>
@@ -1381,7 +1426,7 @@ async function bulkPushVTP(){
   }catch(e){ alert('❌ Lỗi kết nối: '+e.message); }
   loadOrders(currentPage);
 }
-async function syncShipping(){ if(!confirm('Đồng bộ vận chuyển?'))return; const r=await fetch(API+'/sync-shipping',{method:'POST'}); alert((await r.json()).message||'Xong'); loadOrders(currentPage); }
+async function syncShipping(){ const r=await fetch(API+'/sync-shipping',{method:'POST'}); alert((await r.json()).message||'Xong'); try{loadOrders(currentPage);}catch(e){} try{loadWhView();}catch(e){} }
 
 // ========== TÀI KHOẢN ==========
 async function loadUsers(){
