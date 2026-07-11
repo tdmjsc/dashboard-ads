@@ -5,7 +5,8 @@
 // =====================================================================
 
 // ---- Trạng thái đơn hàng hợp lệ ----
-const TRANG_THAI = ['Đơn mới', 'Đã chốt', 'Đang ship', 'Ship thành công', 'Hoàn thành công', 'Không mua'];
+const TRANG_THAI = ['Đơn mới', 'Đã chốt', 'Đang ship', 'Ship thành công', 'Hoàn thành công', 'Không mua',
+  'KNM lần 1', 'KNM lần 2', 'KNM lần 3', 'KNM lần 4', 'KNM lần 5', 'KNM lần 6'];
 
 // ---- Danh sách Tỉnh/Thành phố Việt Nam (63 tỉnh) ----
 const TINH_TP = [
@@ -530,8 +531,9 @@ export function mountOMS(app, { mysql, express }) {
     if (user.role === 'sale') {
       const saleAllowed = ['trang_thai','ghi_chu','sale_phu_trach','ten_kh','sdt',
         'dia_chi_full','san_pham','so_luong','gia_ban','tong_tien','phi_ship','kho_id'];
-      // Sale được phép: Đơn mới, Đã chốt, Không mua (huỷ chốt/huỷ không mua → quay Đơn mới)
-      if (d.trang_thai && !['Đơn mới','Đã chốt','Không mua'].includes(d.trang_thai)) {
+      // Sale được phép: Đơn mới, Đã chốt, Không mua, KNM lần 1-6
+      const saleStatuses = ['Đơn mới','Đã chốt','Không mua','KNM lần 1','KNM lần 2','KNM lần 3','KNM lần 4','KNM lần 5','KNM lần 6'];
+      if (d.trang_thai && !saleStatuses.includes(d.trang_thai)) {
         return res.status(403).json({ error: 'Sale không được đổi sang trạng thái này' });
       }
       const sets = []; const vals = [];
