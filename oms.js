@@ -8,6 +8,12 @@
 const TRANG_THAI = ['Đơn mới', 'Đã chốt', 'Đang ship', 'Ship thành công', 'Hoàn thành công', 'Không mua',
   'KNM lần 1', 'KNM lần 2', 'KNM lần 3', 'KNM lần 4', 'KNM lần 5', 'KNM lần 6'];
 
+// ---- Cấu hình Team Lead Marketing (giống ads.tdmjsc.com) ----
+const TEAM_LEAD = {
+  'Tạ Quang Trường': ['Tạ Quang Trường', 'Nguyễn Thị Trà My', 'Dương Văn Minh', 'Lê Thị Ánh'],
+  'Trịnh Đức Phương': ['Trịnh Đức Phương', 'Đoàn Việt Hà', 'Nguyễn Duy Huân', 'Vũ Thuý An'],
+};
+
 // ---- Danh sách Tỉnh/Thành phố Việt Nam (63 tỉnh) ----
 const TINH_TP = [
   'Hà Nội','Hồ Chí Minh','Đà Nẵng','Hải Phòng','Cần Thơ',
@@ -133,6 +139,7 @@ async function ensureTables(pool) {
       phi_ship BIGINT DEFAULT 0,
       dat_coc BIGINT DEFAULT 0 COMMENT 'Tiền khách đặt cọc',
       tin_nhan_goc TEXT COMMENT 'Tin nhắn gốc từ Ladipage (giữ nguyên toàn bộ)',
+      nguon_du_lieu VARCHAR(120) DEFAULT '' COMMENT 'Nguồn dữ liệu (Facebook, Google...)',
       da_thanh_toan TINYINT DEFAULT 0,
       INDEX idx_ngay (ngay_ve),
       INDEX idx_tt (trang_thai),
@@ -182,6 +189,7 @@ async function ensureTables(pool) {
     "ma_don_hang VARCHAR(50) DEFAULT ''",
     "dat_coc BIGINT DEFAULT 0",
     "tin_nhan_goc TEXT",
+    "nguon_du_lieu VARCHAR(120) DEFAULT ''",
   ];
   for (const col of addCols) {
     try { await pool.query(`ALTER TABLE oms_orders ADD COLUMN ${col}`); } catch(e) {}
@@ -242,6 +250,7 @@ async function ensureTables(pool) {
       product_id INT DEFAULT 0 COMMENT 'FK → oms_products.id',
       ten_sp VARCHAR(255) DEFAULT '' COMMENT 'Tên SP (cache)',
       nv_marketing VARCHAR(120) NOT NULL COMMENT 'Tên NV Marketing',
+      nguon_du_lieu VARCHAR(120) DEFAULT '' COMMENT 'Nguồn dữ liệu (Facebook, Google, Tiktok...)',
       ghi_chu VARCHAR(255) DEFAULT '',
       active TINYINT DEFAULT 1,
       created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
@@ -426,6 +435,8 @@ export function mountOMS(app, { mysql, express }) {
             if (!nvMarketing) nvMarketing = link.nv_marketing;
             // Auto-fill sản phẩm nếu chưa có
             if (!sanPham && link.ten_sp) sanPham = link.ten_sp;
+            // Auto-fill nguồn dữ liệu
+            var nguonDuLieu = link.nguon_du_lieu || '';
             // Auto-fill giá nếu chưa có
             if (!gia && link.product_id) {
               try {
@@ -469,15 +480,18 @@ export function mountOMS(app, { mysql, express }) {
     }
     const tinNhanGoc = [...new Set(rawParts)].join(' | ');
 
+    // Default nguon_du_lieu from UTM or link match
+    const orderNguon = typeof nguonDuLieu !== 'undefined' ? nguonDuLieu : (d.utm_source || '');
+
     await db(`INSERT INTO oms_orders
       (ngay_ve, nv_marketing, ten_kh, sdt, dia_chi_full, tinh, quan, phuong, dia_chi,
        trang_thai, san_pham, so_luong, gia_ban, tong_tien,
-       utm_source, utm_medium, utm_campaign, utm_content, ghi_chu, tin_nhan_goc)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'Đơn mới', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+       utm_source, utm_medium, utm_campaign, utm_content, ghi_chu, tin_nhan_goc, nguon_du_lieu)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'Đơn mới', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       [now, nvMarketing, ten, sdt, diaChiFull, addr.tinh, addr.quan, addr.phuong, addr.diaChi,
        sanPham, soLuong, gia, gia * soLuong,
        utmSource, utmMedium, utmCampaign, utmContent,
-       d.ghi_chu || '', tinNhanGoc]);
+       d.ghi_chu || '', tinNhanGoc, orderNguon]);
 
     // Auto-assign Sale round-robin
     try {
@@ -532,9 +546,10 @@ export function mountOMS(app, { mysql, express }) {
       where.push(`(sale_phu_trach = ? OR (sale_phu_trach = '' AND trang_thai = 'Đơn mới'))`);
       params.push(user.ho_ten);
     } else if (user.role === 'marketing') {
-      // Marketing chỉ thấy đơn do mình mang về
-      where.push(`nv_marketing = ?`);
-      params.push(user.ho_ten);
+      // Marketing: team lead thấy đơn cả team, NV thường thấy đơn mình
+      const team = getMktTeam(user);
+      where.push(`nv_marketing IN (${team.map(()=>'?').join(',')})`);
+      params.push(...team);
     } else if (user.role === 'warehouse') {
       // Kho chỉ thấy đơn đã chốt
       where.push(`trang_thai IN ('Đã chốt', 'Đang ship')`);
@@ -648,16 +663,27 @@ export function mountOMS(app, { mysql, express }) {
     res.json({ ok: true });
   }));
 
-  // ===================== THỐNG KÊ / BÁO CÁO (Admin) =====================
+  // Helper: lấy danh sách NV marketing mà user được xem (team lead → cả team)
+  function getMktTeam(user) {
+    if (user.role !== 'marketing') return null;
+    const team = TEAM_LEAD[user.ho_ten];
+    return team || [user.ho_ten];
+  }
+
+  // ===================== THỐNG KÊ / BÁO CÁO =====================
   app.get('/oms/api/stats', omsAuth, wrap(async (req, res) => {
     const { tu, den } = req.query;
     const user = req.session.omsUser;
     let dateFilter = '';
     let params = [];
-    // Marketing/Sale: chỉ xem dữ liệu của mình
     let userFilter = '';
-    if (user.role === 'marketing') { userFilter = ' AND nv_marketing = ?'; params.push(user.ho_ten); }
-    else if (user.role === 'sale') { userFilter = ' AND sale_phu_trach = ?'; params.push(user.ho_ten); }
+    if (user.role === 'marketing') {
+      const team = getMktTeam(user);
+      userFilter = ` AND nv_marketing IN (${team.map(()=>'?').join(',')})`;
+      params.push(...team);
+    } else if (user.role === 'sale') {
+      userFilter = ' AND sale_phu_trach = ?'; params.push(user.ho_ten);
+    }
     if (tu) { dateFilter += ' AND ngay_ve >= ?'; params.push(tu); }
     if (den) { dateFilter += ' AND ngay_ve <= ?'; params.push(den + ' 23:59:59'); }
 
@@ -1476,16 +1502,15 @@ export function mountOMS(app, { mysql, express }) {
       tenSp = prod?.ten_sp || '';
     } catch(e) {}
 
-    const result = await db(`INSERT INTO oms_link_registry (url_pattern, product_id, ten_sp, nv_marketing, ghi_chu)
-      VALUES (?,?,?,?,?)`,
-      [d.url_pattern, d.product_id, tenSp, nvName, d.ghi_chu||'']);
+    const result = await db(`INSERT INTO oms_link_registry (url_pattern, product_id, ten_sp, nv_marketing, nguon_du_lieu, ghi_chu)
+      VALUES (?,?,?,?,?,?)`,
+      [d.url_pattern, d.product_id, tenSp, nvName, d.nguon_du_lieu||'', d.ghi_chu||'']);
     res.json({ ok: true, id: result.insertId });
   }));
 
   app.put('/oms/api/links/:id', omsAuth, jsonParser, wrap(async (req, res) => {
     const d = req.body;
     const user = req.session.omsUser;
-    // Marketing chỉ sửa link của mình
     if (user.role === 'marketing') {
       const [existing] = await db('SELECT nv_marketing FROM oms_link_registry WHERE id=?', [req.params.id]);
       if (existing?.nv_marketing !== user.ho_ten) return res.status(403).json({ error: 'Không phải link của bạn' });
@@ -1496,6 +1521,7 @@ export function mountOMS(app, { mysql, express }) {
       sets.push('product_id=?'); vals.push(d.product_id);
       try { const [p] = await db('SELECT ten_sp FROM oms_products WHERE id=?', [d.product_id]); sets.push('ten_sp=?'); vals.push(p?.ten_sp||''); } catch(e) {}
     }
+    if (d.nguon_du_lieu !== undefined) { sets.push('nguon_du_lieu=?'); vals.push(d.nguon_du_lieu); }
     if (d.ghi_chu !== undefined) { sets.push('ghi_chu=?'); vals.push(d.ghi_chu); }
     if (d.active !== undefined) { sets.push('active=?'); vals.push(d.active); }
     if (d.nv_marketing && user.role === 'admin') { sets.push('nv_marketing=?'); vals.push(d.nv_marketing); }
@@ -1508,6 +1534,38 @@ export function mountOMS(app, { mysql, express }) {
   app.delete('/oms/api/links/:id', requireRole('admin'), wrap(async (req, res) => {
     await db('DELETE FROM oms_link_registry WHERE id=?', [req.params.id]);
     res.json({ ok: true });
+  }));
+
+  // ===================== THỐNG KÊ MARKETING (theo NV + nguồn dữ liệu) =====================
+  app.get('/oms/api/mkt-stats', requireRole('admin', 'marketing'), wrap(async (req, res) => {
+    const { tu, den } = req.query;
+    const user = req.session.omsUser;
+    let userFilter = ''; let params = [];
+    if (user.role === 'marketing') {
+      const team = getMktTeam(user);
+      userFilter = ` AND nv_marketing IN (${team.map(()=>'?').join(',')})`;
+      params.push(...team);
+    }
+    let dateFilter = '';
+    if (tu) { dateFilter += ' AND ngay_ve >= ?'; params.push(tu); }
+    if (den) { dateFilter += ' AND ngay_ve <= ?'; params.push(den + ' 23:59:59'); }
+
+    const byNV = await db(`SELECT nv_marketing as ten, COUNT(*) as tongDon,
+      SUM(CASE WHEN trang_thai='Đơn mới' THEN 1 ELSE 0 END) as donMoi,
+      SUM(CASE WHEN trang_thai='Đã chốt' OR trang_thai='Đang ship' OR trang_thai='Ship thành công' THEN 1 ELSE 0 END) as daChot,
+      SUM(CASE WHEN trang_thai='Không mua' THEN 1 ELSE 0 END) as khongMua,
+      SUM(CASE WHEN trang_thai LIKE 'KNM%' THEN 1 ELSE 0 END) as knm,
+      SUM(tong_tien) as doanhThu
+      FROM oms_orders WHERE nv_marketing != '' ${userFilter} ${dateFilter}
+      GROUP BY nv_marketing`, params);
+
+    const byNguon = await db(`SELECT IFNULL(NULLIF(nguon_du_lieu,''),'(Chưa có)') as nguon, COUNT(*) as tongDon,
+      SUM(CASE WHEN trang_thai='Đã chốt' OR trang_thai='Đang ship' OR trang_thai='Ship thành công' THEN 1 ELSE 0 END) as daChot,
+      SUM(tong_tien) as doanhThu
+      FROM oms_orders WHERE 1=1 ${userFilter} ${dateFilter}
+      GROUP BY nguon`, params);
+
+    res.json({ byNV, byNguon });
   }));
 
   // ===================== KHỞI TẠO =====================
