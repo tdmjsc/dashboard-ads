@@ -520,6 +520,16 @@ export function mountOMS(app, { mysql, express }) {
       }
     } catch(e) { console.error('[OMS] Auto-assign sale error:', e.message); }
 
+    // Push notification
+    try {
+      if (app._omsPush) {
+        app._omsPush(
+          (sanPham || 'Sản phẩm') + ' — Có đơn mới!',
+          `${ten} — ${sanPham || 'Sản phẩm'}`
+        );
+      }
+    } catch(e) {}
+
     // Log webhook
     try {
       const DATA_DIR = process.env.DATA_DIR || '/home/u422036594/data';
@@ -664,6 +674,28 @@ export function mountOMS(app, { mysql, express }) {
   app.delete('/oms/api/orders/:id', requireRole('admin'), wrap(async (req, res) => {
     await db('DELETE FROM oms_orders WHERE id=?', [req.params.id]);
     res.json({ ok: true });
+  }));
+
+  // ===================== THÔNG BÁO ĐƠN MỚI =====================
+  app.get('/oms/api/new-orders', omsAuth, wrap(async (req, res) => {
+    const { since_id } = req.query;
+    const user = req.session.omsUser;
+    let where = ['id > ?'];
+    let params = [parseInt(since_id) || 0];
+
+    if (user.role === 'sale') {
+      where.push(`(sale_phu_trach = ? OR (sale_phu_trach = '' AND trang_thai = 'Đơn mới'))`);
+      params.push(user.ho_ten);
+    } else if (user.role === 'marketing') {
+      const team = getMktTeam(user);
+      where.push(`nv_marketing IN (${team.map(()=>'?').join(',')})`);
+      params.push(...team);
+    }
+    // warehouse + admin: thấy tất cả
+
+    const orders = await db(`SELECT id, ten_kh, sdt, san_pham, tong_tien, trang_thai, sale_phu_trach, nv_marketing
+      FROM oms_orders WHERE ${where.join(' AND ')} ORDER BY id DESC LIMIT 10`, params);
+    res.json({ orders, count: orders.length });
   }));
 
   // Helper: lấy danh sách NV marketing mà user được xem (team lead → cả team)
@@ -1606,6 +1638,228 @@ export function mountOMS(app, { mysql, express }) {
         btn.onmouseleave = function(){ btn.style.transform='scale(1)'; };
         document.body.appendChild(btn);
       })();
+    `);
+  });
+
+  // ===================== WEB PUSH NOTIFICATIONS =====================
+  // Tạo bảng lưu push subscriptions
+  app.use('/oms', async (req, res, next) => {
+    if (!tableReady) return next();
+    try {
+      await getPool().query(`CREATE TABLE IF NOT EXISTS oms_push_subs (
+        id INT AUTO_INCREMENT PRIMARY KEY,
+        user_id INT DEFAULT 0,
+        username VARCHAR(120) DEFAULT '',
+        endpoint TEXT NOT NULL,
+        p256dh TEXT NOT NULL,
+        auth TEXT NOT NULL,
+        created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+        UNIQUE KEY uq_endpoint (endpoint(500))
+      ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4`);
+    } catch(e) {}
+    next();
+  });
+
+  // Generate VAPID keys nếu chưa có (lưu vào oms_config)
+  async function getVapidKeys() {
+    try {
+      const [row] = await db("SELECT val FROM oms_config WHERE k='vapid_public'");
+      if (row) {
+        const [priv] = await db("SELECT val FROM oms_config WHERE k='vapid_private'");
+        return { publicKey: row.val, privateKey: priv?.val || '' };
+      }
+      // Generate mới
+      const crypto = await import('crypto');
+      const ecdh = crypto.createECDH('prime256v1');
+      ecdh.generateKeys();
+      const publicKey = ecdh.getPublicKey('base64url');  
+      const privateKey = ecdh.getPrivateKey('base64url');
+      await db("INSERT INTO oms_config (k,val) VALUES ('vapid_public',?) ON DUPLICATE KEY UPDATE val=?", [publicKey, publicKey]);
+      await db("INSERT INTO oms_config (k,val) VALUES ('vapid_private',?) ON DUPLICATE KEY UPDATE val=?", [privateKey, privateKey]);
+      return { publicKey, privateKey };
+    } catch(e) { console.error('[OMS] VAPID error:', e.message); return null; }
+  }
+
+  // API: lấy VAPID public key
+  app.get('/oms/api/push/vapid-key', omsAuth, wrap(async (req, res) => {
+    const keys = await getVapidKeys();
+    if (!keys) return res.status(500).json({ error: 'Không tạo được VAPID keys' });
+    res.json({ publicKey: keys.publicKey });
+  }));
+
+  // API: đăng ký subscription
+  app.post('/oms/api/push/subscribe', omsAuth, jsonParser, wrap(async (req, res) => {
+    const { endpoint, keys } = req.body;
+    if (!endpoint || !keys?.p256dh || !keys?.auth) return res.status(400).json({ error: 'Thiếu thông tin subscription' });
+    const user = req.session.omsUser;
+    await db(`INSERT INTO oms_push_subs (user_id, username, endpoint, p256dh, auth)
+      VALUES (?,?,?,?,?) ON DUPLICATE KEY UPDATE p256dh=VALUES(p256dh), auth=VALUES(auth), username=VALUES(username)`,
+      [user.id, user.username, endpoint, keys.p256dh, keys.auth]);
+    res.json({ ok: true });
+  }));
+
+  // API: huỷ subscription
+  app.post('/oms/api/push/unsubscribe', omsAuth, jsonParser, wrap(async (req, res) => {
+    const { endpoint } = req.body;
+    if (endpoint) await db('DELETE FROM oms_push_subs WHERE endpoint=?', [endpoint]);
+    res.json({ ok: true });
+  }));
+
+  // Hàm gửi push notification cho tất cả subscribers
+  async function sendPushToAll(title, body) {
+    try {
+      const keys = await getVapidKeys();
+      if (!keys) return;
+      const subs = await db('SELECT * FROM oms_push_subs');
+      if (!subs.length) return;
+      
+      const crypto = await import('crypto');
+      for (const sub of subs) {
+        try {
+          await sendWebPush(sub, { title, body }, keys, crypto);
+        } catch(e) {
+          // Nếu subscription hết hạn → xóa
+          if (e.statusCode === 410 || e.statusCode === 404) {
+            await db('DELETE FROM oms_push_subs WHERE id=?', [sub.id]);
+          }
+        }
+      }
+    } catch(e) { console.error('[OMS] Push error:', e.message); }
+  }
+
+  // Web Push gửi thủ công (không dùng thư viện bên ngoài)
+  async function sendWebPush(sub, payload, vapidKeys, crypto) {
+    const https = await import('https');
+    const url = new URL(sub.endpoint);
+    
+    // JWT cho VAPID
+    const header = Buffer.from(JSON.stringify({typ:'JWT',alg:'ES256'})).toString('base64url');
+    const now = Math.floor(Date.now()/1000);
+    const claims = Buffer.from(JSON.stringify({
+      aud: url.origin,
+      exp: now + 43200,
+      sub: 'mailto:admin@tdmjsc.com'
+    })).toString('base64url');
+    const unsignedToken = header + '.' + claims;
+    
+    const sign = crypto.createSign('SHA256');
+    // Chuyển private key base64url → PEM
+    const privKeyBuf = Buffer.from(vapidKeys.privateKey, 'base64url');
+    const pkcs8 = Buffer.concat([
+      Buffer.from('308141020100301306072a8648ce3d020106082a8648ce3d030107042730250201010420', 'hex'),
+      privKeyBuf
+    ]);
+    const pem = '-----BEGIN EC PRIVATE KEY-----\n' + pkcs8.toString('base64') + '\n-----END EC PRIVATE KEY-----';
+    sign.update(unsignedToken);
+    const sig = sign.sign({ key: pem, dsaEncoding: 'ieee-p1363' }, 'base64url');
+    const jwt = unsignedToken + '.' + sig;
+    
+    // Encrypt payload
+    const payloadStr = JSON.stringify(payload);
+    const userPublicKey = Buffer.from(sub.p256dh, 'base64');
+    const userAuth = Buffer.from(sub.auth, 'base64');
+    
+    const salt = crypto.randomBytes(16);
+    const localKey = crypto.createECDH('prime256v1');
+    localKey.generateKeys();
+    const sharedSecret = localKey.computeSecret(userPublicKey);
+    
+    const authInfo = Buffer.from('Content-Encoding: auth\0');
+    const prk = crypto.createHmac('sha256', userAuth).update(sharedSecret).digest();
+    const ikm = crypto.createHmac('sha256', salt).update(prk).digest();
+    
+    const context = Buffer.concat([
+      Buffer.from('P-256\0'),
+      Buffer.from([0, 65]), userPublicKey,
+      Buffer.from([0, 65]), localKey.getPublicKey()
+    ]);
+    
+    const cekInfo = Buffer.concat([Buffer.from('Content-Encoding: aesgcm\0'), context]);
+    const nonceInfo = Buffer.concat([Buffer.from('Content-Encoding: nonce\0'), context]);
+    
+    const cek = crypto.createHmac('sha256', ikm).update(Buffer.concat([cekInfo, Buffer.from([1])])).digest().slice(0, 16);
+    const nonce = crypto.createHmac('sha256', ikm).update(Buffer.concat([nonceInfo, Buffer.from([1])])).digest().slice(0, 12);
+    
+    const paddedPayload = Buffer.concat([Buffer.alloc(2), Buffer.from(payloadStr, 'utf8')]);
+    const cipher = crypto.createCipheriv('aes-128-gcm', cek, nonce);
+    const encrypted = Buffer.concat([cipher.update(paddedPayload), cipher.final(), cipher.getAuthTag()]);
+    const bodyBuf = Buffer.concat([salt, Buffer.from([0, 0, 0, 65]), localKey.getPublicKey(), encrypted]);
+    
+    return new Promise((resolve, reject) => {
+      const req = https.request({
+        hostname: url.hostname, path: url.pathname + url.search, method: 'POST',
+        headers: {
+          'Authorization': 'vapid t=' + jwt + ', k=' + vapidKeys.publicKey,
+          'Content-Type': 'application/octet-stream',
+          'Content-Encoding': 'aesgcm',
+          'Crypto-Key': 'dh=' + localKey.getPublicKey().toString('base64url') + ';p256ecdsa=' + vapidKeys.publicKey,
+          'Content-Length': bodyBuf.length,
+          'TTL': '86400',
+        }
+      }, res => {
+        let data = '';
+        res.on('data', c => data += c);
+        res.on('end', () => {
+          if (res.statusCode >= 200 && res.statusCode < 300) resolve(data);
+          else { const err = new Error(data); err.statusCode = res.statusCode; reject(err); }
+        });
+      });
+      req.on('error', reject);
+      req.write(bodyBuf);
+      req.end();
+    });
+  }
+
+  // Expose sendPushToAll cho webhook dùng
+  app._omsPush = sendPushToAll;
+
+  // ---- Serve manifest.json và sw-push.js ----
+  app.get('/oms-manifest.json', (req, res) => {
+    res.json({
+      name: 'OMS - Quản lý đơn hàng',
+      short_name: 'OMS',
+      start_url: '/go-oms',
+      display: 'standalone',
+      background_color: '#f0f2f5',
+      theme_color: '#2563eb',
+      icons: [{ src: '/favicon.ico', sizes: '64x64', type: 'image/x-icon' }]
+    });
+  });
+
+  app.get('/sw-push.js', (req, res) => {
+    res.type('application/javascript').set('Cache-Control','no-store').send(`
+// Service Worker — CHỈ xử lý Push, KHÔNG cache gì
+self.addEventListener('push', function(event) {
+  let data = { title: 'OMS', body: 'Có đơn mới' };
+  try { data = event.data.json(); } catch(e) {}
+  event.waitUntil(
+    self.registration.showNotification(data.title, {
+      body: data.body,
+      icon: '/favicon.ico',
+      badge: '/favicon.ico',
+      tag: 'oms-new-order',
+      renotify: true,
+      vibrate: [200, 100, 200]
+    })
+  );
+});
+
+self.addEventListener('notificationclick', function(event) {
+  event.notification.close();
+  event.waitUntil(
+    clients.matchAll({ type: 'window', includeUncontrolled: true }).then(function(clientList) {
+      for (var i = 0; i < clientList.length; i++) {
+        if (clientList[i].url.includes('/oms') || clientList[i].url.includes('/go-oms')) {
+          return clientList[i].focus();
+        }
+      }
+      return clients.openWindow('/go-oms');
+    })
+  );
+});
+
+// KHÔNG cache gì cả
+self.addEventListener('fetch', function(event) {});
     `);
   });
 
