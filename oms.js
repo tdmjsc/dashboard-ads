@@ -1668,17 +1668,13 @@ export function mountOMS(app, { mysql, express }) {
     try {
       const [row] = await db("SELECT val FROM oms_config WHERE k='vapid_public'");
       if (row && row.val) {
-        // web-push VAPID keys phải dài ~87 ký tự (base64url). Nếu ngắn hơn = format cũ sai → xóa sinh lại
         if (row.val.length >= 80) {
           const [priv] = await db("SELECT val FROM oms_config WHERE k='vapid_private'");
           if (priv?.val?.length >= 40) return { publicKey: row.val, privateKey: priv.val };
         }
-        // Format sai → xóa
+        // Format sai → xóa sinh lại
         await db("DELETE FROM oms_config WHERE k IN ('vapid_public','vapid_private')");
-        await db("DELETE FROM oms_push_subs"); // Xóa subscriptions cũ vì key đổi
-      }
-        const [priv] = await db("SELECT val FROM oms_config WHERE k='vapid_private'");
-        return { publicKey: row.val, privateKey: priv?.val || '' };
+        await db("DELETE FROM oms_push_subs");
       }
       if (!webpush) return null;
       const keys = webpush.generateVAPIDKeys();
