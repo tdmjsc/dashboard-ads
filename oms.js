@@ -1666,31 +1666,49 @@ export function mountOMS(app, { mysql, express }) {
   }
 
   // VAPID keys: sinh 1 lần, lưu DB
+  let vapidError = '';
   async function getVapidKeys() {
+    vapidError = '';
     try {
-      await webpushReady; // đợi web-push load xong
-      const [row] = await db("SELECT val FROM oms_config WHERE k='vapid_public'");
-      if (row && row.val && row.val.length >= 80) {
-        const [priv] = await db("SELECT val FROM oms_config WHERE k='vapid_private'");
-        if (priv?.val?.length >= 40) return { publicKey: row.val, privateKey: priv.val };
+      await webpushReady;
+      // Đảm bảo bảng config tồn tại
+      try { await getPool().query(`CREATE TABLE IF NOT EXISTS oms_config (k VARCHAR(100) PRIMARY KEY, val TEXT) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4`); } catch(e) {}
+
+      const rows = await db("SELECT k, val FROM oms_config WHERE k IN ('vapid_public','vapid_private')");
+      const pub = rows.find(r => r.k === 'vapid_public');
+      const priv = rows.find(r => r.k === 'vapid_private');
+
+      if (pub?.val?.length >= 80 && priv?.val?.length >= 40) {
+        return { publicKey: pub.val, privateKey: priv.val };
       }
-      // Xóa keys cũ nếu format sai
+
+      // Xóa keys cũ
       await db("DELETE FROM oms_config WHERE k IN ('vapid_public','vapid_private')");
-      await db("DELETE FROM oms_push_subs");
-      if (!webpush) return null;
+      await db("DELETE FROM oms_push_subs WHERE 1=1");
+
+      if (!webpush) { vapidError = 'webpush is null'; return null; }
+
       const keys = webpush.generateVAPIDKeys();
-      await db("INSERT INTO oms_config (k,val) VALUES ('vapid_public',?) ON DUPLICATE KEY UPDATE val=?", [keys.publicKey, keys.publicKey]);
-      await db("INSERT INTO oms_config (k,val) VALUES ('vapid_private',?) ON DUPLICATE KEY UPDATE val=?", [keys.privateKey, keys.privateKey]);
-      console.log('[OMS] VAPID keys generated, publicKey length:', keys.publicKey.length);
+      vapidError = 'Generated: pub=' + keys.publicKey?.length + ' priv=' + keys.privateKey?.length;
+
+      await db("REPLACE INTO oms_config (k,val) VALUES ('vapid_public',?)", [keys.publicKey]);
+      await db("REPLACE INTO oms_config (k,val) VALUES ('vapid_private',?)", [keys.privateKey]);
+
+      vapidError = '';
+      console.log('[OMS] VAPID keys generated OK, pub length:', keys.publicKey.length);
       return keys;
-    } catch(e) { console.error('[OMS] VAPID error:', e.message); return null; }
+    } catch(e) {
+      vapidError = e.message;
+      console.error('[OMS] VAPID error:', e.message);
+      return null;
+    }
   }
 
   // API: lấy VAPID public key
   app.get('/oms/api/push/vapid-key', wrap(async (req, res) => {
     await ensurePushTable();
     const keys = await getVapidKeys();
-    if (!keys) return res.status(500).json({ error: 'web-push chưa cài hoặc lỗi VAPID' });
+    if (!keys) return res.status(500).json({ error: 'VAPID lỗi: ' + (vapidError || 'unknown') });
     res.json({ publicKey: keys.publicKey });
   }));
 
@@ -1716,17 +1734,18 @@ export function mountOMS(app, { mysql, express }) {
     res.json({ ok: true });
   }));
 
-  // API: DEBUG — xem trạng thái push system
+  // API: DEBUG
   app.get('/oms/api/push/debug', wrap(async (req, res) => {
     await ensurePushTable();
     const ready = await webpushReady;
     const keys = await getVapidKeys();
-    const subs = await db('SELECT id, username, LEFT(endpoint,60) as ep, created_at FROM oms_push_subs');
+    const subs = await db('SELECT id, username, LEFT(endpoint,80) as ep, created_at FROM oms_push_subs');
     res.json({
       webpush_installed: ready,
       webpush_loaded: !!webpush,
       vapid_ok: !!keys,
       vapid_public_length: keys?.publicKey?.length || 0,
+      vapid_error: vapidError || null,
       subscriptions: subs,
       subscription_count: subs.length,
     });
