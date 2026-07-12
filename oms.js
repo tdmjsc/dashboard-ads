@@ -1671,28 +1671,25 @@ export function mountOMS(app, { mysql, express }) {
     vapidError = '';
     try {
       await webpushReady;
-      // Đảm bảo bảng config tồn tại
-      try { await getPool().query(`CREATE TABLE IF NOT EXISTS oms_config (k VARCHAR(100) PRIMARY KEY, val TEXT) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4`); } catch(e) {}
 
-      const rows = await db("SELECT k, val FROM oms_config WHERE k IN ('vapid_public','vapid_private')");
-      const pub = rows.find(r => r.k === 'vapid_public');
-      const priv = rows.find(r => r.k === 'vapid_private');
+      const rows = await db("SELECT config_key, config_value FROM oms_config WHERE config_key IN ('vapid_public','vapid_private')");
+      const pub = rows.find(r => r.config_key === 'vapid_public');
+      const priv = rows.find(r => r.config_key === 'vapid_private');
 
-      if (pub?.val?.length >= 80 && priv?.val?.length >= 40) {
-        return { publicKey: pub.val, privateKey: priv.val };
+      if (pub?.config_value?.length >= 80 && priv?.config_value?.length >= 40) {
+        return { publicKey: pub.config_value, privateKey: priv.config_value };
       }
 
       // Xóa keys cũ
-      await db("DELETE FROM oms_config WHERE k IN ('vapid_public','vapid_private')");
+      await db("DELETE FROM oms_config WHERE config_key IN ('vapid_public','vapid_private')");
       await db("DELETE FROM oms_push_subs WHERE 1=1");
 
       if (!webpush) { vapidError = 'webpush is null'; return null; }
 
       const keys = webpush.generateVAPIDKeys();
-      vapidError = 'Generated: pub=' + keys.publicKey?.length + ' priv=' + keys.privateKey?.length;
 
-      await db("REPLACE INTO oms_config (k,val) VALUES ('vapid_public',?)", [keys.publicKey]);
-      await db("REPLACE INTO oms_config (k,val) VALUES ('vapid_private',?)", [keys.privateKey]);
+      await db("INSERT INTO oms_config (config_key, config_value) VALUES ('vapid_public',?) ON DUPLICATE KEY UPDATE config_value=?", [keys.publicKey, keys.publicKey]);
+      await db("INSERT INTO oms_config (config_key, config_value) VALUES ('vapid_private',?) ON DUPLICATE KEY UPDATE config_value=?", [keys.privateKey, keys.privateKey]);
 
       vapidError = '';
       console.log('[OMS] VAPID keys generated OK, pub length:', keys.publicKey.length);
