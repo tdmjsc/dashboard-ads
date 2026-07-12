@@ -75,13 +75,13 @@
 </head>
 <body class="min-h-screen">
 <script>
-// ---- XOÁ SW cũ (cache/scope root) nhưng GIỮ sw-push.js scope /oms/ ----
+// ---- XOÁ SW cache cũ, GIỮ sw-push.js (check mọi trạng thái) ----
 (async()=>{
   try{
     const regs=await navigator.serviceWorker.getRegistrations();
     for(const r of regs) {
-      // Giữ push SW
-      if(r.active && r.active.scriptURL.includes('sw-push.js')) continue;
+      const sw = r.active || r.waiting || r.installing;
+      if(sw && sw.scriptURL && sw.scriptURL.includes('sw-push.js')) continue;
       await r.unregister();
     }
     const names=await caches.keys();
@@ -2189,8 +2189,8 @@ async function initNotifications() {
   } catch(e) {}
   if(notifInterval) clearInterval(notifInterval);
   notifInterval = setInterval(checkNewOrders, 30000);
-  // Đăng ký push sau 2 giây (đợi page load xong)
-  setTimeout(registerPushSW, 2000);
+  // Đợi cleanup SW xong rồi mới đăng ký push SW
+  setTimeout(registerPushSW, 3000);
 }
 
 async function registerPushSW() {
