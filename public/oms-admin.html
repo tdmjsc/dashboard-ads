@@ -75,12 +75,13 @@
 </head>
 <body class="min-h-screen">
 <script>
-// ---- XOÁ SERVICE WORKER CŨ (cache) nhưng GIỮ sw-push.js ----
+// ---- XOÁ SW cũ (cache/scope root) nhưng GIỮ sw-push.js scope /oms/ ----
 (async()=>{
   try{
     const regs=await navigator.serviceWorker.getRegistrations();
     for(const r of regs) {
-      if(r.active && r.active.scriptURL.includes('sw-push.js')) continue; // giữ push SW
+      // Giữ push SW scope /oms/
+      if(r.active && r.active.scriptURL.includes('sw-push.js') && r.scope.includes('/oms')) continue;
       await r.unregister();
     }
     const names=await caches.keys();
@@ -2192,7 +2193,7 @@ async function initNotifications() {
 async function registerPushSW() {
   if (!('serviceWorker' in navigator) || !('PushManager' in window)) return;
   try {
-    pushRegistration = await navigator.serviceWorker.register('/sw-push.js', { scope: '/' });
+    pushRegistration = await navigator.serviceWorker.register('/sw-push.js', { scope: '/oms/' });
     if (Notification.permission === 'granted') await subscribePush();
   } catch(e) { console.error('[OMS] SW error:', e); }
 }
