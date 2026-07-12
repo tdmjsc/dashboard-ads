@@ -1643,11 +1643,14 @@ export function mountOMS(app, { mysql, express }) {
 
   // ===================== WEB PUSH NOTIFICATIONS (web-push) =====================
   let webpush = null;
-  import('web-push').then(m => { webpush = m.default || m; console.log('[OMS] web-push loaded'); }).catch(() => { console.warn('[OMS] web-push not installed'); });
+  const webpushReady = import('web-push').then(m => {
+    webpush = m.default || m;
+    console.log('[OMS] web-push loaded OK');
+    return true;
+  }).catch(e => { console.warn('[OMS] web-push NOT installed:', e.message); return false; });
 
   // Tạo bảng lưu push subscriptions
-  app.use('/oms', async (req, res, next) => {
-    if (!tableReady) return next();
+  async function ensurePushTable() {
     try {
       await getPool().query(`CREATE TABLE IF NOT EXISTS oms_push_subs (
         id INT AUTO_INCREMENT PRIMARY KEY,
@@ -1660,32 +1663,32 @@ export function mountOMS(app, { mysql, express }) {
         UNIQUE KEY uq_endpoint (endpoint(500))
       ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4`);
     } catch(e) {}
-    next();
-  });
+  }
 
   // VAPID keys: sinh 1 lần, lưu DB
   async function getVapidKeys() {
     try {
+      await webpushReady; // đợi web-push load xong
       const [row] = await db("SELECT val FROM oms_config WHERE k='vapid_public'");
-      if (row && row.val) {
-        if (row.val.length >= 80) {
-          const [priv] = await db("SELECT val FROM oms_config WHERE k='vapid_private'");
-          if (priv?.val?.length >= 40) return { publicKey: row.val, privateKey: priv.val };
-        }
-        // Format sai → xóa sinh lại
-        await db("DELETE FROM oms_config WHERE k IN ('vapid_public','vapid_private')");
-        await db("DELETE FROM oms_push_subs");
+      if (row && row.val && row.val.length >= 80) {
+        const [priv] = await db("SELECT val FROM oms_config WHERE k='vapid_private'");
+        if (priv?.val?.length >= 40) return { publicKey: row.val, privateKey: priv.val };
       }
+      // Xóa keys cũ nếu format sai
+      await db("DELETE FROM oms_config WHERE k IN ('vapid_public','vapid_private')");
+      await db("DELETE FROM oms_push_subs");
       if (!webpush) return null;
       const keys = webpush.generateVAPIDKeys();
       await db("INSERT INTO oms_config (k,val) VALUES ('vapid_public',?) ON DUPLICATE KEY UPDATE val=?", [keys.publicKey, keys.publicKey]);
       await db("INSERT INTO oms_config (k,val) VALUES ('vapid_private',?) ON DUPLICATE KEY UPDATE val=?", [keys.privateKey, keys.privateKey]);
+      console.log('[OMS] VAPID keys generated, publicKey length:', keys.publicKey.length);
       return keys;
     } catch(e) { console.error('[OMS] VAPID error:', e.message); return null; }
   }
 
   // API: lấy VAPID public key
   app.get('/oms/api/push/vapid-key', wrap(async (req, res) => {
+    await ensurePushTable();
     const keys = await getVapidKeys();
     if (!keys) return res.status(500).json({ error: 'web-push chưa cài hoặc lỗi VAPID' });
     res.json({ publicKey: keys.publicKey });
@@ -1693,6 +1696,7 @@ export function mountOMS(app, { mysql, express }) {
 
   // API: đăng ký subscription
   app.post('/oms/api/push/subscribe', jsonParser, wrap(async (req, res) => {
+    await ensurePushTable();
     const { endpoint, keys } = req.body;
     if (!endpoint || !keys?.p256dh || !keys?.auth) return res.status(400).json({ error: 'Thiếu subscription' });
     const omsUser = req.session?.omsUser;
@@ -1701,6 +1705,7 @@ export function mountOMS(app, { mysql, express }) {
     await db(`INSERT INTO oms_push_subs (user_id, username, endpoint, p256dh, auth)
       VALUES (?,?,?,?,?) ON DUPLICATE KEY UPDATE p256dh=VALUES(p256dh), auth=VALUES(auth), username=VALUES(username)`,
       [omsUser?.id || 0, username, endpoint, keys.p256dh, keys.auth]);
+    console.log('[OMS] Push subscription saved for:', username);
     res.json({ ok: true });
   }));
 
@@ -1711,25 +1716,64 @@ export function mountOMS(app, { mysql, express }) {
     res.json({ ok: true });
   }));
 
+  // API: DEBUG — xem trạng thái push system
+  app.get('/oms/api/push/debug', wrap(async (req, res) => {
+    await ensurePushTable();
+    const ready = await webpushReady;
+    const keys = await getVapidKeys();
+    const subs = await db('SELECT id, username, LEFT(endpoint,60) as ep, created_at FROM oms_push_subs');
+    res.json({
+      webpush_installed: ready,
+      webpush_loaded: !!webpush,
+      vapid_ok: !!keys,
+      vapid_public_length: keys?.publicKey?.length || 0,
+      subscriptions: subs,
+      subscription_count: subs.length,
+    });
+  }));
+
+  // API: TEST — gửi push test ngay
+  app.post('/oms/api/push/test', jsonParser, wrap(async (req, res) => {
+    await webpushReady;
+    if (!webpush) return res.json({ error: 'web-push chưa cài' });
+    const keys = await getVapidKeys();
+    if (!keys) return res.json({ error: 'VAPID keys chưa sẵn sàng' });
+    const subs = await db('SELECT * FROM oms_push_subs');
+    if (!subs.length) return res.json({ error: 'Chưa có ai subscribe. Bấm 🔔 trong app trước.' });
+
+    webpush.setVapidDetails('mailto:admin@tdmjsc.com', keys.publicKey, keys.privateKey);
+    const payload = JSON.stringify({ title: '🧪 Test thông báo OMS', body: 'Push notification hoạt động!' });
+    const results = [];
+    for (const sub of subs) {
+      try {
+        await webpush.sendNotification({ endpoint: sub.endpoint, keys: { p256dh: sub.p256dh, auth: sub.auth } }, payload, { TTL: 60 });
+        results.push({ id: sub.id, username: sub.username, ok: true });
+      } catch(e) {
+        results.push({ id: sub.id, username: sub.username, ok: false, error: e.message, statusCode: e.statusCode });
+        if (e.statusCode === 410 || e.statusCode === 404) await db('DELETE FROM oms_push_subs WHERE id=?', [sub.id]);
+      }
+    }
+    res.json({ ok: true, results });
+  }));
+
   // Gửi push cho tất cả subscribers
   async function sendPushToAll(title, body) {
+    await webpushReady;
     if (!webpush) return;
     try {
       const keys = await getVapidKeys();
       if (!keys) return;
       webpush.setVapidDetails('mailto:admin@tdmjsc.com', keys.publicKey, keys.privateKey);
       const subs = await db('SELECT * FROM oms_push_subs');
+      if (!subs.length) return;
       const payload = JSON.stringify({ title, body });
+      console.log('[OMS] Sending push to', subs.length, 'subscribers:', title);
       for (const sub of subs) {
         try {
-          await webpush.sendNotification({
-            endpoint: sub.endpoint,
-            keys: { p256dh: sub.p256dh, auth: sub.auth }
-          }, payload, { TTL: 86400 });
+          await webpush.sendNotification({ endpoint: sub.endpoint, keys: { p256dh: sub.p256dh, auth: sub.auth } }, payload, { TTL: 86400 });
         } catch(e) {
-          if (e.statusCode === 410 || e.statusCode === 404) {
-            await db('DELETE FROM oms_push_subs WHERE id=?', [sub.id]);
-          }
+          console.error('[OMS] Push send error:', sub.username, e.statusCode, e.message);
+          if (e.statusCode === 410 || e.statusCode === 404) await db('DELETE FROM oms_push_subs WHERE id=?', [sub.id]);
         }
       }
     } catch(e) { console.error('[OMS] Push error:', e.message); }
