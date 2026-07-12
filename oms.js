@@ -1641,7 +1641,10 @@ export function mountOMS(app, { mysql, express }) {
     `);
   });
 
-  // ===================== WEB PUSH NOTIFICATIONS =====================
+  // ===================== WEB PUSH NOTIFICATIONS (web-push) =====================
+  let webpush = null;
+  try { webpush = (await import('web-push')).default; } catch(e) { console.warn('[OMS] web-push not installed. Run: npm install web-push'); }
+
   // Tạo bảng lưu push subscriptions
   app.use('/oms', async (req, res, next) => {
     if (!tableReady) return next();
@@ -1660,44 +1663,48 @@ export function mountOMS(app, { mysql, express }) {
     next();
   });
 
-  // Generate VAPID keys nếu chưa có (lưu vào oms_config)
+  // VAPID keys: sinh 1 lần, lưu DB
   async function getVapidKeys() {
     try {
       const [row] = await db("SELECT val FROM oms_config WHERE k='vapid_public'");
-      if (row) {
+      if (row && row.val) {
+        // web-push VAPID keys phải dài ~87 ký tự (base64url). Nếu ngắn hơn = format cũ sai → xóa sinh lại
+        if (row.val.length >= 80) {
+          const [priv] = await db("SELECT val FROM oms_config WHERE k='vapid_private'");
+          if (priv?.val?.length >= 40) return { publicKey: row.val, privateKey: priv.val };
+        }
+        // Format sai → xóa
+        await db("DELETE FROM oms_config WHERE k IN ('vapid_public','vapid_private')");
+        await db("DELETE FROM oms_push_subs"); // Xóa subscriptions cũ vì key đổi
+      }
         const [priv] = await db("SELECT val FROM oms_config WHERE k='vapid_private'");
         return { publicKey: row.val, privateKey: priv?.val || '' };
       }
-      // Generate mới
-      const crypto = await import('crypto');
-      const ecdh = crypto.createECDH('prime256v1');
-      ecdh.generateKeys();
-      const publicKey = ecdh.getPublicKey('base64url');  
-      const privateKey = ecdh.getPrivateKey('base64url');
-      await db("INSERT INTO oms_config (k,val) VALUES ('vapid_public',?) ON DUPLICATE KEY UPDATE val=?", [publicKey, publicKey]);
-      await db("INSERT INTO oms_config (k,val) VALUES ('vapid_private',?) ON DUPLICATE KEY UPDATE val=?", [privateKey, privateKey]);
-      return { publicKey, privateKey };
+      if (!webpush) return null;
+      const keys = webpush.generateVAPIDKeys();
+      await db("INSERT INTO oms_config (k,val) VALUES ('vapid_public',?) ON DUPLICATE KEY UPDATE val=?", [keys.publicKey, keys.publicKey]);
+      await db("INSERT INTO oms_config (k,val) VALUES ('vapid_private',?) ON DUPLICATE KEY UPDATE val=?", [keys.privateKey, keys.privateKey]);
+      return keys;
     } catch(e) { console.error('[OMS] VAPID error:', e.message); return null; }
   }
 
-  // API: lấy VAPID public key (public - không cần auth)
+  // API: lấy VAPID public key
   app.get('/oms/api/push/vapid-key', wrap(async (req, res) => {
     const keys = await getVapidKeys();
-    if (!keys) return res.status(500).json({ error: 'Không tạo được VAPID keys' });
+    if (!keys) return res.status(500).json({ error: 'web-push chưa cài hoặc lỗi VAPID' });
     res.json({ publicKey: keys.publicKey });
   }));
 
-  // API: đăng ký subscription (chấp nhận cả OMS session hoặc main dashboard session)
+  // API: đăng ký subscription
   app.post('/oms/api/push/subscribe', jsonParser, wrap(async (req, res) => {
     const { endpoint, keys } = req.body;
-    if (!endpoint || !keys?.p256dh || !keys?.auth) return res.status(400).json({ error: 'Thiếu thông tin subscription' });
+    if (!endpoint || !keys?.p256dh || !keys?.auth) return res.status(400).json({ error: 'Thiếu subscription' });
     const omsUser = req.session?.omsUser;
     const mainUser = req.session?.user;
     const username = omsUser?.username || mainUser?.username || 'anonymous';
-    const userId = omsUser?.id || 0;
     await db(`INSERT INTO oms_push_subs (user_id, username, endpoint, p256dh, auth)
       VALUES (?,?,?,?,?) ON DUPLICATE KEY UPDATE p256dh=VALUES(p256dh), auth=VALUES(auth), username=VALUES(username)`,
-      [userId, username, endpoint, keys.p256dh, keys.auth]);
+      [omsUser?.id || 0, username, endpoint, keys.p256dh, keys.auth]);
     res.json({ ok: true });
   }));
 
@@ -1708,20 +1715,22 @@ export function mountOMS(app, { mysql, express }) {
     res.json({ ok: true });
   }));
 
-  // Hàm gửi push notification cho tất cả subscribers
+  // Gửi push cho tất cả subscribers
   async function sendPushToAll(title, body) {
+    if (!webpush) return;
     try {
       const keys = await getVapidKeys();
       if (!keys) return;
+      webpush.setVapidDetails('mailto:admin@tdmjsc.com', keys.publicKey, keys.privateKey);
       const subs = await db('SELECT * FROM oms_push_subs');
-      if (!subs.length) return;
-      
-      const crypto = await import('crypto');
+      const payload = JSON.stringify({ title, body });
       for (const sub of subs) {
         try {
-          await sendWebPush(sub, { title, body }, keys, crypto);
+          await webpush.sendNotification({
+            endpoint: sub.endpoint,
+            keys: { p256dh: sub.p256dh, auth: sub.auth }
+          }, payload, { TTL: 86400 });
         } catch(e) {
-          // Nếu subscription hết hạn → xóa
           if (e.statusCode === 410 || e.statusCode === 404) {
             await db('DELETE FROM oms_push_subs WHERE id=?', [sub.id]);
           }
@@ -1730,91 +1739,8 @@ export function mountOMS(app, { mysql, express }) {
     } catch(e) { console.error('[OMS] Push error:', e.message); }
   }
 
-  // Web Push gửi thủ công (không dùng thư viện bên ngoài)
-  async function sendWebPush(sub, payload, vapidKeys, crypto) {
-    const https = await import('https');
-    const url = new URL(sub.endpoint);
-    
-    // JWT cho VAPID
-    const header = Buffer.from(JSON.stringify({typ:'JWT',alg:'ES256'})).toString('base64url');
-    const now = Math.floor(Date.now()/1000);
-    const claims = Buffer.from(JSON.stringify({
-      aud: url.origin,
-      exp: now + 43200,
-      sub: 'mailto:admin@tdmjsc.com'
-    })).toString('base64url');
-    const unsignedToken = header + '.' + claims;
-    
-    const sign = crypto.createSign('SHA256');
-    // Chuyển private key base64url → PEM
-    const privKeyBuf = Buffer.from(vapidKeys.privateKey, 'base64url');
-    const pkcs8 = Buffer.concat([
-      Buffer.from('308141020100301306072a8648ce3d020106082a8648ce3d030107042730250201010420', 'hex'),
-      privKeyBuf
-    ]);
-    const pem = '-----BEGIN EC PRIVATE KEY-----\n' + pkcs8.toString('base64') + '\n-----END EC PRIVATE KEY-----';
-    sign.update(unsignedToken);
-    const sig = sign.sign({ key: pem, dsaEncoding: 'ieee-p1363' }, 'base64url');
-    const jwt = unsignedToken + '.' + sig;
-    
-    // Encrypt payload
-    const payloadStr = JSON.stringify(payload);
-    const userPublicKey = Buffer.from(sub.p256dh, 'base64');
-    const userAuth = Buffer.from(sub.auth, 'base64');
-    
-    const salt = crypto.randomBytes(16);
-    const localKey = crypto.createECDH('prime256v1');
-    localKey.generateKeys();
-    const sharedSecret = localKey.computeSecret(userPublicKey);
-    
-    const authInfo = Buffer.from('Content-Encoding: auth\0');
-    const prk = crypto.createHmac('sha256', userAuth).update(sharedSecret).digest();
-    const ikm = crypto.createHmac('sha256', salt).update(prk).digest();
-    
-    const context = Buffer.concat([
-      Buffer.from('P-256\0'),
-      Buffer.from([0, 65]), userPublicKey,
-      Buffer.from([0, 65]), localKey.getPublicKey()
-    ]);
-    
-    const cekInfo = Buffer.concat([Buffer.from('Content-Encoding: aesgcm\0'), context]);
-    const nonceInfo = Buffer.concat([Buffer.from('Content-Encoding: nonce\0'), context]);
-    
-    const cek = crypto.createHmac('sha256', ikm).update(Buffer.concat([cekInfo, Buffer.from([1])])).digest().slice(0, 16);
-    const nonce = crypto.createHmac('sha256', ikm).update(Buffer.concat([nonceInfo, Buffer.from([1])])).digest().slice(0, 12);
-    
-    const paddedPayload = Buffer.concat([Buffer.alloc(2), Buffer.from(payloadStr, 'utf8')]);
-    const cipher = crypto.createCipheriv('aes-128-gcm', cek, nonce);
-    const encrypted = Buffer.concat([cipher.update(paddedPayload), cipher.final(), cipher.getAuthTag()]);
-    const bodyBuf = Buffer.concat([salt, Buffer.from([0, 0, 0, 65]), localKey.getPublicKey(), encrypted]);
-    
-    return new Promise((resolve, reject) => {
-      const req = https.request({
-        hostname: url.hostname, path: url.pathname + url.search, method: 'POST',
-        headers: {
-          'Authorization': 'vapid t=' + jwt + ', k=' + vapidKeys.publicKey,
-          'Content-Type': 'application/octet-stream',
-          'Content-Encoding': 'aesgcm',
-          'Crypto-Key': 'dh=' + localKey.getPublicKey().toString('base64url') + ';p256ecdsa=' + vapidKeys.publicKey,
-          'Content-Length': bodyBuf.length,
-          'TTL': '86400',
-        }
-      }, res => {
-        let data = '';
-        res.on('data', c => data += c);
-        res.on('end', () => {
-          if (res.statusCode >= 200 && res.statusCode < 300) resolve(data);
-          else { const err = new Error(data); err.statusCode = res.statusCode; reject(err); }
-        });
-      });
-      req.on('error', reject);
-      req.write(bodyBuf);
-      req.end();
-    });
-  }
-
-  // Expose sendPushToAll cho webhook dùng
   app._omsPush = sendPushToAll;
+
 
   // ---- Serve manifest.json và sw-push.js ----
   app.get('/oms-manifest.json', (req, res) => {
