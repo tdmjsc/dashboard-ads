@@ -1643,7 +1643,7 @@ export function mountOMS(app, { mysql, express }) {
 
   // ===================== WEB PUSH NOTIFICATIONS (web-push) =====================
   let webpush = null;
-  try { webpush = (await import('web-push')).default; } catch(e) { console.warn('[OMS] web-push not installed. Run: npm install web-push'); }
+  import('web-push').then(m => { webpush = m.default || m; console.log('[OMS] web-push loaded'); }).catch(() => { console.warn('[OMS] web-push not installed'); });
 
   // Tạo bảng lưu push subscriptions
   app.use('/oms', async (req, res, next) => {
