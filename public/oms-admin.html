@@ -103,6 +103,7 @@
     <span id="userBadge" class="text-sm text-gray-500"></span>
     <a href="/" class="bg-blue-100 text-blue-700 px-3 py-1 rounded-lg text-sm font-medium">📊 Dashboard</a>
     <button onclick="requestNotifPermission()" class="relative text-lg" title="Bật thông báo" id="notifBell">🔔<span id="notifBadge"></span></button>
+    <button onclick="testPush()" class="text-xs bg-yellow-100 text-yellow-700 px-2 py-1 rounded" title="Test thông báo">Test</button>
     <button onclick="logout()" class="text-sm text-red-500 hover:underline">Đăng xuất</button>
   </div>
 </header>
@@ -2188,45 +2189,90 @@ async function initNotifications() {
   } catch(e) {}
   if(notifInterval) clearInterval(notifInterval);
   notifInterval = setInterval(checkNewOrders, 30000);
-  registerPushSW();
+  // Đăng ký push sau 2 giây (đợi page load xong)
+  setTimeout(registerPushSW, 2000);
 }
 
 async function registerPushSW() {
-  if (!('serviceWorker' in navigator) || !('PushManager' in window)) return;
+  if (!('serviceWorker' in navigator)) { console.log('[OMS] No SW support'); return; }
+  if (!('PushManager' in window)) { console.log('[OMS] No PushManager'); return; }
   try {
     pushRegistration = await navigator.serviceWorker.register('/sw-push.js', { scope: '/' });
+    console.log('[OMS] SW registered, scope:', pushRegistration.scope);
+    // Đợi SW active
+    const sw = pushRegistration.installing || pushRegistration.waiting || pushRegistration.active;
+    if (sw && sw.state !== 'activated') {
+      await new Promise(resolve => {
+        sw.addEventListener('statechange', () => { if (sw.state === 'activated') resolve(); });
+        setTimeout(resolve, 5000); // timeout 5s
+      });
+    }
+    console.log('[OMS] SW active');
     if (Notification.permission === 'granted') await subscribePush();
-  } catch(e) { console.error('[OMS] SW error:', e); }
+  } catch(e) { console.error('[OMS] SW register error:', e.message); }
 }
 
 async function subscribePush() {
-  if (!pushRegistration) return;
+  if (!pushRegistration) { console.log('[OMS] No registration'); return; }
   try {
     const r = await fetch(API+'/push/vapid-key');
     const d = await r.json();
-    if (!d.publicKey) return;
-    const urlBase64ToUint8Array = (b) => {
-      const p = '='.repeat((4 - b.length % 4) % 4);
-      const raw = atob((b + p).replace(/-/g, '+').replace(/_/g, '/'));
-      return Uint8Array.from([...raw].map(c => c.charCodeAt(0)));
+    console.log('[OMS] VAPID key response:', d);
+    if (!d.publicKey) { console.error('[OMS] No publicKey'); return; }
+
+    const b64 = (s) => {
+      const p = '='.repeat((4 - s.length % 4) % 4);
+      const raw = atob((s+p).replace(/-/g,'+').replace(/_/g,'/'));
+      return Uint8Array.from([...raw].map(c=>c.charCodeAt(0)));
     };
-    const sub = await pushRegistration.pushManager.subscribe({
-      userVisibleOnly: true,
-      applicationServerKey: urlBase64ToUint8Array(d.publicKey)
-    });
+
+    // Check existing subscription
+    let sub = await pushRegistration.pushManager.getSubscription();
+    if (sub) {
+      console.log('[OMS] Existing subscription found, reusing');
+    } else {
+      sub = await pushRegistration.pushManager.subscribe({
+        userVisibleOnly: true,
+        applicationServerKey: b64(d.publicKey)
+      });
+      console.log('[OMS] New subscription created');
+    }
+
     const sj = sub.toJSON();
-    await fetch(API+'/push/subscribe', {
+    const sr = await fetch(API+'/push/subscribe', {
       method: 'POST', headers: {'Content-Type':'application/json'},
       body: JSON.stringify({ endpoint: sj.endpoint, keys: sj.keys })
     });
-  } catch(e) { console.error('[OMS] Push sub error:', e); }
+    const sd = await sr.json();
+    console.log('[OMS] Subscribe result:', sd);
+  } catch(e) { console.error('[OMS] Subscribe error:', e.message); }
 }
 
 async function requestNotifPermission() {
   if (!('Notification' in window)) { alert('Trình duyệt không hỗ trợ thông báo'); return; }
   const p = await Notification.requestPermission();
-  if (p === 'granted') { await subscribePush(); alert('✅ Đã bật thông báo đơn mới!'); }
-  else alert('⚠️ Cần cho phép thông báo.');
+  if (p === 'granted') {
+    if (!pushRegistration) await registerPushSW();
+    await subscribePush();
+    // Verify
+    try {
+      const r = await fetch(API+'/push/debug');
+      const d = await r.json();
+      if (d.subscription_count > 0) alert('✅ Đã bật thông báo! (' + d.subscription_count + ' thiết bị)');
+      else alert('⚠️ Đã cho phép nhưng chưa đăng ký được. Thử tải lại trang.');
+    } catch(e) { alert('✅ Đã bật thông báo!'); }
+  } else {
+    alert('⚠️ Cần cho phép thông báo trong cài đặt.');
+  }
+}
+
+async function testPush() {
+  try {
+    const r = await fetch(API+'/push/test', {method:'POST',headers:{'Content-Type':'application/json'},body:'{}'});
+    const d = await r.json();
+    if (d.error) alert('❌ ' + d.error);
+    else alert('✅ Đã gửi test push\n\n' + JSON.stringify(d.results, null, 2));
+  } catch(e) { alert('❌ ' + e.message); }
 }
 
 async function checkNewOrders() {
@@ -2256,22 +2302,11 @@ function showOrderToast(o) {
   const container = document.getElementById('omsToastContainer');
   const toast = document.createElement('div');
   toast.className = 'oms-toast';
-  toast.innerHTML = `
-    <div>
-      <div class="text-sm font-bold text-green-700">🛒 ${esc(o.san_pham||'Sản phẩm')} — Có đơn mới!</div>
-      <div class="text-xs text-gray-600">${esc(o.ten_kh)}</div>
-    </div>
-    <span class="toast-close" onclick="this.parentElement.remove()">×</span>
-  `;
-  toast.onclick = (e) => {
-    if(e.target.classList.contains('toast-close')) return;
-    document.querySelector('[data-tab="sale"]')?.click();
-    loadSaleView(); toast.remove();
-  };
+  toast.innerHTML = '<div><div class="text-sm font-bold text-green-700">\U0001f6d2 ' + esc(o.san_pham||'SP') + ' \u2014 C\u00f3 \u0111\u01a1n m\u1edbi!</div><div class="text-xs text-gray-600">' + esc(o.ten_kh) + '</div></div><span class="toast-close" onclick="this.parentElement.remove()">\u00d7</span>';
+  toast.onclick = (e) => { if(e.target.classList.contains('toast-close')) return; document.querySelector('[data-tab="sale"]')?.click(); loadSaleView(); toast.remove(); };
   container.appendChild(toast);
   setTimeout(()=>{ if(toast.parentElement) toast.remove(); }, 8000);
 }
-
 
 // ========== INIT ==========
 checkAuth();
