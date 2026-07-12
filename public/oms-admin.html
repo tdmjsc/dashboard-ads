@@ -80,8 +80,8 @@
   try{
     const regs=await navigator.serviceWorker.getRegistrations();
     for(const r of regs) {
-      // Giữ push SW scope /oms/
-      if(r.active && r.active.scriptURL.includes('sw-push.js') && r.scope.includes('/oms')) continue;
+      // Giữ push SW
+      if(r.active && r.active.scriptURL.includes('sw-push.js')) continue;
       await r.unregister();
     }
     const names=await caches.keys();
@@ -101,6 +101,7 @@
   </div>
   <div class="flex items-center gap-3">
     <span id="userBadge" class="text-sm text-gray-500"></span>
+    <a href="/" class="bg-blue-100 text-blue-700 px-3 py-1 rounded-lg text-sm font-medium">📊 Dashboard</a>
     <button onclick="requestNotifPermission()" class="relative text-lg" title="Bật thông báo" id="notifBell">🔔<span id="notifBadge"></span></button>
     <button onclick="logout()" class="text-sm text-red-500 hover:underline">Đăng xuất</button>
   </div>
@@ -2193,7 +2194,7 @@ async function initNotifications() {
 async function registerPushSW() {
   if (!('serviceWorker' in navigator) || !('PushManager' in window)) return;
   try {
-    pushRegistration = await navigator.serviceWorker.register('/sw-push.js', { scope: '/oms/' });
+    pushRegistration = await navigator.serviceWorker.register('/sw-push.js', { scope: '/' });
     if (Notification.permission === 'granted') await subscribePush();
   } catch(e) { console.error('[OMS] SW error:', e); }
 }
