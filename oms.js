@@ -1680,26 +1680,29 @@ export function mountOMS(app, { mysql, express }) {
     } catch(e) { console.error('[OMS] VAPID error:', e.message); return null; }
   }
 
-  // API: lấy VAPID public key
-  app.get('/oms/api/push/vapid-key', omsAuth, wrap(async (req, res) => {
+  // API: lấy VAPID public key (public - không cần auth)
+  app.get('/oms/api/push/vapid-key', wrap(async (req, res) => {
     const keys = await getVapidKeys();
     if (!keys) return res.status(500).json({ error: 'Không tạo được VAPID keys' });
     res.json({ publicKey: keys.publicKey });
   }));
 
-  // API: đăng ký subscription
-  app.post('/oms/api/push/subscribe', omsAuth, jsonParser, wrap(async (req, res) => {
+  // API: đăng ký subscription (chấp nhận cả OMS session hoặc main dashboard session)
+  app.post('/oms/api/push/subscribe', jsonParser, wrap(async (req, res) => {
     const { endpoint, keys } = req.body;
     if (!endpoint || !keys?.p256dh || !keys?.auth) return res.status(400).json({ error: 'Thiếu thông tin subscription' });
-    const user = req.session.omsUser;
+    const omsUser = req.session?.omsUser;
+    const mainUser = req.session?.user;
+    const username = omsUser?.username || mainUser?.username || 'anonymous';
+    const userId = omsUser?.id || 0;
     await db(`INSERT INTO oms_push_subs (user_id, username, endpoint, p256dh, auth)
       VALUES (?,?,?,?,?) ON DUPLICATE KEY UPDATE p256dh=VALUES(p256dh), auth=VALUES(auth), username=VALUES(username)`,
-      [user.id, user.username, endpoint, keys.p256dh, keys.auth]);
+      [userId, username, endpoint, keys.p256dh, keys.auth]);
     res.json({ ok: true });
   }));
 
   // API: huỷ subscription
-  app.post('/oms/api/push/unsubscribe', omsAuth, jsonParser, wrap(async (req, res) => {
+  app.post('/oms/api/push/unsubscribe', jsonParser, wrap(async (req, res) => {
     const { endpoint } = req.body;
     if (endpoint) await db('DELETE FROM oms_push_subs WHERE endpoint=?', [endpoint]);
     res.json({ ok: true });
@@ -1827,7 +1830,10 @@ export function mountOMS(app, { mysql, express }) {
   });
 
   app.get('/sw-push.js', (req, res) => {
-    res.type('application/javascript').set('Cache-Control','no-store').send(`
+    res.type('application/javascript')
+      .set('Cache-Control','no-store')
+      .set('Service-Worker-Allowed', '/')
+      .send(`
 // Service Worker — CHỈ xử lý Push, KHÔNG cache gì
 self.addEventListener('push', function(event) {
   let data = { title: 'OMS', body: 'Có đơn mới' };
@@ -1849,11 +1855,9 @@ self.addEventListener('notificationclick', function(event) {
   event.waitUntil(
     clients.matchAll({ type: 'window', includeUncontrolled: true }).then(function(clientList) {
       for (var i = 0; i < clientList.length; i++) {
-        if (clientList[i].url.includes('/oms') || clientList[i].url.includes('/go-oms')) {
-          return clientList[i].focus();
-        }
+        return clientList[i].focus();
       }
-      return clients.openWindow('/go-oms');
+      return clients.openWindow('/');
     })
   );
 });
