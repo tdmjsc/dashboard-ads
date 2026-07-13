@@ -329,7 +329,7 @@ app.use(session({
   saveUninitialized: false,
   // KHÔNG đặt maxAge -> cookie phiên: chỉ đăng xuất khi ĐÓNG trình duyệt,
   //  và vì phiên lưu ra file nên Redeploy/Restart không làm đăng xuất nữa.
-  cookie: { httpOnly: true, sameSite: 'lax' },
+  cookie: { httpOnly: true, sameSite: 'lax', maxAge: 30 * 24 * 60 * 60 * 1000 }, // 30 ngày
 }));
 app.use(express.urlencoded({ extended: false }));
 app.use(express.json());
