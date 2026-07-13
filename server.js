@@ -66,6 +66,8 @@ const EMPLOYEES = [
   { code: 'TD7',  short: 'Minh',    full: 'Dương Văn Minh',    bhxh: 577500 },
   { code: 'TD8',  short: 'Giang',   full: 'Vũ Hà Giang',       bhxh: 577500 },
   { code: 'TD9',  short: 'Việt Hà', full: 'Đoàn Việt Hà',      bhxh: 577500 },
+  { code: 'TD11',  short: 'Tuyết', full: 'Lê Thị Ánh Tuyết',      bhxh: 0 },
+  { code: 'TD12',  short: 'Tùng', full: 'Phạm Quang Tùng',      bhxh: 0 },
   { code: 'TD10', short: 'Thuý An', full: 'Vũ Thuý An', aliases: ['Thúy An'], bhxh: 0 },
   // Nhân viên cũ (chiến dịch cũ chưa có mã) — giữ để vẫn nhận ra, xóa nếu không cần:
   { code: '',     short: 'Thắng',   full: 'Thắng', bhxh: 0 },
