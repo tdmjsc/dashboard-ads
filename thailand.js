@@ -867,12 +867,25 @@ export function mountThailand(app, { mysql, requireLogin, express, getCampaigns,
         const s = row.trang_thai || '(trống)';
         dbStatusCount[s] = (dbStatusCount[s] || 0) + 1;
       }
+      // Lấy 1 đơn PACKAGED mẫu: liệt kê TẤT CẢ field để xem có field giao hàng khác không
+      const sampleOrder = allTdffmOrders.find(o => o.orderStatus === 'PACKAGED');
+      const sampleFields = sampleOrder ? Object.keys(sampleOrder) : [];
+      // Lấy các giá trị có chứa từ "deliver/ship/status/complete/success" trong tên field
+      const sampleDeliveryHints = {};
+      if (sampleOrder) {
+        for (const [k, v] of Object.entries(sampleOrder)) {
+          if (/deliv|ship|status|complet|success|track|giao|hoan/i.test(k) || /deliv|ship|complet|success/i.test(String(v))) {
+            sampleDeliveryHints[k] = v;
+          }
+        }
+      }
 
       const result = {
         ok: true, at: startAt, finishedAt: new Date().toISOString(),
         tdffmOrders: allTdffmOrders.length, dbOrders: dbOrders.length,
         updated, notFound,
         tdffmStatusCount, dbStatusCount,
+        sampleFields, sampleDeliveryHints,
         message: `Đồng bộ thành công: ${updated} đơn cập nhật trạng thái`,
       };
       lastSyncResult = result;
