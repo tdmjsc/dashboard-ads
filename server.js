@@ -11,6 +11,15 @@ import crypto from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
+
+// ── fetchWithTimeout: tự huỷ request sau N giây để tránh treo vô hạn ──
+const FETCH_TIMEOUT_MS = 30000; // 30 giây
+function fetchWithTimeout(url, opts = {}, timeoutMs = FETCH_TIMEOUT_MS) {
+  const ctrl = new AbortController();
+  const timer = setTimeout(() => ctrl.abort(), timeoutMs);
+  return fetch(url, { ...opts, signal: ctrl.signal })
+    .finally(() => clearTimeout(timer));
+}
 const app = express();
 
 // Thư mục lưu dữ liệu NGOÀI project (không bị mất khi deploy). Khai báo SỚM
@@ -686,7 +695,7 @@ function sandboxEncrypt(text) {
 async function sandboxLogin() {
   if (!SANDBOX_WEB_USER || !SANDBOX_WEB_PASS)
     throw new Error('Chưa khai SANDBOX_WEB_USER / SANDBOX_WEB_PASS trên máy chủ.');
-  const r = await fetch(SANDBOX_AUTH_BASE + 'api/Authen/login-encrypt', {
+  const r = await fetchWithTimeout(SANDBOX_AUTH_BASE + 'api/Authen/login-encrypt', {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json', 'Accept': 'application/json, text/plain, */*',
@@ -1160,7 +1169,7 @@ async function loadOwners(force) {
   if (!SHEET_CSV_URL) return OWNERS;
   if (!force && Object.keys(OWNERS).length && Date.now() - OWNERS_AT < OWNERS_TTL) return OWNERS;
   try {
-    const r = await fetch(SHEET_CSV_URL, { redirect: 'follow' });
+    const r = await fetchWithTimeout(SHEET_CSV_URL, { redirect: 'follow' });
     const text = await r.text();
     const rows = parseCSV(text).filter(rw => rw.some(c => String(c).trim() !== ''));
     if (!rows.length) return OWNERS;
@@ -1213,7 +1222,7 @@ async function sandboxProductReport(since, until) {
     date: [tuNgay, denNgay], khoId: null,
     pageInfo: { page: 1, pageSize: 1000 }, sorts: [],
   };
-  const call = url => fetch(url, {
+  const call = url => fetchWithTimeout(url, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json', 'Accept': 'application/json, text/plain, */*', 'Origin': SANDBOX_ORIGIN, 'Referer': SANDBOX_ORIGIN + '/', 'Cookie': sandboxCookie },
     body: JSON.stringify(payload),
@@ -1552,7 +1561,10 @@ app.get('/api/salary-product/report', async (req, res) => {
       me: { role: me.role, manager: me.manager || '' },
       lastUpdated: new Date().toISOString(),
     });
-  } catch (e) { res.json({ ok: false, since, until, message: e.message }); }
+  } catch (e) {
+    const msg = e.name === 'AbortError' ? 'API Sandbox không phản hồi (timeout 30s). Vui lòng thử lại.' : e.message;
+    res.json({ ok: false, since, until, message: msg });
+  }
 });
 
 /* ===================== TÍNH LƯƠNG MARKETING =====================
@@ -1585,7 +1597,7 @@ async function sandboxReportEx(since, until, extra) {
     typeViewDetail: null, idPhongBanSale: null, idNhomNhanVienSale: null, idUserSale: null,
     idPhongBanMkts: null, idNhomNhanVienMkts: null, idUserMkts: null, ...(extra || {}),
   };
-  const call = () => fetch(SANDBOX_REPORT_URL, { method: 'POST', headers: { 'Content-Type': 'application/json', 'Accept': 'application/json, text/plain, */*', 'Origin': SANDBOX_ORIGIN, 'Referer': SANDBOX_ORIGIN + '/', 'Cookie': sandboxCookie }, body: JSON.stringify(payload) });
+  const call = () => fetchWithTimeout(SANDBOX_REPORT_URL, { method: 'POST', headers: { 'Content-Type': 'application/json', 'Accept': 'application/json, text/plain, */*', 'Origin': SANDBOX_ORIGIN, 'Referer': SANDBOX_ORIGIN + '/', 'Cookie': sandboxCookie }, body: JSON.stringify(payload) });
   if (!sandboxCookie) await sandboxLogin();
   let r = await call();
   if (r.status === 401 || r.status === 403) { await sandboxLogin(); r = await call(); }
@@ -1605,7 +1617,9 @@ function reportRowsEx(j) {
 async function productQtyByUser(since, until, marketingUserId, extra) {
   const tuNgay = `${since}T00:00:00+07:00`, denNgay = `${until}T23:59:59+07:00`;
   const payload = { strIdNguonDuLieu: null, kieuNgay: 'NgayTao', tuNgay, denNgay, idNhomSanPham: null, idSanPhamCha: null, idSanPham: null, unitCode: null, tiTrongChiaTinhTheo: 0, isChietKhau: true, isVat: true, idChiNhanh: SANDBOX_CHINHANH, typeViewDetail: null, idPhongBanSale: null, idNhomNhanVienSale: null, idUserSale: null, idPhongBanMkts: null, idNhomNhanVienMkts: null, idUserMkts: marketingUserId ? [marketingUserId] : null, date: [tuNgay, denNgay], khoId: null, pageInfo: { page: 1, pageSize: 1000 }, sorts: [], ...(extra || {}) };
-  const r = await fetch(SANDBOX_PRODUCT_REPORT_URL, { method: 'POST', headers: { 'Content-Type': 'application/json', 'Accept': 'application/json, text/plain, */*', 'Origin': SANDBOX_ORIGIN, 'Referer': SANDBOX_ORIGIN + '/', 'Cookie': sandboxCookie }, body: JSON.stringify(payload) });
+  const call = () => fetchWithTimeout(SANDBOX_PRODUCT_REPORT_URL, { method: 'POST', headers: { 'Content-Type': 'application/json', 'Accept': 'application/json, text/plain, */*', 'Origin': SANDBOX_ORIGIN, 'Referer': SANDBOX_ORIGIN + '/', 'Cookie': sandboxCookie }, body: JSON.stringify(payload) });
+  let r = await call();
+  if (r.status === 401 || r.status === 403) { await sandboxLogin(); r = await call(); }
   const j = await r.json().catch(() => ({}));
   const d = (j && j.data) || {};
   const arr = Array.isArray(d.productGridTable) ? d.productGridTable : [];
@@ -1616,7 +1630,7 @@ async function productQtyByUser(since, until, marketingUserId, extra) {
 async function productReportEx(since, until, extra) {
   const tuNgay = `${since}T00:00:00+07:00`, denNgay = `${until}T23:59:59+07:00`;
   const payload = { strIdNguonDuLieu: null, kieuNgay: 'NgayTao', tuNgay, denNgay, idNhomSanPham: null, idSanPhamCha: null, idSanPham: null, unitCode: null, tiTrongChiaTinhTheo: 0, isChietKhau: true, isVat: true, idChiNhanh: SANDBOX_CHINHANH, typeViewDetail: null, idPhongBanSale: null, idNhomNhanVienSale: null, idUserSale: null, idPhongBanMkts: null, idNhomNhanVienMkts: null, idUserMkts: null, date: [tuNgay, denNgay], khoId: null, pageInfo: { page: 1, pageSize: 1000 }, sorts: [], ...(extra || {}) };
-  const call = () => fetch(SANDBOX_PRODUCT_REPORT_URL, { method: 'POST', headers: { 'Content-Type': 'application/json', 'Accept': 'application/json, text/plain, */*', 'Origin': SANDBOX_ORIGIN, 'Referer': SANDBOX_ORIGIN + '/', 'Cookie': sandboxCookie }, body: JSON.stringify(payload) });
+  const call = () => fetchWithTimeout(SANDBOX_PRODUCT_REPORT_URL, { method: 'POST', headers: { 'Content-Type': 'application/json', 'Accept': 'application/json, text/plain, */*', 'Origin': SANDBOX_ORIGIN, 'Referer': SANDBOX_ORIGIN + '/', 'Cookie': sandboxCookie }, body: JSON.stringify(payload) });
   if (!sandboxCookie) await sandboxLogin();
   let r = await call();
   if (r.status === 401 || r.status === 403) { await sandboxLogin(); r = await call(); }
@@ -1703,7 +1717,7 @@ app.get('/api/salary/report', async (req, res) => {
   if (!useConfig && !sample)
     return res.json({ ok: false, since, until, message: 'Hiện chỉ có sẵn dữ liệu mẫu tháng 5/2026. Để xem tự động các tháng khác: lấy 2 giá trị trạng thái qua /api/salary/probe rồi khai SALARY_VAL_GIAO, SALARY_VAL_TT trên máy chủ.' });
   try {
-    if (!sandboxCookie) await sandboxLogin();   // đăng nhập 1 lần trước khi gọi song song
+    await sandboxLogin();   // luôn đăng nhập lại để đảm bảo cookie còn hạn
     const p = SALARY_STATUS_PARAM;
     const map = {};
     const add = arr => { for (const r of arr) { if (!r.name) continue; const k = normProd(r.name); if (!map[k]) map[k] = { name: r.name, id: r.id, doanhthu: 0, soDon: 0, soSP: 0 }; map[k].doanhthu += r.doanhthu; map[k].soDon += r.soDon; map[k].soSP += r.soSP; if (r.id) map[k].id = r.id; } };
@@ -1815,7 +1829,10 @@ app.get('/api/salary/report', async (req, res) => {
     rows.sort((a, b) => b.luong - a.luong);
     const roster = EMPLOYEES.filter(e => e.code).map(e => e.full).concat('Admin');
     res.json({ ok: true, since, until, nguon: useConfig ? 'live' : 'mau-t5', tyLe: LUONG_TY_LE, phiShipDon: PHI_SHIP_DON, roster, rows, teamLead: TEAM_LEAD, lastUpdated: new Date().toISOString() });
-  } catch (e) { res.json({ ok: false, since, until, message: e.message }); }
+  } catch (e) {
+    const msg = e.name === 'AbortError' ? 'API Sandbox không phản hồi (timeout 30s). Vui lòng thử lại.' : e.message;
+    res.json({ ok: false, since, until, message: msg });
+  }
 });
 
 // Chẩn đoán chi phí QC: /api/salary/debug?since=2026-05-01&until=2026-05-31
