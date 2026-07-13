@@ -1333,8 +1333,44 @@ const PTSP_BHXH = {
 // Dữ liệu nhập tay cho lương PTSP (thưởng/phạt) — lưu theo tháng, trong DATA_DIR
 const PTSP_MANUAL_FILE = path.join(DATA_DIR, 'salary-product-manual.json');
 let PTSP_MANUAL = {};
-try { PTSP_MANUAL = JSON.parse(fs.readFileSync(PTSP_MANUAL_FILE, 'utf8')); } catch { PTSP_MANUAL = {}; }
-function savePtspManual() { try { fs.writeFileSync(PTSP_MANUAL_FILE, JSON.stringify(PTSP_MANUAL)); } catch (e) {} }
+try {
+  PTSP_MANUAL = JSON.parse(fs.readFileSync(PTSP_MANUAL_FILE, 'utf8'));
+  if (!Object.keys(PTSP_MANUAL).length) {
+    try {
+      const bak = JSON.parse(fs.readFileSync(PTSP_MANUAL_FILE + '.bak', 'utf8'));
+      if (Object.keys(bak).length) { PTSP_MANUAL = bak; fs.writeFileSync(PTSP_MANUAL_FILE, JSON.stringify(bak)); console.log('[RESTORE] salary-product-manual: khôi phục từ .bak'); }
+    } catch {}
+  }
+} catch {
+  try {
+    const bak = JSON.parse(fs.readFileSync(PTSP_MANUAL_FILE + '.bak', 'utf8'));
+    if (Object.keys(bak).length) { PTSP_MANUAL = bak; console.log('[RESTORE] salary-product-manual: dùng .bak'); }
+  } catch { PTSP_MANUAL = {}; }
+}
+function savePtspManual() {
+  try {
+    // ── MERGE: đọc file đĩa, gộp RAM vào, rồi mới ghi ──
+    let disk = {};
+    try { disk = JSON.parse(fs.readFileSync(PTSP_MANUAL_FILE, 'utf8')) || {}; } catch {}
+
+    for (const [month, emps] of Object.entries(PTSP_MANUAL)) {
+      if (!disk[month]) disk[month] = {};
+      for (const [key, val] of Object.entries(emps || {})) {
+        disk[month][key] = val;
+      }
+    }
+
+    const diskSize = JSON.stringify(disk).length;
+    let bakSize = 0;
+    try { bakSize = fs.statSync(PTSP_MANUAL_FILE + '.bak').size; } catch {}
+    if (diskSize >= bakSize) {
+      try { fs.writeFileSync(PTSP_MANUAL_FILE + '.bak', JSON.stringify(disk)); } catch {}
+    }
+
+    fs.writeFileSync(PTSP_MANUAL_FILE, JSON.stringify(disk));
+    PTSP_MANUAL = disk;
+  } catch (e) { console.error('[SAVE] salary-product-manual lỗi:', e.message); }
+}
 
 // API lấy/lưu dữ liệu tay cho lương PTSP
 // Bỏ dấu tiếng Việt (để gộp key cũ "dao trung kien" với key mới "đào trung kiên")
@@ -1872,14 +1908,55 @@ let SALARY_MANUAL = {};
 try {
   // Ưu tiên đọc dữ liệu từ DATA_DIR (chỗ an toàn)
   SALARY_MANUAL = JSON.parse(fs.readFileSync(MANUAL_FILE, 'utf8'));
+  // Nếu file chính rỗng nhưng backup có data → khôi phục từ backup
+  if (!Object.keys(SALARY_MANUAL).length) {
+    try {
+      const bak = JSON.parse(fs.readFileSync(MANUAL_FILE + '.bak', 'utf8'));
+      if (Object.keys(bak).length) { SALARY_MANUAL = bak; fs.writeFileSync(MANUAL_FILE, JSON.stringify(bak)); console.log('[RESTORE] salary-manual: khôi phục từ .bak'); }
+    } catch {}
+  }
 } catch {
-  // Lần đầu chưa có ở DATA_DIR: thử lấy từ file cũ trong project rồi copy sang
+  // File chính lỗi → thử backup, rồi file cũ trong project
   try {
-    SALARY_MANUAL = JSON.parse(fs.readFileSync(OLD_MANUAL_FILE, 'utf8'));
-    fs.writeFileSync(MANUAL_FILE, JSON.stringify(SALARY_MANUAL));
-  } catch { SALARY_MANUAL = {}; }
+    const bak = JSON.parse(fs.readFileSync(MANUAL_FILE + '.bak', 'utf8'));
+    if (Object.keys(bak).length) { SALARY_MANUAL = bak; console.log('[RESTORE] salary-manual: dùng .bak do file chính lỗi'); }
+  } catch {
+    try {
+      SALARY_MANUAL = JSON.parse(fs.readFileSync(OLD_MANUAL_FILE, 'utf8'));
+      fs.writeFileSync(MANUAL_FILE, JSON.stringify(SALARY_MANUAL));
+    } catch { SALARY_MANUAL = {}; }
+  }
 }
-function saveManual() { try { fs.writeFileSync(MANUAL_FILE, JSON.stringify(SALARY_MANUAL)); } catch (e) {} }
+function saveManual() {
+  try {
+    // ── MERGE: đọc file đĩa, gộp RAM vào, rồi mới ghi ──
+    // Nếu RAM thiếu tháng nào (do restart mất data) → tháng đó trên đĩa vẫn còn nguyên
+    let disk = {};
+    try { disk = JSON.parse(fs.readFileSync(MANUAL_FILE, 'utf8')) || {}; } catch {}
+
+    // Gộp: mỗi tháng+nhân viên trong RAM ghi đè vào disk,
+    // nhưng các tháng/nhân viên CHỈ có trên đĩa được GIỮ NGUYÊN
+    for (const [month, emps] of Object.entries(SALARY_MANUAL)) {
+      if (!disk[month]) disk[month] = {};
+      for (const [key, val] of Object.entries(emps || {})) {
+        disk[month][key] = val;
+      }
+    }
+
+    // Backup: chỉ ghi .bak nếu .bak chưa tồn tại HOẶC file đĩa hiện tại
+    // có NHIỀU data hơn .bak (tránh ghi đè backup tốt bằng data xấu)
+    const diskSize = JSON.stringify(disk).length;
+    let bakSize = 0;
+    try { bakSize = fs.statSync(MANUAL_FILE + '.bak').size; } catch {}
+    if (diskSize >= bakSize) {
+      try { fs.writeFileSync(MANUAL_FILE + '.bak', JSON.stringify(disk)); } catch {}
+    }
+
+    // Ghi file chính + đồng bộ RAM
+    fs.writeFileSync(MANUAL_FILE, JSON.stringify(disk));
+    SALARY_MANUAL = disk;
+  } catch (e) { console.error('[SAVE] salary-manual lỗi:', e.message); }
+}
 const SALARY_CHANNELS = ['thailan', 'pushsale', 'san'];
 const CH_METRICS = ['dt', 'qc', 'gv', 'ship'];
 const numClean = v => { const n = Math.round(Number(String(v == null ? 0 : v).replace(/[^\d-]/g, '')) || 0); return isFinite(n) ? n : 0; };
@@ -1904,6 +1981,44 @@ app.get('/api/salary/manual', (req, res) => {
   }
   res.json({ month, channels: SALARY_CHANNELS, data });
 });
+// Xem + khôi phục backup dữ liệu nhập tay
+app.get('/api/salary/manual/backup', (req, res) => {
+  const me = req.session.user || {};
+  if (me.role !== 'admin') return res.status(403).json({ ok: false });
+  const files = [
+    { name: 'salary-manual', path: MANUAL_FILE },
+    { name: 'salary-product-manual', path: PTSP_MANUAL_FILE },
+    { name: 'salary-snapshots', path: SNAPSHOT_FILE },
+    { name: 'salary-published', path: PUBLISH_FILE },
+  ];
+  const info = files.map(f => {
+    let main = null, bak = null;
+    try { const j = JSON.parse(fs.readFileSync(f.path, 'utf8')); main = { keys: Object.keys(j).length, size: fs.statSync(f.path).size }; } catch {}
+    try { const j = JSON.parse(fs.readFileSync(f.path + '.bak', 'utf8')); bak = { keys: Object.keys(j).length, size: fs.statSync(f.path + '.bak').size }; } catch {}
+    return { name: f.name, main, bak };
+  });
+  res.json({ ok: true, files: info });
+});
+app.post('/api/salary/manual/restore', express.json(), (req, res) => {
+  const me = req.session.user || {};
+  if (me.role !== 'admin') return res.status(403).json({ ok: false });
+  const { file } = req.body || {};
+  const map = { 'salary-manual': MANUAL_FILE, 'salary-product-manual': PTSP_MANUAL_FILE, 'salary-snapshots': SNAPSHOT_FILE, 'salary-published': PUBLISH_FILE };
+  const p = map[file];
+  if (!p) return res.json({ ok: false, message: 'File không hợp lệ' });
+  try {
+    const bak = fs.readFileSync(p + '.bak', 'utf8');
+    const parsed = JSON.parse(bak);
+    fs.writeFileSync(p, bak);
+    // Nạp lại vào RAM
+    if (file === 'salary-manual') SALARY_MANUAL = parsed;
+    else if (file === 'salary-product-manual') PTSP_MANUAL = parsed;
+    else if (file === 'salary-snapshots') SNAPSHOTS = parsed;
+    else if (file === 'salary-published') PUBLISHED = parsed;
+    res.json({ ok: true, keys: Object.keys(parsed).length, message: 'Đã khôi phục từ backup' });
+  } catch (e) { res.json({ ok: false, message: 'Không có backup hoặc lỗi: ' + e.message }); }
+});
+
 // Lưu 1 nhân viên
 app.post('/api/salary/manual', (req, res) => {
   const { month, name, values } = req.body || {};
@@ -1936,13 +2051,33 @@ const TELEGRAM_BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN || '';
 const PUBLISH_FILE = path.join(DATA_DIR, 'salary-published.json');
 let PUBLISHED = {};
 try { PUBLISHED = JSON.parse(fs.readFileSync(PUBLISH_FILE, 'utf8')); } catch { PUBLISHED = {}; }
-function savePublished() { try { fs.writeFileSync(PUBLISH_FILE, JSON.stringify(PUBLISHED)); } catch (e) {} }
+function savePublished() {
+  try {
+    const newJson = JSON.stringify(PUBLISHED, null, 0);
+    let oldJson = '{}';
+    try { oldJson = fs.readFileSync(PUBLISH_FILE, 'utf8'); } catch {}
+    if (oldJson !== '{}') {
+      try { fs.writeFileSync(PUBLISH_FILE + '.bak', oldJson); } catch {}
+    }
+    fs.writeFileSync(PUBLISH_FILE, newJson);
+  } catch (e) {}
+}
 
 // Snapshot bảng lương đã chốt — lưu để nhân viên xem mà KHÔNG cần tính lại
 const SNAPSHOT_FILE = path.join(DATA_DIR, 'salary-snapshots.json');
 let SNAPSHOTS = {};
 try { SNAPSHOTS = JSON.parse(fs.readFileSync(SNAPSHOT_FILE, 'utf8')); } catch { SNAPSHOTS = {}; }
-function saveSnapshots() { try { fs.writeFileSync(SNAPSHOT_FILE, JSON.stringify(SNAPSHOTS)); } catch (e) {} }
+function saveSnapshots() {
+  try {
+    const newJson = JSON.stringify(SNAPSHOTS, null, 0);
+    let oldJson = '{}';
+    try { oldJson = fs.readFileSync(SNAPSHOT_FILE, 'utf8'); } catch {}
+    if (oldJson !== '{}') {
+      try { fs.writeFileSync(SNAPSHOT_FILE + '.bak', oldJson); } catch {}
+    }
+    fs.writeFileSync(SNAPSHOT_FILE, newJson);
+  } catch (e) {}
+}
 
 // Kiểm tra đã qua ngày 10 của tháng SAU tháng lương chưa
 function canPublish(monthStr) {
