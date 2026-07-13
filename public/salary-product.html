@@ -370,7 +370,18 @@ fetch('/api/me').then(r=>r.ok?r.json():null).then(me=>{
 
 load();
 
-
+// ─── Công khai lương PTSP ───
+$('publishBtn').addEventListener('click', async ()=>{
+  const ym=$('month').value;
+  if(!ym) return;
+  if(!confirm('Công khai bảng lương PTSP tháng '+ym+'?\n\nNhân viên sẽ xem được bảng lương của mình trên trang "Lương của tôi". Có thể công khai lại để cập nhật.')) return;
+  $('publishBtn').disabled=true;
+  $('publishBtn').textContent='Đang gửi…';
+  const rows = (DATA.managers||[]).map(m => {
+    const man = manOf(m.manager);
+    const thuongSP = +man.thuongSP || 0;
+    const thuongThang = +man.thuongThang || 0;
+    const thuong = thuongSP + thuongThang;
     // Danh sách SP của người này (để nhân viên bấm + xem chi tiết)
     const products=(DATA.products||[]).filter(p=>p.manager===m.manager)
       .map(p=>({product:p.product,ngayDang:p.ngayDang,loai:p.loai,soDon:p.soDon,soLuongSP:p.soLuongSP,

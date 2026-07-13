@@ -400,7 +400,13 @@ $('refreshBtn').addEventListener('click',()=>{$('status').removeAttribute('data-
 $('month').addEventListener('change',()=>{$('status').removeAttribute('data-base');load();});
 load();
 
-
+// ─── Công khai lương Marketing ───
+$('publishBtn').addEventListener('click', async ()=>{
+  const month=$('month').value;
+  if(!month) return;
+  if(!confirm('Công khai bảng lương Marketing tháng '+month+'?\n\nNhân viên sẽ xem được bảng lương của mình trên trang "Lương của tôi". Có thể công khai lại để cập nhật.')) return;
+  $('publishBtn').disabled=true;
+  $('publishBtn').textContent='Đang gửi…';
   // Soạn dữ liệu từng người (gồm các khoản đã tính client)
   const rows=LIST.filter(e=>e.name!=='Admin').map(e=>{
     const m=manOf(e.key), c=e._c||{};
