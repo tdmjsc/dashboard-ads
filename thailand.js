@@ -841,10 +841,23 @@ export function mountThailand(app, { mysql, requireLogin, express, getCampaigns,
 
       // (Các nhãn trạng thái đã được khai báo cố định trong TRANG_THAI nên không cần thêm động)
 
+      // Debug: thống kê trạng thái TDFFM thực tế + trạng thái DB hiện tại
+      const tdffmStatusCount = {};
+      for (const o of allTdffmOrders) {
+        const s = o.orderStatus || '(trống)';
+        tdffmStatusCount[s] = (tdffmStatusCount[s] || 0) + 1;
+      }
+      const dbStatusCount = {};
+      for (const row of dbOrders) {
+        const s = row.trang_thai || '(trống)';
+        dbStatusCount[s] = (dbStatusCount[s] || 0) + 1;
+      }
+
       const result = {
         ok: true, at: startAt, finishedAt: new Date().toISOString(),
         tdffmOrders: allTdffmOrders.length, dbOrders: dbOrders.length,
         updated, notFound,
+        tdffmStatusCount, dbStatusCount,
         message: `Đồng bộ thành công: ${updated} đơn cập nhật trạng thái`,
       };
       lastSyncResult = result;
@@ -1131,6 +1144,7 @@ table{width:100%;border-collapse:collapse;background:#101B2E;min-width:900px;}
   <button class="btn" id="pushBtn" style="background:#FF9F45;color:#0B1322;">🚚 Đẩy sang hậu cần</button>
   <a class="link" href="/thailand/api/export" id="csvBtn">⬇ Xuất CSV</a>
   <a class="link" href="/marketing-thailand.html">📊 MKT Thái Lan</a>
+  <a class="link" href="/thailand/salary" id="salaryLink" style="display:none;">💰 Lương Thái</a>
   <a class="link" href="/">← Dashboard</a>
   <button class="btn ghost" id="syncBtn" style="display:none;">🔄 Đồng bộ HC</button>
   <span class="sync-badge" id="syncBadge" style="display:none;"></span>
@@ -1241,6 +1255,7 @@ async function loadOrders(){
     if($('pushBtn')) $('pushBtn').style.display = IS_ADMIN ? '' : 'none';
     if($('csvBtn')) $('csvBtn').style.display = IS_ADMIN ? '' : 'none';
     if($('syncBtn')) $('syncBtn').style.display = IS_ADMIN ? '' : 'none';
+    if($('salaryLink')) $('salaryLink').style.display = IS_ADMIN ? '' : 'none';
     if($('fNv')) $('fNv').style.display = IS_ADMIN ? '' : 'none';
     if($('fDay')) $('fDay').style.display = IS_ADMIN ? '' : 'none';
     // fill selects
