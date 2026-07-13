@@ -738,42 +738,27 @@ export function mountThailand(app, { mysql, requireLogin, express, getCampaigns,
       // Đơn sắp xếp mới nhất trước → lọc giữ đơn tạo >= TDFFM_SYNC_FROM, dừng sớm khi gặp đơn cũ hơn
       const fromTime = new Date(TDFFM_SYNC_FROM + 'T00:00:00Z').getTime();
       const allTdffmOrders = [];
-
-      // Hàm fetch phân trang cho 1 bộ filter
-      async function fetchPages(extraFilters, label) {
-        let page = 1;
-        const LIMIT = 100;
-        let stop = false;
-        let count = 0;
-        while (page <= 50 && !stop) {
-          const data = await tdffmListOrders(page, LIMIT, extraFilters);
-          const inner = data && data.data ? data.data : null;
-          const orders = inner && Array.isArray(inner.data) ? inner.data : [];
-          if (page === 1 && label) {
-            console.log('[thailand-sync]', label, ': total =', inner ? inner.total : '?');
-          }
-          for (const o of orders) {
-            const t = new Date(o.createdAt).getTime();
-            if (isNaN(t) || t >= fromTime) {
-              allTdffmOrders.push(o);
-              count++;
-            } else {
-              stop = true;
-            }
-          }
-          if (!inner || !inner.hasNextPage || orders.length === 0) break;
-          page++;
+      let page = 1;
+      const LIMIT = 100;
+      let stop = false;
+      while (page <= 50 && !stop) {
+        const data = await tdffmListOrders(page, LIMIT);
+        const inner = data && data.data ? data.data : null;
+        const orders = inner && Array.isArray(inner.data) ? inner.data : [];
+        if (page === 1) {
+          console.log('[thailand-sync] TDFFM orders/list: total =', inner ? inner.total : '?',
+            ', lọc từ', TDFFM_SYNC_FROM);
         }
-        return count;
-      }
-
-      // Gọi 1: đơn mặc định (active — không lọc status)
-      await fetchPages({}, 'Đơn active');
-
-      // Gọi 2: đơn đã giao/hoàn — TDFFM mặc định không trả các trạng thái này
-      const deliveryStatuses = ['SHIPPING', 'DELIVERED', 'DELIVERED_SUCCESS', 'COMPLETED', 'RETURNING', 'RETURNED'];
-      for (const st of deliveryStatuses) {
-        await fetchPages({ status: st }, 'Status ' + st);
+        for (const o of orders) {
+          const t = new Date(o.createdAt).getTime();
+          if (isNaN(t) || t >= fromTime) {
+            allTdffmOrders.push(o);
+          } else {
+            stop = true;
+          }
+        }
+        if (!inner || !inner.hasNextPage || orders.length === 0) break;
+        page++;
       }
 
       if (!allTdffmOrders.length) {
