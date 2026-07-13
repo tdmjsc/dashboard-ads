@@ -20,25 +20,63 @@ jobs:
             set -e
             PROJECT=/home/u422036594/domains/ads.tdmjsc.com/nodejs
             DATA=/home/u422036594/data
+            BACKUPS=/home/u422036594/backups
 
-            # Đảm bảo thư mục data tồn tại (nằm NGOÀI project, không bao giờ bị ghi đè)
-            mkdir -p "$DATA"
+            # Đảm bảo thư mục tồn tại
+            mkdir -p "$DATA" "$BACKUPS"
             [ -f "$DATA/salary-manual.json" ] || echo '{}' > "$DATA/salary-manual.json"
 
             cd "$PROJECT"
 
-            # Pull code mới từ GitHub
+            # ── 1. BACKUP code đang chạy tốt ──
+            TS=$(date +%Y%m%d_%H%M%S)
+            BK="$BACKUPS/$TS"
+            mkdir -p "$BK"
+            for f in server.js thailand.js oms.js package.json \
+                     index.html salary.html salary-product.html my-salary.html \
+                     marketing-thailand.html products.html; do
+              [ -f "$f" ] && cp "$f" "$BK/"
+            done
+            echo "Backup $TS: $(ls "$BK" | wc -l) file"
+
+            # ── 2. GIT PULL code mới ──
             git checkout main
             git pull origin main
 
-            # Tạo lại symlink trỏ vào file dữ liệu thật ở ~/data
-            # (xóa file/symlink cũ trong project rồi link lại)
+            # ── 3. SYNTAX CHECK — rollback file lỗi ──
+            for f in server.js thailand.js oms.js; do
+              if [ -f "$f" ]; then
+                node --check "$f" 2>/dev/null || {
+                  echo "SYNTAX ERROR: $f — rollback!"
+                  [ -f "$BK/$f" ] && cp "$BK/$f" "$PROJECT/$f"
+                }
+              fi
+            done
+
+            # Symlink dữ liệu
             rm -f "$PROJECT/salary-manual.json"
             ln -sf "$DATA/salary-manual.json" "$PROJECT/salary-manual.json"
 
-            # Restart Node.js
+            # ── 4. RESTART ──
             touch tmp/restart.txt
+            sleep 5
 
-            echo "Deploy thanh cong luc $(date)"
-            echo "Symlink salary-manual.json:"
-            ls -la "$PROJECT/salary-manual.json"
+            # ── 5. HEALTH CHECK — rollback nếu server chết ──
+            HTTP=$(curl -s -o /dev/null -w "%{http_code}" --max-time 10 http://127.0.0.1:3000/ 2>/dev/null || echo "000")
+            if [ "$HTTP" = "000" ]; then
+              echo "Server KHONG phan hoi! Rollback toan bo..."
+              for f in "$BK"/*; do
+                [ -f "$f" ] && cp "$f" "$PROJECT/$(basename $f)"
+              done
+              touch tmp/restart.txt
+              sleep 3
+              echo "Da rollback ve $TS"
+            else
+              echo "Server OK (HTTP $HTTP)"
+            fi
+
+            # ── 6. Dọn backup cũ (giữ 10 bản) ──
+            cd "$BACKUPS"
+            ls -1d */ 2>/dev/null | sort | head -n -10 | xargs -r rm -rf
+
+            echo "Deploy xong luc $(date)"
