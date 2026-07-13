@@ -11,7 +11,7 @@ import fs from 'node:fs';
 const TRANG_THAI = [
   'Mới về', 'Chưa xử lý', 'Đã xác nhận', 'Sale xác nhận', 'Chờ hàng', 'Đang xử lý',
   'Đã đóng gói', 'Có vấn đề', 'Từ chối', 'Đang giao', 'Đã giao', 'Giao thành công',
-  'Đang hoàn', 'Hoàn hàng', 'Hoàn tất', 'Thành công', 'Huỷ',
+  'Giao thất bại', 'Đang hoàn', 'Hoàn hàng', 'Đã hoàn', 'Hoàn tất', 'Thành công', 'Huỷ',
 ];
 
 // ---- Tách Số lượng + Giá từ combo (chuỗi tiếng Thái) ----
@@ -683,6 +683,7 @@ export function mountThailand(app, { mysql, requireLogin, express, getCampaigns,
   }
 
   // Map trạng thái TDFFM (tiếng Anh) → nhãn tiếng Việt
+  // orderStatus = trạng thái kho; shippingOrderStatus = trạng thái giao hàng
   const TDFFM_STATUS_MAP = {
     DRAFT: 'Chưa xử lý',
     SALE_CONFIRM: 'Sale xác nhận',
@@ -699,8 +700,20 @@ export function mountThailand(app, { mysql, requireLogin, express, getCampaigns,
     RETURNED: 'Hoàn hàng',
     COMPLETED: 'Hoàn tất',
   };
-  function mapTdffmStatus(s) {
-    return TDFFM_STATUS_MAP[s] || s || '';
+  const SHIPPING_STATUS_MAP = {
+    SUCCESS: 'Giao thành công',
+    RETURNED: 'Đã hoàn',
+    RETURNING: 'Đang hoàn',
+    SHIPPING: 'Đang giao',
+    DELIVERED: 'Đã giao',
+    FAILED: 'Giao thất bại',
+  };
+  function mapTdffmStatus(orderStatus, shippingOrderStatus) {
+    // Ưu tiên shippingOrderStatus nếu có (trạng thái giao hàng chính xác hơn)
+    if (shippingOrderStatus && SHIPPING_STATUS_MAP[shippingOrderStatus]) {
+      return SHIPPING_STATUS_MAP[shippingOrderStatus];
+    }
+    return TDFFM_STATUS_MAP[orderStatus] || orderStatus || '';
   }
 
   // Log sync (lưu file để xem sau)
@@ -775,9 +788,9 @@ export function mountThailand(app, { mysql, requireLogin, express, getCampaigns,
       for (const o of allTdffmOrders) {
         const phone = normPhone(o.buyerPhone || '');
         const entry = {
-          uid: o.orderUID || '', status: mapTdffmStatus(o.orderStatus),
-          rawStatus: o.orderStatus, createdAt: o.createdAt || '',
-          phone,
+          uid: o.orderUID || '', status: mapTdffmStatus(o.orderStatus, o.shippingOrderStatus),
+          rawStatus: o.orderStatus, rawShippingStatus: o.shippingOrderStatus || '',
+          createdAt: o.createdAt || '', phone,
         };
         if (entry.uid) tdffmByUid.set(entry.uid, entry);
         if (phone) {
@@ -843,9 +856,12 @@ export function mountThailand(app, { mysql, requireLogin, express, getCampaigns,
 
       // Debug: thống kê trạng thái TDFFM thực tế + trạng thái DB hiện tại
       const tdffmStatusCount = {};
+      const tdffmShippingCount = {};
       for (const o of allTdffmOrders) {
         const s = o.orderStatus || '(trống)';
         tdffmStatusCount[s] = (tdffmStatusCount[s] || 0) + 1;
+        const ss = o.shippingOrderStatus || '(trống)';
+        tdffmShippingCount[ss] = (tdffmShippingCount[ss] || 0) + 1;
       }
       const dbStatusCount = {};
       for (const row of dbOrders) {
@@ -869,7 +885,7 @@ export function mountThailand(app, { mysql, requireLogin, express, getCampaigns,
         ok: true, at: startAt, finishedAt: new Date().toISOString(),
         tdffmOrders: allTdffmOrders.length, dbOrders: dbOrders.length,
         updated, notFound,
-        tdffmStatusCount, dbStatusCount,
+        tdffmStatusCount, tdffmShippingCount, dbStatusCount,
         sampleFields, sampleDeliveryHints,
         message: `Đồng bộ thành công: ${updated} đơn cập nhật trạng thái`,
       };
