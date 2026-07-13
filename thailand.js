@@ -546,6 +546,73 @@ export function mountThailand(app, { mysql, requireLogin, express, getCampaigns,
     res.send(csv);
   }));
 
+  // ====================== THỐNG KÊ LƯƠNG THÁI LAN ======================
+  // GET /thailand/api/salary-report?month=2026-06
+  // Trả: danh sách NV với đơn giao thành công, doanh thu THB, số đơn, số SP, giá vốn
+  app.get('/thailand/api/salary-report', thaiAuth, wrap(async (req, res) => {
+    const { isAdmin } = thaiWho(req);
+    if (!isAdmin) return res.status(403).json({ ok: false, message: 'Chỉ admin' });
+    const month = req.query.month || todayVN().slice(0, 7);
+    const since = month + '-01';
+    // Tính ngày cuối tháng
+    const [y, m] = month.split('-').map(Number);
+    const lastDay = new Date(y, m, 0).getDate();
+    const until = month + '-' + String(lastDay).padStart(2, '0');
+
+    const p = await db();
+
+    // Lấy tất cả đơn giao thành công trong tháng (kèm chi tiết sản phẩm)
+    const [orders] = await p.query(
+      `SELECT id, nhan_vien, gia_thb, so_luong, combo, trang_thai
+       FROM th_orders
+       WHERE ngay_ve >= ? AND ngay_ve <= ?
+         AND trang_thai IN ('Giao thành công', 'Thành công', 'Hoàn tất')
+       ORDER BY nhan_vien`, [since, until]);
+
+    // Gom theo nhân viên
+    const norm = s => String(s == null ? '' : s).trim().toLowerCase().replace(/\s+/g, ' ');
+    const map = {};
+    for (const o of orders) {
+      const key = norm(o.nhan_vien || '(không tên)');
+      if (!map[key]) map[key] = { name: o.nhan_vien || '(không tên)', doanhThuThb: 0, soDon: 0, soSP: 0, combos: [] };
+      map[key].doanhThuThb += Number(o.gia_thb) || 0;
+      map[key].soDon += 1;
+      map[key].soSP += Number(o.so_luong) || 0;
+      if (o.combo) map[key].combos.push(o.combo);
+    }
+
+    // Load giá vốn Thái từ Google Sheet (dùng loadOwners global nếu có)
+    let owners = {};
+    try {
+      if (typeof loadOwners === 'function') owners = await loadOwners(false);
+    } catch {}
+
+    const rows = Object.values(map).sort((a, b) => b.doanhThuThb - a.doanhThuThb);
+
+    // Tính giá vốn: dựa trên combo → tên SP → giaThai từ Sheet
+    for (const r of rows) {
+      let giaVonThb = 0;
+      // Mỗi combo string chứa tên SP → tìm giaThai trong owners
+      // (giaThai sẽ được thêm vào loadOwners)
+      r.giaVonThb = giaVonThb; // tạm = 0, tính ở client khi có dữ liệu Sheet
+    }
+
+    const total = rows.reduce((a, r) => ({
+      doanhThuThb: a.doanhThuThb + r.doanhThuThb,
+      soDon: a.soDon + r.soDon,
+      soSP: a.soSP + r.soSP,
+    }), { doanhThuThb: 0, soDon: 0, soSP: 0 });
+
+    res.json({ ok: true, month, since, until, rows, total, lastUpdated: new Date().toISOString() });
+  }));
+
+  // Trang lương Thái Lan (HTML)
+  app.get('/thailand/salary', thaiAuth, (req, res) => {
+    const { isAdmin } = thaiWho(req);
+    if (!isAdmin) return res.status(403).send('Chỉ admin');
+    res.type('html').send(salaryThailandHtml());
+  });
+
   // ====================== TRANG QUẢN LÝ (HTML) ======================
   app.get('/thailand', thaiAuth, (req, res) => {
     res.type('html').send(pageHtml());
@@ -702,40 +769,72 @@ export function mountThailand(app, { mysql, requireLogin, express, getCampaigns,
         return;
       }
 
-      // Build map: normPhone → { uid, status } — đơn đầu tiên (mới nhất) thắng
-      const tdffmMap = new Map();
+      // Build map: normPhone → mảng tất cả đơn (để match chính xác theo uid hoặc ngày)
+      const tdffmByUid = new Map();   // uid → { status, rawStatus, phone, createdAt }
+      const tdffmByPhone = new Map(); // phone → [{ uid, status, rawStatus, createdAt }]
       for (const o of allTdffmOrders) {
         const phone = normPhone(o.buyerPhone || '');
-        if (phone && !tdffmMap.has(phone)) {
-          tdffmMap.set(phone, { uid: o.orderUID, status: mapTdffmStatus(o.orderStatus), rawStatus: o.orderStatus });
+        const entry = {
+          uid: o.orderUID || '', status: mapTdffmStatus(o.orderStatus),
+          rawStatus: o.orderStatus, createdAt: o.createdAt || '',
+          phone,
+        };
+        if (entry.uid) tdffmByUid.set(entry.uid, entry);
+        if (phone) {
+          if (!tdffmByPhone.has(phone)) tdffmByPhone.set(phone, []);
+          tdffmByPhone.get(phone).push(entry);
         }
       }
 
-      // Lấy tất cả đơn có SĐT để đối chiếu (TDFFM là nguồn trạng thái chuẩn)
+      // Lấy tất cả đơn có SĐT để đối chiếu
       const [dbOrders] = await p.query(
-        `SELECT id, sdt, trang_thai, tdffm_uid FROM th_orders WHERE sdt IS NOT NULL AND sdt <> ''`
+        `SELECT id, sdt, trang_thai, tdffm_uid, ngay_ve FROM th_orders WHERE sdt IS NOT NULL AND sdt <> ''`
       );
 
       let updated = 0, notFound = 0;
       const now = new Date();
 
       for (const row of dbOrders) {
-        const phone = normPhone(row.sdt || '');
-        if (!phone) { notFound++; continue; }
-        const match = tdffmMap.get(phone);
-        if (!match) { notFound++; continue; }
+        let match = null;
 
-        if (match.status && match.status !== row.trang_thai) {
+        // Ưu tiên 1: match bằng tdffm_uid (chính xác nhất)
+        if (row.tdffm_uid && tdffmByUid.has(row.tdffm_uid)) {
+          match = tdffmByUid.get(row.tdffm_uid);
+        } else {
+          // Ưu tiên 2: match bằng SĐT + ngày gần nhất
+          const phone = normPhone(row.sdt || '');
+          if (!phone) { notFound++; continue; }
+          const candidates = tdffmByPhone.get(phone);
+          if (!candidates || !candidates.length) { notFound++; continue; }
+
+          if (candidates.length === 1) {
+            // Chỉ có 1 đơn cho SĐT này → dùng luôn
+            match = candidates[0];
+          } else {
+            // Nhiều đơn cùng SĐT → chọn đơn có ngày tạo gần nhất với ngay_ve
+            const dbDate = new Date(row.ngay_ve).getTime();
+            let bestDist = Infinity;
+            for (const c of candidates) {
+              const cDate = new Date(c.createdAt).getTime();
+              const dist = Math.abs(cDate - dbDate);
+              if (dist < bestDist) { bestDist = dist; match = c; }
+            }
+          }
+        }
+
+        if (!match || !match.status) { notFound++; continue; }
+
+        if (match.status !== row.trang_thai) {
           await p.query(
             `UPDATE th_orders SET trang_thai = ?, tdffm_uid = ?, tdffm_sync_at = ? WHERE id = ?`,
             [match.status, match.uid || '', now, row.id]
           );
           updated++;
-        } else {
+        } else if (!row.tdffm_uid && match.uid) {
           // Lưu uid nếu chưa có
           await p.query(
-            `UPDATE th_orders SET tdffm_uid = ?, tdffm_sync_at = ? WHERE id = ? AND (tdffm_uid = '' OR tdffm_uid IS NULL)`,
-            [match.uid || '', now, row.id]
+            `UPDATE th_orders SET tdffm_uid = ?, tdffm_sync_at = ? WHERE id = ?`,
+            [match.uid, now, row.id]
           );
         }
       }
@@ -800,6 +899,150 @@ export function mountThailand(app, { mysql, requireLogin, express, getCampaigns,
   }));
 
   console.log('[thailand] Đã gắn module quản lý đơn Thái Lan tại /thailand');
+}
+
+// ---- HTML trang lương Thái Lan ----
+function salaryThailandHtml() {
+  return `<!DOCTYPE html><html lang="vi"><head><meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Lương Thái Lan — TDMJSC</title>
+<style>
+*{box-sizing:border-box;}
+body{margin:0;font-family:'Inter',system-ui,sans-serif;background:#0B1322;color:#E7EEF8;}
+header{background:#10192B;border-bottom:1px solid rgba(255,255,255,.07);padding:14px 18px;}
+.top{display:flex;align-items:center;gap:10px;flex-wrap:wrap;}
+h1{font-size:17px;margin:0;white-space:nowrap;}
+.sub{color:#9FB0C8;font-size:12px;margin:2px 0 0;font-weight:400;}
+select.pick,input.pick{font-family:inherit;font-size:13px;color:#fff;background:rgba(255,255,255,.06);border:1px solid rgba(255,255,255,.10);padding:8px 10px;border-radius:9px;outline:none;color-scheme:dark;}
+input.pick{width:110px;text-align:right;}
+.link{color:#C4D0E2;font-size:13px;text-decoration:none;border:1px solid rgba(255,255,255,.14);padding:7px 12px;border-radius:9px;white-space:nowrap;}
+.link:hover{background:rgba(255,255,255,.08);color:#fff;}
+label.cfg{font-size:12px;color:#9FB0C8;display:flex;align-items:center;gap:5px;white-space:nowrap;}
+main{padding:18px;max-width:1200px;margin:0 auto;}
+.status{font-size:13px;color:#9FB0C8;margin:4px 0 12px;min-height:18px;}
+.status .err{color:#ff9b8a;} .status .ok{color:#7BE3B5;}
+.wrap{overflow-x:auto;border-radius:12px;}
+table{width:100%;border-collapse:collapse;background:#101B2E;border-radius:12px;overflow:hidden;min-width:900px;}
+th,td{padding:10px 12px;text-align:left;font-size:13px;border-bottom:1px solid rgba(255,255,255,.05);white-space:nowrap;}
+th{background:#16233A;color:#9FB0C8;font-weight:600;font-size:11px;text-transform:uppercase;letter-spacing:.03em;}
+td.num,th.num{text-align:right;font-variant-numeric:tabular-nums;}
+.l2{color:#7BE3B5;font-weight:700;}
+.thuc{color:#ffc56b;font-weight:800;}
+.neg{color:#ff9b8a;}
+.muted{color:#6B7C97;}
+.empty{padding:40px;text-align:center;color:#6B7C97;}
+.total-row td{background:#16233A;font-weight:700;border-top:2px solid rgba(255,255,255,.12);}
+.cards{display:flex;gap:12px;flex-wrap:wrap;margin-bottom:14px;}
+.card{background:#101B2E;border:1px solid rgba(255,255,255,.08);border-radius:12px;padding:14px 18px;flex:1;min-width:140px;}
+.card .lbl{font-size:11px;color:#9FB0C8;text-transform:uppercase;letter-spacing:.03em;}
+.card .val{font-size:22px;font-weight:700;margin-top:4px;font-variant-numeric:tabular-nums;}
+</style></head><body>
+<header>
+  <div class="top">
+    <div style="flex:1;min-width:140px;">
+      <h1>🇹🇭 Lương Thái Lan</h1>
+      <p class="sub">Doanh thu đơn giao thành công</p>
+    </div>
+    <select class="pick" id="month"></select>
+    <label class="cfg">Tỷ giá: <input class="pick" id="rate" type="text" placeholder="VD: 580" value="580"></label>
+    <label class="cfg">Phí HC %: <input class="pick" id="fee" type="text" placeholder="15" value="15" style="width:60px;"></label>
+    <a href="/thailand" class="link">← Đơn hàng</a>
+    <a href="/" class="link">Dashboard</a>
+  </div>
+</header>
+<main>
+  <div class="status" id="status">Đang tải…</div>
+  <div class="cards" id="cards"></div>
+  <div class="wrap"><div id="content"><div class="empty">Đang tải…</div></div></div>
+</main>
+<script>
+const $=id=>document.getElementById(id);
+const vnd=n=>Math.round(Number(n)||0).toLocaleString('vi-VN');
+const thb=n=>(Number(n)||0).toLocaleString('th-TH');
+let DATA=null;
+
+// Tạo danh sách 12 tháng gần nhất
+(function initMonths(){
+  const sel=$('month');
+  const now=new Date();
+  for(let i=0;i<12;i++){
+    const d=new Date(now.getFullYear(),now.getMonth()-i,1);
+    const ym=d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2,'0');
+    const label='Tháng '+(d.getMonth()+1)+'/'+d.getFullYear();
+    sel.innerHTML+=\`<option value="\${ym}">\${label}</option>\`;
+  }
+  sel.value=now.getFullYear()+'-'+String(now.getMonth()+1).padStart(2,'0');
+})();
+
+async function load(){
+  const month=$('month').value;
+  $('status').innerHTML='Đang tải…';
+  $('content').innerHTML='<div class="empty">Đang tải…</div>';
+  try{
+    const r=await fetch('/thailand/api/salary-report?month='+month);
+    const d=await r.json();
+    if(!d.ok){$('status').innerHTML='<span class="err">'+d.message+'</span>';return;}
+    DATA=d;
+    render();
+  }catch(e){$('status').innerHTML='<span class="err">Lỗi: '+e.message+'</span>';}
+}
+
+function getRate(){ return parseFloat($('rate').value)||0; }
+function getFee(){ return parseFloat($('fee').value)||0; }
+
+function render(){
+  if(!DATA||!DATA.rows){$('content').innerHTML='<div class="empty">Không có dữ liệu</div>';return;}
+  const rate=getRate(), feePct=getFee()/100;
+  const rows=DATA.rows;
+
+  // Cards tổng
+  const t=DATA.total||{};
+  const dtThbNet=Math.round(t.doanhThuThb*(1-feePct));
+  const dtVnd=Math.round(dtThbNet*rate);
+  $('cards').innerHTML=\`
+    <div class="card"><div class="lbl">Tổng DT (THB gốc)</div><div class="val">\${thb(t.doanhThuThb)} ฿</div></div>
+    <div class="card"><div class="lbl">Thực thu THB (-\${getFee()}%)</div><div class="val l2">\${thb(dtThbNet)} ฿</div></div>
+    <div class="card"><div class="lbl">Thực thu VND (×\${vnd(rate)})</div><div class="val thuc">\${vnd(dtVnd)} ₫</div></div>
+    <div class="card"><div class="lbl">Tổng đơn / SP</div><div class="val">\${t.soDon} đơn · \${t.soSP} SP</div></div>
+  \`;
+
+  // Table
+  let h='<table><thead><tr><th>Nhân viên</th><th class="num">DT gốc (THB)</th><th class="num">Thực thu THB</th><th class="num">Thực thu VND</th><th class="num">Số đơn</th><th class="num">Số SP</th></tr></thead><tbody>';
+  let totDtGoc=0,totNet=0,totVnd=0,totDon=0,totSP=0;
+  for(const r of rows){
+    const dtGoc=r.doanhThuThb;
+    const net=Math.round(dtGoc*(1-feePct));
+    const vndd=Math.round(net*rate);
+    totDtGoc+=dtGoc; totNet+=net; totVnd+=vndd; totDon+=r.soDon; totSP+=r.soSP;
+    h+=\`<tr>
+      <td><b>\${esc(r.name)}</b></td>
+      <td class="num">\${thb(dtGoc)} ฿</td>
+      <td class="num l2">\${thb(net)} ฿</td>
+      <td class="num thuc">\${vnd(vndd)} ₫</td>
+      <td class="num">\${r.soDon}</td>
+      <td class="num">\${r.soSP}</td>
+    </tr>\`;
+  }
+  h+=\`<tr class="total-row">
+    <td>Tổng (\${rows.length})</td>
+    <td class="num">\${thb(totDtGoc)} ฿</td>
+    <td class="num l2">\${thb(totNet)} ฿</td>
+    <td class="num thuc">\${vnd(totVnd)} ₫</td>
+    <td class="num">\${totDon}</td>
+    <td class="num">\${totSP}</td>
+  </tr>\`;
+  h+='</tbody></table>';
+  $('content').innerHTML=h;
+  $('status').innerHTML='<span class="ok">✓ Tháng '+DATA.month+' · Cập nhật '+(DATA.lastUpdated||'').replace('T',' ').slice(0,19)+'</span>';
+}
+
+function esc(s){return String(s==null?'':s).replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));}
+
+$('month').addEventListener('change',load);
+$('rate').addEventListener('input',render);
+$('fee').addEventListener('input',render);
+load();
+</script></body></html>`;
 }
 
 // ---- HTML trang đăng nhập ----

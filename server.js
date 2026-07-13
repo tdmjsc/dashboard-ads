@@ -1182,6 +1182,7 @@ async function loadOwners(force) {
     const mc = find(['quản lý', 'quan ly', 'phụ trách', 'phu trach', 'nhân viên', 'nhan vien', 'người', 'nguoi']);
     let gc = find(['giá nhập', 'gia nhap', 'gianhap', 'giá vốn', 'gia von']);
     let dc = find(['ngày đăng', 'ngay dang', 'ngaydang', 'ngày tạo', 'ngay tao', 'ngày lên', 'ngay len']);
+    let tc = find(['giá thái', 'gia thai', 'giathai', 'thai price', 'giá thb', 'gia thb']);
     if (pc >= 0 && mc >= 0) { pCol = pc; mCol = mc; start = 1; }
     if (gc < 0 && start === 1) gc = 3; // mặc định cột D = giá nhập
     if (dc < 0 && start === 1) dc = 4; // mặc định cột E = ngày đăng
@@ -1202,9 +1203,10 @@ async function loadOwners(force) {
       const praw = String(rows[i][pCol] || '').trim();
       const m = String(rows[i][mCol] || '').trim();
       const giaNhap = gc >= 0 ? toNum(rows[i][gc]) : 0;
+      const giaThai = tc >= 0 ? toNum(rows[i][tc]) : 0;
       const ngayDang = dc >= 0 ? parseDate(rows[i][dc]) : null;
       const p = normProd(praw);
-      if (p && (m || giaNhap)) map[p] = { manager: m, productRaw: praw, giaNhap, ngayDang };
+      if (p && (m || giaNhap)) map[p] = { manager: m, productRaw: praw, giaNhap, giaThai, ngayDang };
     }
     if (Object.keys(map).length) { OWNERS = map; OWNERS_AT = Date.now(); }
   } catch (e) { /* giữ bản cũ nếu lỗi */ }
