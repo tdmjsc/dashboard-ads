@@ -585,7 +585,7 @@ export function mountThailand(app, { mysql, requireLogin, express, getCampaigns,
     const adSpend = {};
     for (const c of campaigns) {
       const cName = norm(c.name || '');
-      if (!cName.includes('thailan') && !cName.includes('thái lan') && !cName.includes('thailand')) continue;
+      if (!cName.includes('thailan')) continue; // chỉ lọc chiến dịch có từ "thailan"
       const emp = norm(typeof detectEmployee === 'function' ? detectEmployee(c.name) : (c.employee || ''));
       if (!emp || emp === 'chưa xác định') continue;
       const s = (c.daily || []).reduce((t, d) => t + (Number(d.spent) || 0), 0);
@@ -642,8 +642,16 @@ export function mountThailand(app, { mysql, requireLogin, express, getCampaigns,
       delete r.products;
 
       // Gắn ngân sách QC
+      // adSpend key = tên đầy đủ từ detectEmployee (VD "tạ quang trường")
+      // empNorm = tên từ đơn hàng, có thể ngắn (VD "trường") hoặc đầy đủ
       const empNorm = norm(r.name);
-      r.nganSach = Math.round((adSpend[empNorm] || 0) * TAX);
+      let spend = adSpend[empNorm] || 0;
+      if (!spend) {
+        for (const [adKey, val] of Object.entries(adSpend)) {
+          if (adKey && (adKey.includes(empNorm) || empNorm.includes(adKey))) { spend = val; break; }
+        }
+      }
+      r.nganSach = Math.round(spend * TAX);
     }
 
     const total = rows.reduce((a, r) => ({
@@ -1206,7 +1214,7 @@ function render(){
     var t=DATA.total;
     var dtThbNet=Math.round(t.doanhThuThb*(1-feePct));
     var dtVnd=Math.round(dtThbNet*rate);
-    var gvVnd=Math.round((t.giaVonThb||0)*rate);
+    var gvVnd=t.giaVonThb||0;
     $('cards').innerHTML=
       '<div class="card"><div class="lbl">Thực thu THB (-'+getFee()+'%)</div><div class="val l2">'+thb(dtThbNet)+' ฿</div></div>'+
       '<div class="card"><div class="lbl">Doanh thu</div><div class="val thuc">'+vnd(dtVnd)+' ₫</div></div>'+
@@ -1225,7 +1233,7 @@ function render(){
     var dtGoc=r.doanhThuThb||0;
     var net=Math.round(dtGoc*(1-feePct));
     var vndd=Math.round(net*rate);
-    var gvV=Math.round((r.giaVonThb||0)*rate);
+    var gvV=r.giaVonThb||0;
     var qc=r.nganSach||0;
     var hasProd=IS_ADMIN&&r.productDetails&&r.productDetails.length>0;
     var isOpen=expanded[i];
@@ -1241,7 +1249,7 @@ function render(){
       h+='<tr class="detail"><td colspan="'+(IS_ADMIN?7:6)+'"><div class="muted" style="font-size:11px;margin-bottom:4px;">Chi tiết sản phẩm:</div><table><tbody>';
       for(var j=0;j<r.productDetails.length;j++){
         var p=r.productDetails[j];
-        var pGvV=Math.round((p.giaVon||0)*rate);
+        var pGvV=p.giaVon||0;
         h+='<tr><td>'+esc(p.name)+'</td><td class="num muted">SL '+p.soLuong+'</td>'+
           '<td class="num muted">Giá Thái '+(p.giaThai?thb(p.giaThai)+' ฿':'chưa có')+'</td>'+
           '<td class="num">'+(pGvV?vnd(pGvV)+' ₫':'–')+'</td></tr>';
@@ -1267,7 +1275,7 @@ function doSync(){
   var rate=getRate(),feePct=getFee()/100;
   var rows=DATA.rows.map(function(r){
     var net=Math.round((r.doanhThuThb||0)*(1-feePct));
-    return{name:r.name,dtVnd:Math.round(net*rate),gvVnd:Math.round((r.giaVonThb||0)*rate)};
+    return{name:r.name,dtVnd:Math.round(net*rate),gvVnd:r.giaVonThb||0};
   });
   $('syncBtn').disabled=true;$('syncBtn').textContent='Đang đồng bộ…';
   fetch('/thailand/api/salary-sync',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({month:$('month').value,rows:rows,rate:rate})})
