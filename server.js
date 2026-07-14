@@ -392,6 +392,9 @@ app.get('/logout', (req, res) => req.session.destroy(() => res.redirect('/login'
     mountThailand(app, { mysql, express, getCampaigns, QC_TAX: Number(process.env.QC_TAX || 0.11),
       loadOwners, normProd, detectEmployee,
       exposeCounter: (fn) => { global.__thaiOrderCounts = fn; } });
+    // Expose cho Thailand salary sync
+    global.__SALARY_MANUAL = SALARY_MANUAL;
+    global.__saveManual = saveManual;
   } catch (e) {
     console.error('[thailand] KHÔNG gắn được module (app chính vẫn chạy bình thường):', e.message);
   }

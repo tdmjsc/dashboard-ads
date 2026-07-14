@@ -569,7 +569,7 @@ export function mountThailand(app, { mysql, requireLogin, express, getCampaigns,
          WHERE ngay_ve >= ? AND ngay_ve <= ?
            AND trang_thai IN ('Giao thành công', 'Thành công', 'Hoàn tất')
          ORDER BY nhan_vien`, [since, until]),
-      (async () => { try { return typeof loadOwners === 'function' ? await loadOwners(false) : {}; } catch { return {}; } })(),
+      (async () => { try { return typeof loadOwners === 'function' ? await loadOwners(true) : {}; } catch { return {}; } })(),
       (async () => { try { return typeof getCampaigns === 'function' ? await getCampaigns(since, until) : []; } catch { return []; } })(),
     ]);
     const orders = ordersResult[0];
@@ -651,11 +651,87 @@ export function mountThailand(app, { mysql, requireLogin, express, getCampaigns,
     res.json({ ok: true, month, since, until, rows, total, lastUpdated: new Date().toISOString() });
   }));
 
-  // Trang lương Thái Lan (HTML)
+  // GET /thailand/api/salary-report?month=... — force reload Sheet
+  // (đã có ở trên, sửa loadOwners(true) để lấy data mới nhất từ Sheet)
+
+  // POST /thailand/api/salary-sync — đồng bộ DT + GV Thái vào bảng lương Marketing
+  app.post('/thailand/api/salary-sync', thaiAuth, express.json(), wrap(async (req, res) => {
+    const { isAdmin } = thaiWho(req);
+    if (!isAdmin) return res.status(403).json({ ok: false });
+    const { month, rows, rate } = req.body || {};
+    if (!month || !Array.isArray(rows)) return res.json({ ok: false, message: 'Thiếu dữ liệu' });
+
+    // Ghi vào SALARY_MANUAL[month][employee].channels.thailan
+    const SALARY_MANUAL = global.__SALARY_MANUAL;
+    if (!SALARY_MANUAL) return res.json({ ok: false, message: 'Chưa khởi tạo SALARY_MANUAL' });
+    if (!SALARY_MANUAL[month]) SALARY_MANUAL[month] = {};
+    const norm = s => String(s == null ? '' : s).trim().toLowerCase().replace(/\s+/g, ' ');
+    let count = 0;
+    for (const r of rows) {
+      const key = norm(r.name);
+      if (!key) continue;
+      if (!SALARY_MANUAL[month][key]) SALARY_MANUAL[month][key] = { name: r.name, channels: {}, luongCung: 0, thuong: 0, phat: 0, bhxh: 0 };
+      if (!SALARY_MANUAL[month][key].channels) SALARY_MANUAL[month][key].channels = {};
+      SALARY_MANUAL[month][key].channels.thailan = {
+        dt: Math.round(r.dtVnd || 0),
+        qc: 0,
+        gv: Math.round(r.gvVnd || 0),
+        ship: 0,
+      };
+      count++;
+    }
+    // Lưu file
+    if (typeof global.__saveManual === 'function') global.__saveManual();
+    res.json({ ok: true, month, count, message: `Đã đồng bộ ${count} nhân viên vào lương Marketing` });
+  }));
+
+  // POST /thailand/api/salary-publish — công khai để nhân viên xem
+  app.post('/thailand/api/salary-publish', thaiAuth, express.json(), wrap(async (req, res) => {
+    const { isAdmin } = thaiWho(req);
+    if (!isAdmin) return res.status(403).json({ ok: false });
+    const { month, rows } = req.body || {};
+    if (!month || !Array.isArray(rows)) return res.json({ ok: false, message: 'Thiếu dữ liệu' });
+    // Lưu vào file published-thai-salary.json trong DATA_DIR
+    const DATA_DIR = process.env.DATA_DIR || path.join(path.dirname(fileURLToPath(import.meta.url)), '..', '..', '..', 'data');
+    const filePath = path.join(DATA_DIR, 'published-thai-salary.json');
+    let published = {};
+    try { published = JSON.parse(fs.readFileSync(filePath, 'utf8')); } catch {}
+    published[month] = { rows, publishedAt: new Date().toISOString() };
+    try { fs.writeFileSync(filePath, JSON.stringify(published)); } catch {}
+    res.json({ ok: true, month, count: rows.length, message: `Đã công khai lương Thái tháng ${month}` });
+  }));
+
+  // GET /thailand/api/my-thai-salary?month=... — nhân viên xem lương Thái của mình
+  app.get('/thailand/api/my-thai-salary', thaiAuth, wrap(async (req, res) => {
+    const month = req.query.month;
+    if (!month) return res.json({ ok: false, message: 'Thiếu tháng' });
+    const DATA_DIR = process.env.DATA_DIR || path.join(path.dirname(fileURLToPath(import.meta.url)), '..', '..', '..', 'data');
+    const filePath = path.join(DATA_DIR, 'published-thai-salary.json');
+    let published = {};
+    try { published = JSON.parse(fs.readFileSync(filePath, 'utf8')); } catch {}
+    const data = published[month];
+    if (!data) return res.json({ ok: false, message: 'Chưa công khai tháng này' });
+    // Lọc: nhân viên chỉ thấy dòng của mình
+    const { isAdmin } = thaiWho(req);
+    const me = req.session.user || {};
+    const myName = (me.salaryName || me.manager || (me.employees && me.employees[0]) || '').trim().toLowerCase();
+    const rows = isAdmin ? data.rows : data.rows.filter(r => (r.name || '').trim().toLowerCase() === myName);
+    res.json({ ok: true, month, rows, publishedAt: data.publishedAt });
+  }));
+
+  // GET /thailand/api/published-months — danh sách tháng đã công khai
+  app.get('/thailand/api/published-months', thaiAuth, wrap(async (req, res) => {
+    const DATA_DIR = process.env.DATA_DIR || path.join(path.dirname(fileURLToPath(import.meta.url)), '..', '..', '..', 'data');
+    const filePath = path.join(DATA_DIR, 'published-thai-salary.json');
+    let published = {};
+    try { published = JSON.parse(fs.readFileSync(filePath, 'utf8')); } catch {}
+    res.json({ ok: true, months: Object.keys(published).sort().reverse() });
+  }));
+
+  // Trang lương Thái Lan (HTML) — admin xem đầy đủ, nhân viên xem hạn chế
   app.get('/thailand/salary', thaiAuth, (req, res) => {
     const { isAdmin } = thaiWho(req);
-    if (!isAdmin) return res.status(403).send('Chỉ admin');
-    res.type('html').send(salaryThailandHtml());
+    res.type('html').send(salaryThailandHtml(isAdmin));
   });
 
   // ====================== TRANG QUẢN LÝ (HTML) ======================
@@ -1013,7 +1089,7 @@ export function mountThailand(app, { mysql, requireLogin, express, getCampaigns,
 }
 
 // ---- HTML trang lương Thái Lan ----
-function salaryThailandHtml() {
+function salaryThailandHtml(isAdmin) {
   return `<!DOCTYPE html><html lang="vi"><head><meta charset="UTF-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <title>Lương Thái Lan — TDMJSC</title>
@@ -1028,12 +1104,16 @@ select.pick,input.pick{font-family:inherit;font-size:13px;color:#fff;background:
 input.pick{width:110px;text-align:right;}
 .link{color:#C4D0E2;font-size:13px;text-decoration:none;border:1px solid rgba(255,255,255,.14);padding:7px 12px;border-radius:9px;white-space:nowrap;}
 .link:hover{background:rgba(255,255,255,.08);color:#fff;}
+.btn{font-family:inherit;font-size:13px;font-weight:600;color:#fff;border:none;padding:8px 14px;border-radius:9px;cursor:pointer;white-space:nowrap;}
+.btn:disabled{opacity:.5;cursor:not-allowed;}
+.btn-sync{background:#0E8C76;} .btn-sync:hover{background:#0a7363;}
+.btn-pub{background:#3D5AFE;} .btn-pub:hover{background:#2f49d6;}
 label.cfg{font-size:12px;color:#9FB0C8;display:flex;align-items:center;gap:5px;white-space:nowrap;}
 main{padding:18px;max-width:1400px;margin:0 auto;}
 .status{font-size:13px;color:#9FB0C8;margin:4px 0 12px;min-height:18px;}
 .status .err{color:#ff9b8a;} .status .ok{color:#7BE3B5;}
 .wrap{overflow-x:auto;border-radius:12px;}
-table{width:100%;border-collapse:collapse;background:#101B2E;border-radius:12px;overflow:hidden;min-width:1100px;}
+table{width:100%;border-collapse:collapse;background:#101B2E;border-radius:12px;overflow:hidden;min-width:800px;}
 th,td{padding:10px 12px;text-align:left;font-size:13px;border-bottom:1px solid rgba(255,255,255,.05);white-space:nowrap;}
 th{background:#16233A;color:#9FB0C8;font-weight:600;font-size:11px;text-transform:uppercase;letter-spacing:.03em;}
 td.num,th.num{text-align:right;font-variant-numeric:tabular-nums;}
@@ -1051,18 +1131,19 @@ td.num,th.num{text-align:right;font-variant-numeric:tabular-nums;}
 .exp{cursor:pointer;background:rgba(255,255,255,.06);border:1px solid rgba(255,255,255,.12);color:#9FB0C8;width:22px;height:22px;border-radius:5px;font-size:13px;margin-right:6px;vertical-align:middle;}
 .exp:hover{background:rgba(61,90,254,.2);color:#fff;}
 .detail td{background:#0D1626;font-size:12px;}
-.detail table{min-width:0;background:transparent;}
-.detail table td{border:none;padding:3px 8px;}
+.detail table{min-width:0;background:transparent;} .detail table td{border:none;padding:3px 8px;}
 </style></head><body>
 <header>
   <div class="top">
     <div style="flex:1;min-width:140px;">
-      <h1>🇹🇭 Lương Thái Lan</h1>
+      <h1>🇹🇭 ${isAdmin ? 'Lương Thái Lan' : 'Kết quả Thái Lan'}</h1>
       <p class="sub">Doanh thu đơn giao thành công</p>
     </div>
     <select class="pick" id="month"></select>
-    <label class="cfg">Tỷ giá: <input class="pick" id="rate" type="text" placeholder="VD: 580" value="580"></label>
-    <label class="cfg">Phí HC %: <input class="pick" id="fee" type="text" placeholder="15" value="15" style="width:60px;"></label>
+    <label class="cfg">Tỷ giá: <input class="pick" id="rate" type="text" value="780"></label>
+    ${isAdmin ? '<label class="cfg">Phí HC %: <input class="pick" id="fee" type="text" value="15" style="width:60px;"></label>' : ''}
+    ${isAdmin ? '<button class="btn btn-sync" id="syncBtn" onclick="doSync()">🔄 Đồng bộ lương MKT</button>' : ''}
+    ${isAdmin ? '<button class="btn btn-pub" id="pubBtn" onclick="doPublish()">📤 Công khai</button>' : ''}
     <a href="/thailand" class="link">← Đơn hàng</a>
     <a href="/" class="link">Dashboard</a>
   </div>
@@ -1073,128 +1154,142 @@ td.num,th.num{text-align:right;font-variant-numeric:tabular-nums;}
   <div class="wrap"><div id="content"><div class="empty">Đang tải…</div></div></div>
 </main>
 <script>
-const $=id=>document.getElementById(id);
-const vnd=n=>Math.round(Number(n)||0).toLocaleString('vi-VN');
-const thb=n=>(Number(n)||0).toLocaleString('th-TH');
-let DATA=null, expanded={};
+var IS_ADMIN=${isAdmin ? 'true' : 'false'};
+var $=function(id){return document.getElementById(id);};
+var vnd=function(n){return Math.round(Number(n)||0).toLocaleString('vi-VN');};
+var thb=function(n){return(Number(n)||0).toLocaleString('th-TH');};
+var DATA=null, expanded={};
 
 (function initMonths(){
-  const sel=$('month');
-  const now=new Date();
-  for(let i=0;i<12;i++){
-    const d=new Date(now.getFullYear(),now.getMonth()-i,1);
-    const ym=d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2,'0');
+  var sel=$('month'), now=new Date();
+  for(var i=0;i<12;i++){
+    var d=new Date(now.getFullYear(),now.getMonth()-i,1);
+    var ym=d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2,'0');
     sel.innerHTML+='<option value="'+ym+'">Tháng '+(d.getMonth()+1)+'/'+d.getFullYear()+'</option>';
   }
 })();
 
-async function load(){
+function getRate(){return parseFloat($('rate').value)||0;}
+function getFee(){var el=$('fee');return el?parseFloat(el.value)||0:15;}
+
+function load(){
   expanded={};
-  const month=$('month').value;
+  var month=$('month').value;
   $('status').innerHTML='Đang tải…';
   $('content').innerHTML='<div class="empty">Đang tải…</div>';
-  try{
-    const r=await fetch('/thailand/api/salary-report?month='+month);
-    const d=await r.json();
-    if(!d.ok){$('status').innerHTML='<span class="err">'+(d.message||'Lỗi')+'</span>';return;}
-    DATA=d;
-    render();
-  }catch(e){$('status').innerHTML='<span class="err">Lỗi: '+e.message+'</span>';}
+  if(IS_ADMIN){
+    fetch('/thailand/api/salary-report?month='+month).then(function(r){return r.json();}).then(function(d){
+      if(!d.ok){$('status').innerHTML='<span class="err">'+(d.message||'Lỗi')+'</span>';return;}
+      DATA=d; render();
+    }).catch(function(e){$('status').innerHTML='<span class="err">Lỗi: '+e.message+'</span>';});
+  } else {
+    fetch('/thailand/api/my-thai-salary?month='+month).then(function(r){return r.json();}).then(function(d){
+      if(!d.ok){$('status').innerHTML='<span class="err">'+(d.message||'Chưa công khai')+'</span>';return;}
+      DATA={rows:d.rows,total:null,month:d.month||month,lastUpdated:d.publishedAt};
+      render();
+    }).catch(function(e){$('status').innerHTML='<span class="err">Lỗi: '+e.message+'</span>';});
+  }
 }
 
-function getRate(){ return parseFloat($('rate').value)||0; }
-function getFee(){ return parseFloat($('fee').value)||0; }
-
 function render(){
-  if(!DATA||!DATA.rows){$('content').innerHTML='<div class="empty">Không có dữ liệu</div>';return;}
-  const rate=getRate(), feePct=getFee()/100;
-  const rows=DATA.rows;
+  if(!DATA||!DATA.rows||!DATA.rows.length){$('content').innerHTML='<div class="empty">Không có dữ liệu</div>';$('cards').innerHTML='';return;}
+  var rate=getRate(), feePct=getFee()/100, rows=DATA.rows;
 
-  const t=DATA.total||{};
-  const dtThbNet=Math.round(t.doanhThuThb*(1-feePct));
-  const dtVnd=Math.round(dtThbNet*rate);
-  const gvVnd=Math.round((t.giaVonThb||0)*rate);
-  $('cards').innerHTML=
-    '<div class="card"><div class="lbl">Tổng DT gốc (THB)</div><div class="val">'+thb(t.doanhThuThb)+' ฿</div></div>'+
-    '<div class="card"><div class="lbl">Thực thu THB (-'+getFee()+'%)</div><div class="val l2">'+thb(dtThbNet)+' ฿</div></div>'+
-    '<div class="card"><div class="lbl">Thực thu VND</div><div class="val thuc">'+vnd(dtVnd)+' ₫</div></div>'+
-    '<div class="card"><div class="lbl">Giá vốn VND</div><div class="val neg">'+vnd(gvVnd)+' ₫</div></div>'+
-    '<div class="card"><div class="lbl">Ngân sách QC</div><div class="val qc">'+vnd(t.nganSach||0)+' ₫</div></div>'+
-    '<div class="card"><div class="lbl">Đơn / SP</div><div class="val">'+t.soDon+' · '+t.soSP+'</div></div>';
+  // Cards
+  if(IS_ADMIN&&DATA.total){
+    var t=DATA.total;
+    var dtThbNet=Math.round(t.doanhThuThb*(1-feePct));
+    var dtVnd=Math.round(dtThbNet*rate);
+    var gvVnd=Math.round((t.giaVonThb||0)*rate);
+    $('cards').innerHTML=
+      '<div class="card"><div class="lbl">Thực thu THB (-'+getFee()+'%)</div><div class="val l2">'+thb(dtThbNet)+' ฿</div></div>'+
+      '<div class="card"><div class="lbl">Doanh thu</div><div class="val thuc">'+vnd(dtVnd)+' ₫</div></div>'+
+      '<div class="card"><div class="lbl">Giá vốn</div><div class="val neg">'+vnd(gvVnd)+' ₫</div></div>'+
+      '<div class="card"><div class="lbl">Ngân sách QC</div><div class="val qc">'+vnd(t.nganSach||0)+' ₫</div></div>'+
+      '<div class="card"><div class="lbl">Đơn / SP</div><div class="val">'+t.soDon+' · '+t.soSP+'</div></div>';
+  } else { $('cards').innerHTML=''; }
 
-  var h='<table><thead><tr>'+
-    '<th>Nhân viên</th>'+
-    '<th class="num">DT gốc (THB)</th>'+
-    '<th class="num">Thực thu THB</th>'+
-    '<th class="num">Thực thu VND</th>'+
-    '<th class="num">Giá vốn THB</th>'+
-    '<th class="num">Giá vốn VND</th>'+
-    '<th class="num">Ngân sách QC</th>'+
-    '<th class="num">Số đơn</th>'+
-    '<th class="num">Số SP</th>'+
-    '</tr></thead><tbody>';
-  var totDtGoc=0,totNet=0,totVnd=0,totGvThb=0,totGvVnd=0,totQC=0,totDon=0,totSP=0;
+  // Table
+  var h='<table><thead><tr><th>Nhân viên</th><th class="num">Thực thu THB</th><th class="num">Doanh thu</th>';
+  if(IS_ADMIN) h+='<th class="num">Giá vốn</th>';
+  h+='<th class="num">Ngân sách QC</th><th class="num">Số đơn</th><th class="num">Số SP</th></tr></thead><tbody>';
+  var totNet=0,totVnd=0,totGvVnd=0,totQC=0,totDon=0,totSP=0;
   for(var i=0;i<rows.length;i++){
     var r=rows[i];
     var dtGoc=r.doanhThuThb||0;
     var net=Math.round(dtGoc*(1-feePct));
     var vndd=Math.round(net*rate);
-    var gvThb=r.giaVonThb||0;
-    var gvV=Math.round(gvThb*rate);
+    var gvV=Math.round((r.giaVonThb||0)*rate);
     var qc=r.nganSach||0;
-    var hasProd=r.productDetails&&r.productDetails.length>0;
+    var hasProd=IS_ADMIN&&r.productDetails&&r.productDetails.length>0;
     var isOpen=expanded[i];
-    totDtGoc+=dtGoc; totNet+=net; totVnd+=vndd; totGvThb+=gvThb; totGvVnd+=gvV; totQC+=qc; totDon+=r.soDon; totSP+=r.soSP;
-    h+='<tr>'+
-      '<td>'+(hasProd?'<button class="exp" onclick="tg('+i+')">'+(isOpen?'−':'+')+' </button>':'')+
-        '<b>'+esc(r.name)+'</b></td>'+
-      '<td class="num">'+thb(dtGoc)+' ฿</td>'+
+    totNet+=net; totVnd+=vndd; totGvVnd+=gvV; totQC+=qc; totDon+=(r.soDon||0); totSP+=(r.soSP||0);
+    h+='<tr><td>'+(hasProd?'<button class="exp" onclick="tg('+i+')">'+(isOpen?'\\u2212':'+')+' </button>':'')+
+      '<b>'+esc(r.name)+'</b></td>'+
       '<td class="num l2">'+thb(net)+' ฿</td>'+
-      '<td class="num thuc">'+vnd(vndd)+' ₫</td>'+
-      '<td class="num">'+(gvThb?thb(gvThb)+' ฿':'–')+'</td>'+
-      '<td class="num">'+(gvV?vnd(gvV)+' ₫':'–')+'</td>'+
-      '<td class="num qc">'+(qc?vnd(qc)+' ₫':'–')+'</td>'+
-      '<td class="num">'+r.soDon+'</td>'+
-      '<td class="num">'+r.soSP+'</td>'+
-      '</tr>';
+      '<td class="num thuc">'+vnd(vndd)+' ₫</td>';
+    if(IS_ADMIN) h+='<td class="num">'+(gvV?vnd(gvV)+' ₫':'–')+'</td>';
+    h+='<td class="num qc">'+(qc?vnd(qc)+' ₫':'–')+'</td>'+
+      '<td class="num">'+(r.soDon||0)+'</td><td class="num">'+(r.soSP||0)+'</td></tr>';
     if(isOpen&&hasProd){
-      h+='<tr class="detail"><td colspan="9"><div class="muted" style="font-size:11px;margin-bottom:4px;">Chi tiết sản phẩm:</div><table><tbody>';
+      h+='<tr class="detail"><td colspan="'+(IS_ADMIN?7:6)+'"><div class="muted" style="font-size:11px;margin-bottom:4px;">Chi tiết sản phẩm:</div><table><tbody>';
       for(var j=0;j<r.productDetails.length;j++){
         var p=r.productDetails[j];
         var pGvV=Math.round((p.giaVon||0)*rate);
-        h+='<tr>'+
-          '<td>'+esc(p.name)+'</td>'+
-          '<td class="num muted">SL '+p.soLuong+'</td>'+
+        h+='<tr><td>'+esc(p.name)+'</td><td class="num muted">SL '+p.soLuong+'</td>'+
           '<td class="num muted">Giá Thái '+(p.giaThai?thb(p.giaThai)+' ฿':'chưa có')+'</td>'+
-          '<td class="num">'+(p.giaVon?thb(p.giaVon)+' ฿':'–')+'</td>'+
-          '<td class="num">'+(pGvV?vnd(pGvV)+' ₫':'–')+'</td>'+
-          '</tr>';
+          '<td class="num">'+(pGvV?vnd(pGvV)+' ₫':'–')+'</td></tr>';
       }
       h+='</tbody></table></td></tr>';
     }
   }
-  h+='<tr class="total-row">'+
-    '<td>Tổng ('+rows.length+')</td>'+
-    '<td class="num">'+thb(totDtGoc)+' ฿</td>'+
-    '<td class="num l2">'+thb(totNet)+' ฿</td>'+
-    '<td class="num thuc">'+vnd(totVnd)+' ₫</td>'+
-    '<td class="num">'+thb(totGvThb)+' ฿</td>'+
-    '<td class="num">'+vnd(totGvVnd)+' ₫</td>'+
-    '<td class="num qc">'+vnd(totQC)+' ₫</td>'+
-    '<td class="num">'+totDon+'</td>'+
-    '<td class="num">'+totSP+'</td>'+
-    '</tr>';
+  h+='<tr class="total-row"><td>Tổng ('+rows.length+')</td>'+
+    '<td class="num l2">'+thb(totNet)+' ฿</td><td class="num thuc">'+vnd(totVnd)+' ₫</td>';
+  if(IS_ADMIN) h+='<td class="num">'+vnd(totGvVnd)+' ₫</td>';
+  h+='<td class="num qc">'+vnd(totQC)+' ₫</td><td class="num">'+totDon+'</td><td class="num">'+totSP+'</td></tr>';
   h+='</tbody></table>';
   $('content').innerHTML=h;
-  $('status').innerHTML='<span class="ok">✓ Tháng '+DATA.month+' · Cập nhật '+(DATA.lastUpdated||'').replace('T',' ').slice(0,19)+'</span>';
+  $('status').innerHTML='<span class="ok">✓ Tháng '+(DATA.month||'')+' · '+(DATA.lastUpdated||'').replace('T',' ').slice(0,19)+'</span>';
 }
 
-function tg(i){ expanded[i]=!expanded[i]; render(); }
+function tg(i){expanded[i]=!expanded[i];render();}
 function esc(s){return String(s==null?'':s).replace(/[&<>"]/g,function(c){return({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'})[c];});}
+
+function doSync(){
+  if(!DATA||!DATA.rows)return alert('Chưa có dữ liệu');
+  if(!confirm('Đồng bộ doanh thu + giá vốn Thái vào bảng lương Marketing tháng '+$('month').value+'?'))return;
+  var rate=getRate(),feePct=getFee()/100;
+  var rows=DATA.rows.map(function(r){
+    var net=Math.round((r.doanhThuThb||0)*(1-feePct));
+    return{name:r.name,dtVnd:Math.round(net*rate),gvVnd:Math.round((r.giaVonThb||0)*rate)};
+  });
+  $('syncBtn').disabled=true;$('syncBtn').textContent='Đang đồng bộ…';
+  fetch('/thailand/api/salary-sync',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({month:$('month').value,rows:rows,rate:rate})})
+    .then(function(r){return r.json();}).then(function(d){
+      alert(d.ok?'✅ '+d.message:'❌ '+(d.message||'Lỗi'));
+    }).catch(function(e){alert('❌ '+e.message);})
+    .finally(function(){$('syncBtn').disabled=false;$('syncBtn').textContent='🔄 Đồng bộ lương MKT';});
+}
+
+function doPublish(){
+  if(!DATA||!DATA.rows)return alert('Chưa có dữ liệu');
+  if(!confirm('Công khai kết quả Thái Lan tháng '+$('month').value+' cho nhân viên xem?'))return;
+  var feePct=getFee()/100;
+  var rows=DATA.rows.map(function(r){
+    var net=Math.round((r.doanhThuThb||0)*(1-feePct));
+    return{name:r.name,doanhThuThb:r.doanhThuThb,thucThuThb:net,nganSach:r.nganSach||0,soDon:r.soDon||0,soSP:r.soSP||0};
+  });
+  $('pubBtn').disabled=true;$('pubBtn').textContent='Đang gửi…';
+  fetch('/thailand/api/salary-publish',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({month:$('month').value,rows:rows})})
+    .then(function(r){return r.json();}).then(function(d){
+      alert(d.ok?'✅ '+d.message:'❌ '+(d.message||'Lỗi'));
+    }).catch(function(e){alert('❌ '+e.message);})
+    .finally(function(){$('pubBtn').disabled=false;$('pubBtn').textContent='📤 Công khai';});
+}
 
 $('month').addEventListener('change',load);
 $('rate').addEventListener('input',render);
-$('fee').addEventListener('input',render);
+var feeEl=$('fee');if(feeEl)feeEl.addEventListener('input',render);
 load();
 </script></body></html>`;
 }
