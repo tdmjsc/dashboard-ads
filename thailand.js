@@ -82,7 +82,7 @@ async function ensureTable(pool) {
 //   - mysql: module 'mysql2/promise' (truyền từ server.js sau khi import động)
 //   - requireLogin: middleware đăng nhập của dashboard (tái dùng phiên admin)
 // =====================================================================
-export function mountThailand(app, { mysql, requireLogin, express, getCampaigns, QC_TAX, exposeCounter }) {
+export function mountThailand(app, { mysql, requireLogin, express, getCampaigns, QC_TAX, loadOwners, normProd, detectEmployee, exposeCounter }) {
   let pool = null;
   let tableReady = false;
 
@@ -548,60 +548,97 @@ export function mountThailand(app, { mysql, requireLogin, express, getCampaigns,
 
   // ====================== THỐNG KÊ LƯƠNG THÁI LAN ======================
   // GET /thailand/api/salary-report?month=2026-06
-  // Trả: danh sách NV với đơn giao thành công, doanh thu THB, số đơn, số SP, giá vốn
+  // Trả: danh sách NV với đơn giao thành công, doanh thu THB, số đơn, số SP, giá vốn, ngân sách QC
   app.get('/thailand/api/salary-report', thaiAuth, wrap(async (req, res) => {
     const { isAdmin } = thaiWho(req);
     if (!isAdmin) return res.status(403).json({ ok: false, message: 'Chỉ admin' });
     const month = req.query.month || todayVN().slice(0, 7);
     const since = month + '-01';
-    // Tính ngày cuối tháng
     const [y, m] = month.split('-').map(Number);
     const lastDay = new Date(y, m, 0).getDate();
     const until = month + '-' + String(lastDay).padStart(2, '0');
 
     const p = await db();
 
-    // Lấy tất cả đơn giao thành công trong tháng (kèm chi tiết sản phẩm)
-    const [orders] = await p.query(
-      `SELECT id, nhan_vien, gia_thb, so_luong, combo, trang_thai
-       FROM th_orders
-       WHERE ngay_ve >= ? AND ngay_ve <= ?
-         AND trang_thai IN ('Giao thành công', 'Thành công', 'Hoàn tất')
-       ORDER BY nhan_vien`, [since, until]);
+    // Song song: lấy đơn + giá vốn Sheet + ngân sách Meta
+    const [ordersResult, owners, campaigns] = await Promise.all([
+      p.query(
+        `SELECT id, nhan_vien, gia_thb, so_luong, combo, trang_thai, san_pham
+         FROM th_orders
+         WHERE ngay_ve >= ? AND ngay_ve <= ?
+           AND trang_thai IN ('Giao thành công', 'Thành công', 'Hoàn tất')
+         ORDER BY nhan_vien`, [since, until]),
+      (async () => { try { return typeof loadOwners === 'function' ? await loadOwners(false) : {}; } catch { return {}; } })(),
+      (async () => { try { return typeof getCampaigns === 'function' ? await getCampaigns(since, until) : []; } catch { return []; } })(),
+    ]);
+    const orders = ordersResult[0];
 
-    // Gom theo nhân viên
+    // ── Ngân sách Meta: lọc campaign chứa "thailan" hoặc "thái lan", gom theo NV ──
     const norm = s => String(s == null ? '' : s).trim().toLowerCase().replace(/\s+/g, ' ');
+    const TAX = 1 + (QC_TAX || 0.11);
+    const adSpend = {};
+    for (const c of campaigns) {
+      const cName = norm(c.name || '');
+      if (!cName.includes('thailan') && !cName.includes('thái lan') && !cName.includes('thailand')) continue;
+      const emp = norm(typeof detectEmployee === 'function' ? detectEmployee(c.name) : (c.employee || ''));
+      if (!emp || emp === 'chưa xác định') continue;
+      const s = (c.daily || []).reduce((t, d) => t + (Number(d.spent) || 0), 0);
+      adSpend[emp] = (adSpend[emp] || 0) + s;
+    }
+
+    // ── Gom theo nhân viên ──
     const map = {};
     for (const o of orders) {
       const key = norm(o.nhan_vien || '(không tên)');
-      if (!map[key]) map[key] = { name: o.nhan_vien || '(không tên)', doanhThuThb: 0, soDon: 0, soSP: 0, combos: [] };
+      if (!map[key]) map[key] = { name: o.nhan_vien || '(không tên)', doanhThuThb: 0, soDon: 0, soSP: 0, products: {} };
       map[key].doanhThuThb += Number(o.gia_thb) || 0;
       map[key].soDon += 1;
-      map[key].soSP += Number(o.so_luong) || 0;
-      if (o.combo) map[key].combos.push(o.combo);
+      const qty = Number(o.so_luong) || 0;
+      map[key].soSP += qty;
+
+      // Tìm tên SP: ưu tiên cột san_pham, rồi parse từ combo
+      let spName = String(o.san_pham || '').trim();
+      if (!spName && o.combo) {
+        // Lấy tên SP từ combo (phần tiếng Thái trước số)
+        spName = String(o.combo).split(/\d/)[0].trim() || o.combo;
+      }
+      if (spName) {
+        const spKey = norm(spName);
+        if (!map[key].products[spKey]) map[key].products[spKey] = { name: spName, soLuong: 0, giaThai: 0 };
+        map[key].products[spKey].soLuong += qty;
+      }
     }
 
-    // Load giá vốn Thái từ Google Sheet (dùng loadOwners global nếu có)
-    let owners = {};
-    try {
-      if (typeof loadOwners === 'function') owners = await loadOwners(false);
-    } catch {}
-
+    // ── Tính giá vốn từ Sheet (Giá Thái × số lượng) ──
     const rows = Object.values(map).sort((a, b) => b.doanhThuThb - a.doanhThuThb);
-
-    // Tính giá vốn: dựa trên combo → tên SP → giaThai từ Sheet
     for (const r of rows) {
       let giaVonThb = 0;
-      // Mỗi combo string chứa tên SP → tìm giaThai trong owners
-      // (giaThai sẽ được thêm vào loadOwners)
-      r.giaVonThb = giaVonThb; // tạm = 0, tính ở client khi có dữ liệu Sheet
+      const prodList = [];
+      for (const [spKey, prod] of Object.entries(r.products)) {
+        // Tìm giá Thái trong owners (match tên SP)
+        const own = owners[spKey] || owners[typeof normProd === 'function' ? normProd(prod.name) : spKey];
+        const gia = own ? (own.giaThai || 0) : 0;
+        prod.giaThai = gia;
+        prod.giaVon = gia * prod.soLuong;
+        giaVonThb += prod.giaVon;
+        prodList.push({ name: prod.name, soLuong: prod.soLuong, giaThai: gia, giaVon: prod.giaVon });
+      }
+      r.giaVonThb = giaVonThb;
+      r.productDetails = prodList;
+      delete r.products;
+
+      // Gắn ngân sách QC
+      const empNorm = norm(r.name);
+      r.nganSach = Math.round((adSpend[empNorm] || 0) * TAX);
     }
 
     const total = rows.reduce((a, r) => ({
       doanhThuThb: a.doanhThuThb + r.doanhThuThb,
       soDon: a.soDon + r.soDon,
       soSP: a.soSP + r.soSP,
-    }), { doanhThuThb: 0, soDon: 0, soSP: 0 });
+      giaVonThb: a.giaVonThb + r.giaVonThb,
+      nganSach: a.nganSach + r.nganSach,
+    }), { doanhThuThb: 0, soDon: 0, soSP: 0, giaVonThb: 0, nganSach: 0 });
 
     res.json({ ok: true, month, since, until, rows, total, lastUpdated: new Date().toISOString() });
   }));
@@ -749,7 +786,12 @@ export function mountThailand(app, { mysql, requireLogin, express, getCampaigns,
 
       // Lấy đơn từ TDFFM qua API nội bộ orders/list (phân trang)
       // Đơn sắp xếp mới nhất trước → lọc giữ đơn tạo >= TDFFM_SYNC_FROM, dừng sớm khi gặp đơn cũ hơn
-      const fromTime = new Date(TDFFM_SYNC_FROM + 'T00:00:00Z').getTime();
+      // Chỉ đồng bộ đơn 2 tháng gần nhất (tránh đọc lại toàn bộ khi data lớn)
+      const syncFrom = new Date();
+      syncFrom.setMonth(syncFrom.getMonth() - 2);
+      syncFrom.setDate(1);
+      const fromTime = syncFrom.getTime();
+      const fromStr = syncFrom.toISOString().slice(0, 10);
       const allTdffmOrders = [];
       let page = 1;
       const LIMIT = 100;
@@ -760,7 +802,7 @@ export function mountThailand(app, { mysql, requireLogin, express, getCampaigns,
         const orders = inner && Array.isArray(inner.data) ? inner.data : [];
         if (page === 1) {
           console.log('[thailand-sync] TDFFM orders/list: total =', inner ? inner.total : '?',
-            ', lọc từ', TDFFM_SYNC_FROM);
+            ', lọc từ', fromStr);
         }
         for (const o of orders) {
           const t = new Date(o.createdAt).getTime();
@@ -799,9 +841,14 @@ export function mountThailand(app, { mysql, requireLogin, express, getCampaigns,
         }
       }
 
-      // Lấy tất cả đơn có SĐT để đối chiếu
+      // Chỉ lấy đơn CHƯA hoàn tất — đơn đã "Giao thành công" / "Đã hoàn" không cần sync lại
+      const FINAL_STATUSES = ['Giao thành công', 'Đã hoàn', 'Hoàn tất', 'Thành công'];
+      const placeholders = FINAL_STATUSES.map(() => '?').join(',');
       const [dbOrders] = await p.query(
-        `SELECT id, sdt, trang_thai, tdffm_uid, ngay_ve FROM th_orders WHERE sdt IS NOT NULL AND sdt <> ''`
+        `SELECT id, sdt, trang_thai, tdffm_uid, ngay_ve FROM th_orders
+         WHERE sdt IS NOT NULL AND sdt <> ''
+         AND trang_thai NOT IN (${placeholders})`,
+        FINAL_STATUSES
       );
 
       let updated = 0, notFound = 0;
@@ -960,17 +1007,18 @@ input.pick{width:110px;text-align:right;}
 .link{color:#C4D0E2;font-size:13px;text-decoration:none;border:1px solid rgba(255,255,255,.14);padding:7px 12px;border-radius:9px;white-space:nowrap;}
 .link:hover{background:rgba(255,255,255,.08);color:#fff;}
 label.cfg{font-size:12px;color:#9FB0C8;display:flex;align-items:center;gap:5px;white-space:nowrap;}
-main{padding:18px;max-width:1200px;margin:0 auto;}
+main{padding:18px;max-width:1400px;margin:0 auto;}
 .status{font-size:13px;color:#9FB0C8;margin:4px 0 12px;min-height:18px;}
 .status .err{color:#ff9b8a;} .status .ok{color:#7BE3B5;}
 .wrap{overflow-x:auto;border-radius:12px;}
-table{width:100%;border-collapse:collapse;background:#101B2E;border-radius:12px;overflow:hidden;min-width:900px;}
+table{width:100%;border-collapse:collapse;background:#101B2E;border-radius:12px;overflow:hidden;min-width:1100px;}
 th,td{padding:10px 12px;text-align:left;font-size:13px;border-bottom:1px solid rgba(255,255,255,.05);white-space:nowrap;}
 th{background:#16233A;color:#9FB0C8;font-weight:600;font-size:11px;text-transform:uppercase;letter-spacing:.03em;}
 td.num,th.num{text-align:right;font-variant-numeric:tabular-nums;}
 .l2{color:#7BE3B5;font-weight:700;}
 .thuc{color:#ffc56b;font-weight:800;}
 .neg{color:#ff9b8a;}
+.qc{color:#9DB2FF;}
 .muted{color:#6B7C97;}
 .empty{padding:40px;text-align:center;color:#6B7C97;}
 .total-row td{background:#16233A;font-weight:700;border-top:2px solid rgba(255,255,255,.12);}
@@ -978,6 +1026,11 @@ td.num,th.num{text-align:right;font-variant-numeric:tabular-nums;}
 .card{background:#101B2E;border:1px solid rgba(255,255,255,.08);border-radius:12px;padding:14px 18px;flex:1;min-width:140px;}
 .card .lbl{font-size:11px;color:#9FB0C8;text-transform:uppercase;letter-spacing:.03em;}
 .card .val{font-size:22px;font-weight:700;margin-top:4px;font-variant-numeric:tabular-nums;}
+.exp{cursor:pointer;background:rgba(255,255,255,.06);border:1px solid rgba(255,255,255,.12);color:#9FB0C8;width:22px;height:22px;border-radius:5px;font-size:13px;margin-right:6px;vertical-align:middle;}
+.exp:hover{background:rgba(61,90,254,.2);color:#fff;}
+.detail td{background:#0D1626;font-size:12px;}
+.detail table{min-width:0;background:transparent;}
+.detail table td{border:none;padding:3px 8px;}
 </style></head><body>
 <header>
   <div class="top">
@@ -1001,29 +1054,27 @@ td.num,th.num{text-align:right;font-variant-numeric:tabular-nums;}
 const $=id=>document.getElementById(id);
 const vnd=n=>Math.round(Number(n)||0).toLocaleString('vi-VN');
 const thb=n=>(Number(n)||0).toLocaleString('th-TH');
-let DATA=null;
+let DATA=null, expanded={};
 
-// Tạo danh sách 12 tháng gần nhất
 (function initMonths(){
   const sel=$('month');
   const now=new Date();
   for(let i=0;i<12;i++){
     const d=new Date(now.getFullYear(),now.getMonth()-i,1);
     const ym=d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2,'0');
-    const label='Tháng '+(d.getMonth()+1)+'/'+d.getFullYear();
-    sel.innerHTML+=\`<option value="\${ym}">\${label}</option>\`;
+    sel.innerHTML+='<option value="'+ym+'">Tháng '+(d.getMonth()+1)+'/'+d.getFullYear()+'</option>';
   }
-  sel.value=now.getFullYear()+'-'+String(now.getMonth()+1).padStart(2,'0');
 })();
 
 async function load(){
+  expanded={};
   const month=$('month').value;
   $('status').innerHTML='Đang tải…';
   $('content').innerHTML='<div class="empty">Đang tải…</div>';
   try{
     const r=await fetch('/thailand/api/salary-report?month='+month);
     const d=await r.json();
-    if(!d.ok){$('status').innerHTML='<span class="err">'+d.message+'</span>';return;}
+    if(!d.ok){$('status').innerHTML='<span class="err">'+(d.message||'Lỗi')+'</span>';return;}
     DATA=d;
     render();
   }catch(e){$('status').innerHTML='<span class="err">Lỗi: '+e.message+'</span>';}
@@ -1037,48 +1088,87 @@ function render(){
   const rate=getRate(), feePct=getFee()/100;
   const rows=DATA.rows;
 
-  // Cards tổng
   const t=DATA.total||{};
   const dtThbNet=Math.round(t.doanhThuThb*(1-feePct));
   const dtVnd=Math.round(dtThbNet*rate);
-  $('cards').innerHTML=\`
-    <div class="card"><div class="lbl">Tổng DT (THB gốc)</div><div class="val">\${thb(t.doanhThuThb)} ฿</div></div>
-    <div class="card"><div class="lbl">Thực thu THB (-\${getFee()}%)</div><div class="val l2">\${thb(dtThbNet)} ฿</div></div>
-    <div class="card"><div class="lbl">Thực thu VND (×\${vnd(rate)})</div><div class="val thuc">\${vnd(dtVnd)} ₫</div></div>
-    <div class="card"><div class="lbl">Tổng đơn / SP</div><div class="val">\${t.soDon} đơn · \${t.soSP} SP</div></div>
-  \`;
+  const gvVnd=Math.round((t.giaVonThb||0)*rate);
+  $('cards').innerHTML=
+    '<div class="card"><div class="lbl">Tổng DT gốc (THB)</div><div class="val">'+thb(t.doanhThuThb)+' ฿</div></div>'+
+    '<div class="card"><div class="lbl">Thực thu THB (-'+getFee()+'%)</div><div class="val l2">'+thb(dtThbNet)+' ฿</div></div>'+
+    '<div class="card"><div class="lbl">Thực thu VND</div><div class="val thuc">'+vnd(dtVnd)+' ₫</div></div>'+
+    '<div class="card"><div class="lbl">Giá vốn VND</div><div class="val neg">'+vnd(gvVnd)+' ₫</div></div>'+
+    '<div class="card"><div class="lbl">Ngân sách QC</div><div class="val qc">'+vnd(t.nganSach||0)+' ₫</div></div>'+
+    '<div class="card"><div class="lbl">Đơn / SP</div><div class="val">'+t.soDon+' · '+t.soSP+'</div></div>';
 
-  // Table
-  let h='<table><thead><tr><th>Nhân viên</th><th class="num">DT gốc (THB)</th><th class="num">Thực thu THB</th><th class="num">Thực thu VND</th><th class="num">Số đơn</th><th class="num">Số SP</th></tr></thead><tbody>';
-  let totDtGoc=0,totNet=0,totVnd=0,totDon=0,totSP=0;
-  for(const r of rows){
-    const dtGoc=r.doanhThuThb;
-    const net=Math.round(dtGoc*(1-feePct));
-    const vndd=Math.round(net*rate);
-    totDtGoc+=dtGoc; totNet+=net; totVnd+=vndd; totDon+=r.soDon; totSP+=r.soSP;
-    h+=\`<tr>
-      <td><b>\${esc(r.name)}</b></td>
-      <td class="num">\${thb(dtGoc)} ฿</td>
-      <td class="num l2">\${thb(net)} ฿</td>
-      <td class="num thuc">\${vnd(vndd)} ₫</td>
-      <td class="num">\${r.soDon}</td>
-      <td class="num">\${r.soSP}</td>
-    </tr>\`;
+  var h='<table><thead><tr>'+
+    '<th>Nhân viên</th>'+
+    '<th class="num">DT gốc (THB)</th>'+
+    '<th class="num">Thực thu THB</th>'+
+    '<th class="num">Thực thu VND</th>'+
+    '<th class="num">Giá vốn THB</th>'+
+    '<th class="num">Giá vốn VND</th>'+
+    '<th class="num">Ngân sách QC</th>'+
+    '<th class="num">Số đơn</th>'+
+    '<th class="num">Số SP</th>'+
+    '</tr></thead><tbody>';
+  var totDtGoc=0,totNet=0,totVnd=0,totGvThb=0,totGvVnd=0,totQC=0,totDon=0,totSP=0;
+  for(var i=0;i<rows.length;i++){
+    var r=rows[i];
+    var dtGoc=r.doanhThuThb||0;
+    var net=Math.round(dtGoc*(1-feePct));
+    var vndd=Math.round(net*rate);
+    var gvThb=r.giaVonThb||0;
+    var gvV=Math.round(gvThb*rate);
+    var qc=r.nganSach||0;
+    var hasProd=r.productDetails&&r.productDetails.length>0;
+    var isOpen=expanded[i];
+    totDtGoc+=dtGoc; totNet+=net; totVnd+=vndd; totGvThb+=gvThb; totGvVnd+=gvV; totQC+=qc; totDon+=r.soDon; totSP+=r.soSP;
+    h+='<tr>'+
+      '<td>'+(hasProd?'<button class="exp" onclick="tg('+i+')">'+(isOpen?'−':'+')+' </button>':'')+
+        '<b>'+esc(r.name)+'</b></td>'+
+      '<td class="num">'+thb(dtGoc)+' ฿</td>'+
+      '<td class="num l2">'+thb(net)+' ฿</td>'+
+      '<td class="num thuc">'+vnd(vndd)+' ₫</td>'+
+      '<td class="num">'+(gvThb?thb(gvThb)+' ฿':'–')+'</td>'+
+      '<td class="num">'+(gvV?vnd(gvV)+' ₫':'–')+'</td>'+
+      '<td class="num qc">'+(qc?vnd(qc)+' ₫':'–')+'</td>'+
+      '<td class="num">'+r.soDon+'</td>'+
+      '<td class="num">'+r.soSP+'</td>'+
+      '</tr>';
+    if(isOpen&&hasProd){
+      h+='<tr class="detail"><td colspan="9"><div class="muted" style="font-size:11px;margin-bottom:4px;">Chi tiết sản phẩm:</div><table><tbody>';
+      for(var j=0;j<r.productDetails.length;j++){
+        var p=r.productDetails[j];
+        var pGvV=Math.round((p.giaVon||0)*rate);
+        h+='<tr>'+
+          '<td>'+esc(p.name)+'</td>'+
+          '<td class="num muted">SL '+p.soLuong+'</td>'+
+          '<td class="num muted">Giá Thái '+(p.giaThai?thb(p.giaThai)+' ฿':'chưa có')+'</td>'+
+          '<td class="num">'+(p.giaVon?thb(p.giaVon)+' ฿':'–')+'</td>'+
+          '<td class="num">'+(pGvV?vnd(pGvV)+' ₫':'–')+'</td>'+
+          '</tr>';
+      }
+      h+='</tbody></table></td></tr>';
+    }
   }
-  h+=\`<tr class="total-row">
-    <td>Tổng (\${rows.length})</td>
-    <td class="num">\${thb(totDtGoc)} ฿</td>
-    <td class="num l2">\${thb(totNet)} ฿</td>
-    <td class="num thuc">\${vnd(totVnd)} ₫</td>
-    <td class="num">\${totDon}</td>
-    <td class="num">\${totSP}</td>
-  </tr>\`;
+  h+='<tr class="total-row">'+
+    '<td>Tổng ('+rows.length+')</td>'+
+    '<td class="num">'+thb(totDtGoc)+' ฿</td>'+
+    '<td class="num l2">'+thb(totNet)+' ฿</td>'+
+    '<td class="num thuc">'+vnd(totVnd)+' ₫</td>'+
+    '<td class="num">'+thb(totGvThb)+' ฿</td>'+
+    '<td class="num">'+vnd(totGvVnd)+' ₫</td>'+
+    '<td class="num qc">'+vnd(totQC)+' ₫</td>'+
+    '<td class="num">'+totDon+'</td>'+
+    '<td class="num">'+totSP+'</td>'+
+    '</tr>';
   h+='</tbody></table>';
   $('content').innerHTML=h;
   $('status').innerHTML='<span class="ok">✓ Tháng '+DATA.month+' · Cập nhật '+(DATA.lastUpdated||'').replace('T',' ').slice(0,19)+'</span>';
 }
 
-function esc(s){return String(s==null?'':s).replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));}
+function tg(i){ expanded[i]=!expanded[i]; render(); }
+function esc(s){return String(s==null?'':s).replace(/[&<>"]/g,function(c){return({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'})[c];});}
 
 $('month').addEventListener('change',load);
 $('rate').addEventListener('input',render);
