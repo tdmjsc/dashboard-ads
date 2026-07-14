@@ -434,7 +434,6 @@ app.use((req, res, next) => {
 // Cho trang biết người đang đăng nhập là ai (để ẩn/hiện menu, lọc theo người)
 app.get('/api/me', (req, res) => {
   const u = req.session.user || {};
-  // Tên hiển thị: ưu tiên salaryName, rồi manager, rồi người đầu trong employees, cuối cùng là username
   const displayName = u.salaryName || u.manager || (u.employees && u.employees[0]) || u.user || '';
   res.json({ user: u.user, role: u.role, manager: u.manager || '', employees: u.employees || [], salaryName: u.salaryName || '', displayName });
 });

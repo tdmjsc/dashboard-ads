@@ -1108,7 +1108,7 @@ export function mountThailand(app, { mysql, requireLogin, express, getCampaigns,
 function salaryThailandHtml(isAdmin) {
   return `<!DOCTYPE html><html lang="vi"><head><meta charset="UTF-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
-<title>Lương Thái Lan — TDMJSC</title>
+<title>Doanh thu Thái Lan — TDMJSC</title>
 <style>
 *{box-sizing:border-box;}
 body{margin:0;font-family:'Inter',system-ui,sans-serif;background:#0B1322;color:#E7EEF8;}
@@ -1152,7 +1152,7 @@ td.num,th.num{text-align:right;font-variant-numeric:tabular-nums;}
 <header>
   <div class="top">
     <div style="flex:1;min-width:140px;">
-      <h1>🇹🇭 ${isAdmin ? 'Lương Thái Lan' : 'Kết quả Thái Lan'}</h1>
+      <h1>🇹🇭 ${isAdmin ? 'Doanh thu Thái Lan' : 'Doanh thu Thái Lan'}</h1>
       <p class="sub">Doanh thu đơn giao thành công</p>
     </div>
     <select class="pick" id="month"></select>
@@ -1400,7 +1400,7 @@ table{width:100%;border-collapse:collapse;background:#101B2E;min-width:900px;}
   <button class="btn" id="pushBtn" style="background:#FF9F45;color:#0B1322;">🚚 Đẩy sang hậu cần</button>
   <a class="link" href="/thailand/api/export" id="csvBtn">⬇ Xuất CSV</a>
   <a class="link" href="/marketing-thailand.html">📊 MKT Thái Lan</a>
-  <a class="link" href="/thailand/salary" id="salaryLink" style="display:none;">💰 Lương Thái</a>
+  <a class="link" href="/thailand/salary" id="salaryLink" style="display:none;">📊 Doanh thu Thái</a>
   <a class="link" href="/">← Dashboard</a>
   <button class="btn ghost" id="syncBtn" style="display:none;">🔄 Đồng bộ HC</button>
   <span class="sync-badge" id="syncBadge" style="display:none;"></span>
