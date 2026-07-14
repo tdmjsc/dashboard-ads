@@ -1,4 +1,6 @@
 import fs from 'node:fs';
+import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 // =====================================================================
 //  MODULE QUẢN LÝ ĐƠN HÀNG THÁI LAN  —  thailand.js
 //  Thiết kế AN TOÀN TUYỆT ĐỐI: nếu phần này lỗi, KHÔNG làm sập app chính.
