@@ -128,7 +128,12 @@ export function mountThailand(app, { mysql, requireLogin, express, getCampaigns,
   // Đảm bảo có pool + bảng, gọi đầu mỗi request DB
   async function db() {
     const p = getPool();
-    if (!tableReady) { await ensureTable(p); tableReady = true; }
+    if (!tableReady) {
+      await ensureTable(p);
+      // Điền ma_mau mặc định cho đơn cũ chưa có
+      try { await p.query(`UPDATE th_orders SET ma_mau = ? WHERE ma_mau = '' OR ma_mau IS NULL`, [TDFFM_MA_MAU]); } catch {}
+      tableReady = true;
+    }
     return p;
   }
 
@@ -202,9 +207,9 @@ export function mountThailand(app, { mysql, requireLogin, express, getCampaigns,
     const p = await db();
     const today = todayVN();
     await p.query(
-      `INSERT INTO th_orders (ngay_ve, ho_ten, sdt, dia_chi, combo, so_luong, gia_thb, nhan_vien, trang_thai, ghi_chu)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'Mới về', ?)`,
-      [today, name, phone, address, message, soLuong, gia, nhanVien, nguon]
+      `INSERT INTO th_orders (ngay_ve, ho_ten, sdt, dia_chi, combo, so_luong, gia_thb, nhan_vien, trang_thai, ghi_chu, ma_mau)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'Mới về', ?, ?)`,
+      [today, name, phone, address, message, soLuong, gia, nhanVien, nguon, TDFFM_MA_MAU]
     );
     res.json({ ok: true, message: 'Đã nhận đơn', parsed: { soLuong, gia } });
   }));
@@ -604,7 +609,9 @@ export function mountThailand(app, { mysql, requireLogin, express, getCampaigns,
       map[key].soSP += qty;
 
       // Tên SP: dùng ma_mau (mã mẫu, VD THA284-GEL) → tra sản phẩm trong Sheet
-      const codes = String(o.ma_mau || '').split(',').map(s => s.trim().toUpperCase()).filter(Boolean);
+      // Nếu ma_mau trống → dùng mã mặc định TDFFM_MA_MAU
+      const rawMau = String(o.ma_mau || '').trim() || TDFFM_MA_MAU;
+      const codes = rawMau.split(',').map(s => s.trim().toUpperCase()).filter(Boolean);
       let spName = '';
       let spOwner = null;
       if (codes.length) {
