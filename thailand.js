@@ -71,6 +71,7 @@ async function ensureTable(pool) {
     "ngay_day DATETIME NULL",
     "tdffm_uid VARCHAR(120) DEFAULT ''",
     "tdffm_sync_at DATETIME NULL",
+    "ma_sp VARCHAR(100) DEFAULT ''",
   ]) {
     try { await pool.query(`ALTER TABLE th_orders ADD COLUMN ${col}`); } catch (e) {}
   }
@@ -563,7 +564,7 @@ export function mountThailand(app, { mysql, requireLogin, express, getCampaigns,
     // Song song: lấy đơn + giá vốn Sheet + ngân sách Meta
     const [ordersResult, owners, campaigns] = await Promise.all([
       p.query(
-        `SELECT id, nhan_vien, gia_thb, so_luong, combo, trang_thai, san_pham
+        `SELECT id, nhan_vien, gia_thb, so_luong, combo, trang_thai, ma_sp
          FROM th_orders
          WHERE ngay_ve >= ? AND ngay_ve <= ?
            AND trang_thai IN ('Giao thành công', 'Thành công', 'Hoàn tất')
@@ -586,6 +587,12 @@ export function mountThailand(app, { mysql, requireLogin, express, getCampaigns,
       adSpend[emp] = (adSpend[emp] || 0) + s;
     }
 
+    // ── Build bảng tra mã SP → product từ Sheet (maSPThai → owner entry) ──
+    const codeToOwner = {};
+    for (const [ownerKey, own] of Object.entries(owners)) {
+      if (own.maSPThai) codeToOwner[own.maSPThai] = { ...own, normKey: ownerKey };
+    }
+
     // ── Gom theo nhân viên ──
     const map = {};
     for (const o of orders) {
@@ -596,15 +603,19 @@ export function mountThailand(app, { mysql, requireLogin, express, getCampaigns,
       const qty = Number(o.so_luong) || 0;
       map[key].soSP += qty;
 
-      // Tìm tên SP: ưu tiên cột san_pham, rồi parse từ combo
-      let spName = String(o.san_pham || '').trim();
-      if (!spName && o.combo) {
-        // Lấy tên SP từ combo (phần tiếng Thái trước số)
-        spName = String(o.combo).split(/\d/)[0].trim() || o.combo;
+      // Tên SP: dùng mã SP từ TDFFM → tra tên sản phẩm trong Sheet
+      const codes = String(o.ma_sp || '').split(',').map(s => s.trim().toUpperCase()).filter(Boolean);
+      let spName = '';
+      let spOwner = null;
+      if (codes.length) {
+        // Lấy mã đầu tiên (thường chỉ có 1 SP/đơn)
+        const code = codes[0];
+        spOwner = codeToOwner[code] || null;
+        spName = spOwner ? spOwner.productRaw : code; // hiển thị tên gốc từ Sheet, fallback mã
       }
       if (spName) {
         const spKey = norm(spName);
-        if (!map[key].products[spKey]) map[key].products[spKey] = { name: spName, soLuong: 0, giaThai: 0 };
+        if (!map[key].products[spKey]) map[key].products[spKey] = { name: spName, soLuong: 0, giaThai: spOwner ? (spOwner.giaThai || 0) : 0 };
         map[key].products[spKey].soLuong += qty;
       }
     }
@@ -615,10 +626,7 @@ export function mountThailand(app, { mysql, requireLogin, express, getCampaigns,
       let giaVonThb = 0;
       const prodList = [];
       for (const [spKey, prod] of Object.entries(r.products)) {
-        // Tìm giá Thái trong owners (match tên SP)
-        const own = owners[spKey] || owners[typeof normProd === 'function' ? normProd(prod.name) : spKey];
-        const gia = own ? (own.giaThai || 0) : 0;
-        prod.giaThai = gia;
+        const gia = prod.giaThai || 0;
         prod.giaVon = gia * prod.soLuong;
         giaVonThb += prod.giaVon;
         prodList.push({ name: prod.name, soLuong: prod.soLuong, giaThai: gia, giaVon: prod.giaVon });
@@ -829,10 +837,15 @@ export function mountThailand(app, { mysql, requireLogin, express, getCampaigns,
       const tdffmByPhone = new Map(); // phone → [{ uid, status, rawStatus, createdAt }]
       for (const o of allTdffmOrders) {
         const phone = normPhone(o.buyerPhone || '');
+        // Lấy mã SP từ TDFFM products array (ví dụ: "THA284-GEL")
+        let maSP = '';
+        if (Array.isArray(o.products) && o.products.length) {
+          maSP = o.products.map(p => p.code || p.productCode || p.sku || '').filter(Boolean).join(',');
+        }
         const entry = {
           uid: o.orderUID || '', status: mapTdffmStatus(o.orderStatus, o.shippingOrderStatus),
           rawStatus: o.orderStatus, rawShippingStatus: o.shippingOrderStatus || '',
-          createdAt: o.createdAt || '', phone,
+          createdAt: o.createdAt || '', phone, maSP,
         };
         if (entry.uid) tdffmByUid.set(entry.uid, entry);
         if (phone) {
@@ -845,7 +858,7 @@ export function mountThailand(app, { mysql, requireLogin, express, getCampaigns,
       const FINAL_STATUSES = ['Giao thành công', 'Đã hoàn', 'Hoàn tất', 'Thành công'];
       const placeholders = FINAL_STATUSES.map(() => '?').join(',');
       const [dbOrders] = await p.query(
-        `SELECT id, sdt, trang_thai, tdffm_uid, ngay_ve FROM th_orders
+        `SELECT id, sdt, trang_thai, tdffm_uid, ngay_ve, ma_sp FROM th_orders
          WHERE sdt IS NOT NULL AND sdt <> ''
          AND trang_thai NOT IN (${placeholders})`,
         FINAL_STATUSES
@@ -886,16 +899,19 @@ export function mountThailand(app, { mysql, requireLogin, express, getCampaigns,
 
         if (match.status !== row.trang_thai) {
           await p.query(
-            `UPDATE th_orders SET trang_thai = ?, tdffm_uid = ?, tdffm_sync_at = ? WHERE id = ?`,
-            [match.status, match.uid || '', now, row.id]
+            `UPDATE th_orders SET trang_thai = ?, tdffm_uid = ?, tdffm_sync_at = ?, ma_sp = COALESCE(NULLIF(?, ''), ma_sp) WHERE id = ?`,
+            [match.status, match.uid || '', now, match.maSP || '', row.id]
           );
           updated++;
         } else if (!row.tdffm_uid && match.uid) {
-          // Lưu uid nếu chưa có
+          // Lưu uid + mã SP nếu chưa có
           await p.query(
-            `UPDATE th_orders SET tdffm_uid = ?, tdffm_sync_at = ? WHERE id = ?`,
-            [match.uid, now, row.id]
+            `UPDATE th_orders SET tdffm_uid = ?, tdffm_sync_at = ?, ma_sp = COALESCE(NULLIF(?, ''), ma_sp) WHERE id = ?`,
+            [match.uid, now, match.maSP || '', row.id]
           );
+        } else if (match.maSP && !row.ma_sp) {
+          // Chỉ cập nhật mã SP nếu chưa có
+          await p.query(`UPDATE th_orders SET ma_sp = ? WHERE id = ? AND (ma_sp = '' OR ma_sp IS NULL)`, [match.maSP, row.id]);
         }
       }
 
@@ -918,6 +934,12 @@ export function mountThailand(app, { mysql, requireLogin, express, getCampaigns,
       // Lấy 1 đơn PACKAGED mẫu: liệt kê TẤT CẢ field để xem có field giao hàng khác không
       const sampleOrder = allTdffmOrders.find(o => o.orderStatus === 'PACKAGED');
       const sampleFields = sampleOrder ? Object.keys(sampleOrder) : [];
+      // Lấy mẫu products array để biết field name
+      const sampleProducts = sampleOrder && Array.isArray(sampleOrder.products) && sampleOrder.products.length
+        ? sampleOrder.products.slice(0, 2).map(p => {
+            const out = {}; for (const [k,v] of Object.entries(p)) { if (typeof v !== 'object' || v === null) out[k] = v; } return out;
+          })
+        : [];
       // Lấy các giá trị có chứa từ "deliver/ship/status/complete/success" trong tên field
       const sampleDeliveryHints = {};
       if (sampleOrder) {
@@ -933,7 +955,7 @@ export function mountThailand(app, { mysql, requireLogin, express, getCampaigns,
         tdffmOrders: allTdffmOrders.length, dbOrders: dbOrders.length,
         updated, notFound,
         tdffmStatusCount, tdffmShippingCount, dbStatusCount,
-        sampleFields, sampleDeliveryHints,
+        sampleFields, sampleDeliveryHints, sampleProducts,
         message: `Đồng bộ thành công: ${updated} đơn cập nhật trạng thái`,
       };
       lastSyncResult = result;
