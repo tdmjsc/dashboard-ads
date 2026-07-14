@@ -1511,7 +1511,8 @@ async function loadOrders(){
     if($('pushBtn')) $('pushBtn').style.display = IS_ADMIN ? '' : 'none';
     if($('csvBtn')) $('csvBtn').style.display = IS_ADMIN ? '' : 'none';
     if($('syncBtn')) $('syncBtn').style.display = IS_ADMIN ? '' : 'none';
-    if($('salaryLink')) $('salaryLink').style.display = IS_ADMIN ? '' : 'none';
+    // Link doanh thu Thái hiện cho tất cả (admin + nhân viên)
+    if($('salaryLink')) $('salaryLink').style.display = '';
     if($('fNv')) $('fNv').style.display = IS_ADMIN ? '' : 'none';
     if($('fDay')) $('fDay').style.display = IS_ADMIN ? '' : 'none';
     // fill selects
