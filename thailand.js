@@ -564,7 +564,7 @@ export function mountThailand(app, { mysql, requireLogin, express, getCampaigns,
     // Song song: lấy đơn + giá vốn Sheet + ngân sách Meta
     const [ordersResult, owners, campaigns] = await Promise.all([
       p.query(
-        `SELECT id, nhan_vien, gia_thb, so_luong, combo, trang_thai, ma_sp
+        `SELECT id, nhan_vien, gia_thb, so_luong, combo, trang_thai, ma_mau
          FROM th_orders
          WHERE ngay_ve >= ? AND ngay_ve <= ?
            AND trang_thai IN ('Giao thành công', 'Thành công', 'Hoàn tất')
@@ -603,15 +603,14 @@ export function mountThailand(app, { mysql, requireLogin, express, getCampaigns,
       const qty = Number(o.so_luong) || 0;
       map[key].soSP += qty;
 
-      // Tên SP: dùng mã SP từ TDFFM → tra tên sản phẩm trong Sheet
-      const codes = String(o.ma_sp || '').split(',').map(s => s.trim().toUpperCase()).filter(Boolean);
+      // Tên SP: dùng ma_mau (mã mẫu, VD THA284-GEL) → tra sản phẩm trong Sheet
+      const codes = String(o.ma_mau || '').split(',').map(s => s.trim().toUpperCase()).filter(Boolean);
       let spName = '';
       let spOwner = null;
       if (codes.length) {
-        // Lấy mã đầu tiên (thường chỉ có 1 SP/đơn)
         const code = codes[0];
         spOwner = codeToOwner[code] || null;
-        spName = spOwner ? spOwner.productRaw : code; // hiển thị tên gốc từ Sheet, fallback mã
+        spName = spOwner ? spOwner.productRaw : code;
       }
       if (spName) {
         const spKey = norm(spName);
