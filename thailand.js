@@ -470,7 +470,7 @@ export function mountThailand(app, { mysql, requireLogin, express, getCampaigns,
         const campaigns = await getCampaigns(since, until);
         for (const c of campaigns) {
           const ten = norm(c.name);
-          if (!ten.includes('thái lan') && !ten.includes('thai lan') && !ten.includes('thailand')) continue;
+          if (!ten.includes('thailan')) continue;
           const emp = c.employee || '';
           if (!emp || norm(emp) === 'chưa xác định') continue;
           const s = (c.daily || []).reduce((t, d) => t + (Number(d.spent) || 0), 0);
@@ -1224,10 +1224,12 @@ function render(){
   } else { $('cards').innerHTML=''; }
 
   // Table
-  var h='<table><thead><tr><th>Nhân viên</th><th class="num">Thực thu THB</th><th class="num">Doanh thu</th>';
+  var h='<table><thead><tr><th>Nhân viên</th>';
+  if(IS_ADMIN) h+='<th class="num">DT gốc THB</th>';
+  h+='<th class="num">Thực thu THB</th><th class="num">Doanh thu</th>';
   if(IS_ADMIN) h+='<th class="num">Giá vốn</th>';
   h+='<th class="num">Ngân sách QC</th><th class="num">Số đơn</th><th class="num">Số SP</th></tr></thead><tbody>';
-  var totNet=0,totVnd=0,totGvVnd=0,totQC=0,totDon=0,totSP=0;
+  var totDtGoc=0,totNet=0,totVnd=0,totGvVnd=0,totQC=0,totDon=0,totSP=0;
   for(var i=0;i<rows.length;i++){
     var r=rows[i];
     var dtGoc=r.doanhThuThb||0;
@@ -1237,16 +1239,17 @@ function render(){
     var qc=r.nganSach||0;
     var hasProd=IS_ADMIN&&r.productDetails&&r.productDetails.length>0;
     var isOpen=expanded[i];
-    totNet+=net; totVnd+=vndd; totGvVnd+=gvV; totQC+=qc; totDon+=(r.soDon||0); totSP+=(r.soSP||0);
+    totNet+=net; totVnd+=vndd; totGvVnd+=gvV; totQC+=qc; totDon+=(r.soDon||0); totSP+=(r.soSP||0); totDtGoc+=dtGoc;
     h+='<tr><td>'+(hasProd?'<button class="exp" onclick="tg('+i+')">'+(isOpen?'\\u2212':'+')+' </button>':'')+
-      '<b>'+esc(r.name)+'</b></td>'+
-      '<td class="num l2">'+thb(net)+' ฿</td>'+
+      '<b>'+esc(r.name)+'</b></td>';
+    if(IS_ADMIN) h+='<td class="num">'+thb(dtGoc)+' ฿</td>';
+    h+='<td class="num l2">'+thb(net)+' ฿</td>'+
       '<td class="num thuc">'+vnd(vndd)+' ₫</td>';
     if(IS_ADMIN) h+='<td class="num">'+(gvV?vnd(gvV)+' ₫':'–')+'</td>';
     h+='<td class="num qc">'+(qc?vnd(qc)+' ₫':'–')+'</td>'+
       '<td class="num">'+(r.soDon||0)+'</td><td class="num">'+(r.soSP||0)+'</td></tr>';
     if(isOpen&&hasProd){
-      h+='<tr class="detail"><td colspan="'+(IS_ADMIN?7:6)+'"><div class="muted" style="font-size:11px;margin-bottom:4px;">Chi tiết sản phẩm:</div><table><tbody>';
+      h+='<tr class="detail"><td colspan="'+(IS_ADMIN?8:6)+'"><div class="muted" style="font-size:11px;margin-bottom:4px;">Chi tiết sản phẩm:</div><table><tbody>';
       for(var j=0;j<r.productDetails.length;j++){
         var p=r.productDetails[j];
         var pGvV=p.giaVon||0;
@@ -1257,8 +1260,9 @@ function render(){
       h+='</tbody></table></td></tr>';
     }
   }
-  h+='<tr class="total-row"><td>Tổng ('+rows.length+')</td>'+
-    '<td class="num l2">'+thb(totNet)+' ฿</td><td class="num thuc">'+vnd(totVnd)+' ₫</td>';
+  h+='<tr class="total-row"><td>Tổng ('+rows.length+')</td>';
+  if(IS_ADMIN) h+='<td class="num">'+thb(totDtGoc)+' ฿</td>';
+  h+='<td class="num l2">'+thb(totNet)+' ฿</td><td class="num thuc">'+vnd(totVnd)+' ₫</td>';
   if(IS_ADMIN) h+='<td class="num">'+vnd(totGvVnd)+' ₫</td>';
   h+='<td class="num qc">'+vnd(totQC)+' ₫</td><td class="num">'+totDon+'</td><td class="num">'+totSP+'</td></tr>';
   h+='</tbody></table>';
