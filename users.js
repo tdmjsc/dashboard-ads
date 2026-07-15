@@ -28,7 +28,7 @@ export const USERS = [
     employees: ['Trịnh Đức Phương', 'Đoàn Việt Hà', 'Nguyễn Duy Huân', 'Vũ Thuý An', 'Lê Thị Ánh Tuyết', 'Phạm Quang Tùng'],
     salaryName: 'Trịnh Đức Phương' },
   { user: 'mkt.truong', pass: 'Truong@1234', role: 'viewer',
-    employees: ['Tạ Quang Trường', 'Nguyễn Thị Trà My', 'Dương Văn Minh', 'Lê Thị Ánh'],
+    employees: ['Tạ Quang Trường', 'Nguyễn Thị Trà My', 'Dương Văn Minh', 'Lê Thị Ánh', 'Lưu Xuân Phong', 'Nguyễn Thị Thu Phương'],
     salaryName: 'Tạ Quang Trường' },
 
   // ----- NHÂN VIÊN MARKETING (xem KQ marketing của mình + lương của mình) -----
