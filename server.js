@@ -1222,7 +1222,7 @@ async function loadOwners(force) {
 }
 
 // Gọi báo cáo sản phẩm (dùng phiên đăng nhập web của máy chủ)
-async function sandboxProductReport(since, until) {
+async function sandboxProductReport(since, until, extra = {}) {
   const tuNgay = `${since}T00:00:00+07:00`, denNgay = `${until}T23:59:59+07:00`;
   const payload = {
     strIdNguonDuLieu: null, kieuNgay: 'NgayTao', tuNgay, denNgay,
@@ -1233,6 +1233,7 @@ async function sandboxProductReport(since, until) {
     idPhongBanMkts: null, idNhomNhanVienMkts: null, idUserMkts: null,
     date: [tuNgay, denNgay], khoId: null,
     pageInfo: { page: 1, pageSize: 1000 }, sorts: [],
+    ...extra
   };
   const call = url => fetchWithTimeout(url, {
     method: 'POST',
@@ -1483,14 +1484,50 @@ app.get('/api/salary-product/report', async (req, res) => {
   const until = req.query.until || since;
   try {
     const owners = await loadOwners(false);
-    const rp = await sandboxProductReport(since, until);
-    if (!(rp.json && (rp.json.success ?? rp.json.Success)))
-      return res.json({ ok: false, since, until, httpStatus: rp.httpStatus, message: (rp.json && (rp.json.message || rp.json.Message)) || 'Lỗi gọi báo cáo sản phẩm' });
 
-    // Lấy lưới sản phẩm chi tiết (có doanhSo + soLuongSanPham)
-    const d = (rp.json && rp.json.data) || {};
-    const arr = Array.isArray(d.productGridTable) ? d.productGridTable : [];
+    const statusParam = process.env.SALARY_STATUS_PARAM || 'giaoHangTrangThaiMa';
+    const giaoVal = process.env.SALARY_VAL_GIAO || '31';
+    const ttVal = process.env.SALARY_VAL_TT || '32';
+    const castVal = v => (v !== '' && !isNaN(+v)) ? +v : v;
+
+    const [rpGiao, rpTT] = await Promise.all([
+      sandboxProductReport(since, until, { [statusParam]: castVal(giaoVal) }),
+      sandboxProductReport(since, until, { [statusParam]: castVal(ttVal) })
+    ]);
+
+    if (!(rpGiao.json && (rpGiao.json.success ?? rpGiao.json.Success)) ||
+        !(rpTT.json && (rpTT.json.success ?? rpTT.json.Success))) {
+      return res.json({ ok: false, since, until, message: 'Lỗi gọi báo cáo sản phẩm Sandbox' });
+    }
+
     const pick = (o, keys) => { for (const k of keys) if (o[k] != null) return o[k]; return null; };
+
+    const mergedMap = {};
+    const processArr = (arr) => {
+      for (const o of arr) {
+        const name = String(pick(o, ['tenSanPham', 'tenSp', 'sanPham', 'name']) || '').trim();
+        if (!name) continue;
+        const doanhThu = +pick(o, ['doanhSo', 'doanhThu', 'tongDoanhSo']) || 0;
+        const soLuongSP = +pick(o, ['soLuongSanPham', 'soLuongSP', 'soLuong']) || 0;
+        const soDon = +pick(o, ['soLuongChotDon', 'soLuongChotDonThucTe', 'soDonChot', 'soDonHang', 'soDon']) || 0;
+
+        const key = normProd(name);
+        if (!mergedMap[key]) {
+          mergedMap[key] = { name, doanhThu: 0, soLuongSP: 0, soDon: 0 };
+        }
+        mergedMap[key].doanhThu += doanhThu;
+        mergedMap[key].soLuongSP += soLuongSP;
+        mergedMap[key].soDon += soDon;
+      }
+    };
+
+    const dGiao = (rpGiao.json && rpGiao.json.data) || {};
+    processArr(Array.isArray(dGiao.productGridTable) ? dGiao.productGridTable : []);
+
+    const dTT = (rpTT.json && rpTT.json.data) || {};
+    processArr(Array.isArray(dTT.productGridTable) ? dTT.productGridTable : []);
+
+    const mergedArr = Object.values(mergedMap);
 
     // Mốc phân loại mới/cũ: cuối tháng của "until"
     const endOfMonth = new Date(until.slice(0, 7) + '-01');
@@ -1500,11 +1537,11 @@ app.get('/api/salary-product/report', async (req, res) => {
     const twoMonthsAgo = new Date(endOfMonth);
     twoMonthsAgo.setMonth(twoMonthsAgo.getMonth() - 2);
 
-    const products = arr.map(o => {
-      const name = String(pick(o, ['tenSanPham', 'tenSp', 'sanPham', 'name']) || '').trim();
-      const doanhThu = +pick(o, ['doanhSo', 'doanhThu', 'tongDoanhSo']) || 0;
-      const soLuongSP = +pick(o, ['soLuongSanPham', 'soLuongSP', 'soLuong']) || 0;
-      const soDon = +pick(o, ['soLuongChotDon', 'soLuongChotDonThucTe', 'soDonChot', 'soDonHang', 'soDon']) || 0;
+    const products = mergedArr.map(o => {
+      const name = o.name;
+      const doanhThu = o.doanhThu;
+      const soLuongSP = o.soLuongSP;
+      const soDon = o.soDon;
       const own = owners[normProd(name)];
       const manager = own ? own.manager : '';
       const giaNhap = own ? (own.giaNhap || 0) : 0;
