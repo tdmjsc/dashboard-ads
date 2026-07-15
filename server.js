@@ -1410,6 +1410,11 @@ app.get('/api/salary-product/manual', (req, res) => {
         for (const [ch, cv] of Object.entries(val || {})) {
           merged.channels[ch] = { ...(merged.channels[ch] || {}), ...cv };
         }
+      } else if (field === 'products') {
+        merged.products = merged.products || {};
+        for (const [pk, pv] of Object.entries(val || {})) {
+          merged.products[pk] = { ...(merged.products[pk] || {}), ...pv };
+        }
       } else if (val != null && (merged[field] == null || merged[field] === 0)) {
         merged[field] = val;
       }
@@ -1452,6 +1457,10 @@ app.post('/api/salary-product/manual', express.json(), (req, res) => {
           PTSP_MANUAL[month][key].channels = PTSP_MANUAL[month][key].channels || {};
           for (const [ch, cv] of Object.entries(vv || {}))
             PTSP_MANUAL[month][key].channels[ch] = { ...(PTSP_MANUAL[month][key].channels[ch]||{}), ...cv };
+        } else if (f === 'products') {
+          PTSP_MANUAL[month][key].products = PTSP_MANUAL[month][key].products || {};
+          for (const [pk, pv] of Object.entries(vv || {}))
+            PTSP_MANUAL[month][key].products[pk] = { ...(PTSP_MANUAL[month][key].products[pk]||{}), ...pv };
         } else if (PTSP_MANUAL[month][key][f] == null || PTSP_MANUAL[month][key][f] === 0) {
           PTSP_MANUAL[month][key][f] = vv;
         }
@@ -1461,7 +1470,14 @@ app.post('/api/salary-product/manual', express.json(), (req, res) => {
   }
   if (!PTSP_MANUAL[month][key]) PTSP_MANUAL[month][key] = {};
   const num = parseInt(String(value == null ? '' : value).replace(/[^\d]/g, ''), 10) || 0;
-  if (channel && metric) {
+  const { product: prodName, metric: prodMetric } = req.body || {};
+  if (prodName && prodMetric) {
+    // Lưu DT/GV nhập tay theo từng sản phẩm: products["tên sp"] = { dt: ..., gv: ... }
+    if (!PTSP_MANUAL[month][key].products) PTSP_MANUAL[month][key].products = {};
+    const pk = normProd(prodName);
+    if (!PTSP_MANUAL[month][key].products[pk]) PTSP_MANUAL[month][key].products[pk] = {};
+    PTSP_MANUAL[month][key].products[pk][prodMetric] = num;
+  } else if (channel && metric) {
     // Lưu kênh nhập tay: channels.thailan.dt / channels.thailan.gv ...
     if (!PTSP_MANUAL[month][key].channels) PTSP_MANUAL[month][key].channels = {};
     if (!PTSP_MANUAL[month][key].channels[channel]) PTSP_MANUAL[month][key].channels[channel] = {};
@@ -1563,8 +1579,25 @@ app.get('/api/salary-product/report', async (req, res) => {
       }
       const hoaHong = Math.round(loiNhuan * tyLe);
 
-      return { product: name, manager, doanhThu, soLuongSP, soDon, giaNhap, giaVon, phiShip, loiNhuan, ngayDang, loai, tyLe, hoaHong };
+      return { product: name, manager, doanhThu, autoDoanhThu: doanhThu, soLuongSP, soDon, giaNhap, giaVon, autoGiaVon: giaVon, phiShip, loiNhuan, ngayDang, loai, tyLe, hoaHong };
     }).filter(p => p.product);
+
+    // Gộp DT/GV nhập tay theo từng sản phẩm (override giá trị auto)
+    const monthKey2 = (since || '').slice(0, 7);
+    const manualMonth2 = PTSP_MANUAL[monthKey2] || {};
+    for (const p of products) {
+      const mgrKey = normProd(p.manager);
+      const rec = manualMonth2[mgrKey] || {};
+      const prods = rec.products || {};
+      const pk = normProd(p.product);
+      const pm = prods[pk];
+      if (pm) {
+        if (pm.dt) { p.doanhThu = pm.dt; p.manualDT = pm.dt; }
+        if (pm.gv) { p.giaVon = pm.gv; p.manualGV = pm.gv; }
+        p.loiNhuan = p.doanhThu - p.giaVon - p.phiShip;
+        p.hoaHong = Math.round(p.loiNhuan * p.tyLe);
+      }
+    }
 
     // Quyền: tài khoản "product" chỉ thấy SP của mình
     const me = req.session.user || {};
