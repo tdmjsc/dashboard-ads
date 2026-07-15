@@ -306,17 +306,16 @@ function recomputeAll(){
   LIST.forEach(emp=>{ const m=manOf(emp.key); m._hhLeader=0; m.thuongTop1=0; });
   LIST.forEach((_,i)=>recompute(i));
 
-  // ── Tính HH Leader: ½ tổng lương 2% thực tế của nhân viên trong nhóm ──
-  // LOẠI TRỪ doanh thu Shopee (kênh "san") khỏi HH Leader
+  // ── Tính HH Leader: ½ tổng lương 2% (KHÔNG gồm Sàn TMĐT/Shopee) ──
   const l2ByName={};
   LIST.forEach(emp=>{
-    const m=manOf(emp.key), a=emp.a;
-    // Tính lương 2% KHÔNG gồm kênh Sàn TMĐT (san = shopee)
-    const san=m.channels['san']||{dt:0,qc:0,gv:0,ship:0};
-    const sanDT=+san.dt||0, sanQC=+san.qc||0, sanGV=+san.gv||0, sanSHIP=+san.ship||0;
+    const m=manOf(emp.key);
     const l2Full=(emp._c&&emp._c.l2)||0;
-    const l2San=Math.round((sanDT-sanQC-sanGV-sanSHIP)*TYLE);
-    l2ByName[normKey(emp.name)]=l2Full-l2San;  // lương 2% không gồm shopee
+    // Trừ phần lương 2% đến từ kênh "san" (Sàn TMĐT = Shopee)
+    const san=m.channels['san']||{dt:0,qc:0,gv:0,ship:0};
+    const sanNet=(+san.dt||0)-(+san.qc||0)-(+san.gv||0)-(+san.ship||0);
+    const l2San=Math.round(sanNet*TYLE);
+    l2ByName[normKey(emp.name)]=l2Full-l2San;
   });
   const teamByKey={};
   Object.keys(TEAM_LEAD).forEach(lead=>{ teamByKey[normKey(lead)]=TEAM_LEAD[lead]; });
