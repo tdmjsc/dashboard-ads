@@ -208,13 +208,21 @@ function render(){
         const chip = p.loai==='moi' ? '<span class="chip chip-moi">SP mới 1%</span>'
                    : p.loai==='cu' ? '<span class="chip chip-cu">SP cũ 0.7%</span>'
                    : '<span class="chip chip-khong">không tính</span>';
+        const hasMDT = p.manualDT>0;
+        const hasMGV = p.manualGV>0;
+        const autoInfo = [];
+        if(hasMDT) autoInfo.push('TĐ DT: '+vnd(p.autoDoanhThu));
+        if(hasMGV) autoInfo.push('TĐ GV: '+vnd(p.autoGiaVon));
+        const autoHint = autoInfo.length ? ' <span class="muted" style="font-size:10px;">('+ autoInfo.join(' · ')+')</span>' : '';
         html += `<tr class="detail-row">
-          <td colspan="4" style="padding-left:46px;">${esc(p.product)} ${chip}
-            <span class="muted" style="font-size:11px;margin-left:6px;">Ngày đăng: ${p.ngayDang||'(trống)'} · SL bán: ${vnd(p.soLuongSP)} · giá nhập: ${vnd(p.giaNhap)}</span></td>
+          <td colspan="2" style="padding-left:46px;">${esc(p.product)} ${chip}
+            <span class="muted" style="font-size:11px;margin-left:6px;">Ngày đăng: ${p.ngayDang||'(trống)'} · SL bán: ${vnd(p.soLuongSP)} · giá nhập: ${vnd(p.giaNhap)}</span>${autoHint}</td>
+          <td class="num" style="font-size:11px;color:#6B7C97;">SP mới: ${p.loai==='moi'?'✓':'–'}</td>
+          <td class="num" style="font-size:11px;color:#6B7C97;">SP cũ: ${p.loai==='cu'?'✓':'–'}</td>
           <td class="num">${vnd(p.soDon)}</td>
           <td class="num">${vnd(p.soLuongSP)}</td>
-          <td class="num">${vnd(p.doanhThu)}</td>
-          <td class="num muted">${vnd(p.giaVon)}</td>
+          <td class="num"><input class="cell-inp" style="width:110px;${hasMDT?'border-color:rgba(123,227,181,.5);':''}" inputmode="numeric" data-mgr="${esc(m.manager)}" data-prod="${esc(p.product)}" data-pm="dt" value="${hasMDT?vnd(p.manualDT):''}" placeholder="${vnd(p.autoDoanhThu)}"></td>
+          <td class="num"><input class="cell-inp" style="width:110px;${hasMGV?'border-color:rgba(255,197,107,.5);':''}" inputmode="numeric" data-mgr="${esc(m.manager)}" data-prod="${esc(p.product)}" data-pm="gv" value="${hasMGV?vnd(p.manualGV):''}" placeholder="${vnd(p.autoGiaVon)}"></td>
           <td class="num muted">${vnd(p.phiShip)}</td>
           <td class="num ${p.loai==='khong-tinh'?'khong':'hh'}">${p.hoaHong>0?vnd(p.hoaHong)+' ₫':'–'}</td>
           <td></td><td></td><td></td><td></td><td></td>
@@ -319,6 +327,37 @@ async function saveField(mgr, field, value){
   } catch(e){}
 }
 
+// Lưu DT/GV nhập tay theo từng sản phẩm
+async function saveProduct(mgr, prodName, metric, value){
+  const num = parseInt(String(value).replace(/[^\d]/g,''),10) || 0;
+  // Cập nhật DATA.products tại chỗ để render lại đúng
+  const p = (DATA.products||[]).find(x=>x.product===prodName && x.manager===mgr);
+  if(p){
+    if(metric==='dt'){ p.manualDT=num||0; p.doanhThu=num||p.autoDoanhThu||0; }
+    if(metric==='gv'){ p.manualGV=num||0; p.giaVon=num||p.autoGiaVon||0; }
+    p.loiNhuan=p.doanhThu-p.giaVon-p.phiShip;
+    p.hoaHong=Math.round(p.loiNhuan*p.tyLe);
+    // Tính lại tổng manager
+    const m = (DATA.managers||[]).find(x=>x.manager===mgr);
+    if(m){
+      const mProds=(DATA.products||[]).filter(x=>x.manager===mgr);
+      m.doanhThu=mProds.reduce((s,x)=>s+x.doanhThu,0);
+      m.giaVon=mProds.reduce((s,x)=>s+x.giaVon,0);
+      m.phiShip=mProds.reduce((s,x)=>s+x.phiShip,0);
+      m.hoaHongSandbox=mProds.reduce((s,x)=>s+x.hoaHong,0);
+      m.hoaHong=m.hoaHongSandbox+(m.hoaHongKhac||0);
+      m.doanhThuTong=m.doanhThu+(m.dtKhac||0);
+      m.giaVonTong=m.giaVon+(m.gvKhac||0);
+    }
+  }
+  try {
+    await fetch('/api/salary-product/manual', {
+      method:'POST', headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({ month: curMonth, key: normKey(mgr), product: prodName, metric, value: num })
+    });
+  } catch(e){}
+}
+
 // Lưu kênh nhập tay (Thái Lan/Pushsale/Shopee)
 async function saveChannel(mgr, channel, metric, value){
   const num = parseInt(String(value).replace(/[^\d]/g,''),10) || 0;
@@ -347,7 +386,10 @@ async function saveChannel(mgr, channel, metric, value){
 // Bắt sự kiện change trên toàn bảng (event delegation)
 $('rows').addEventListener('change', async e=>{
   const el = e.target;
-  if(el.dataset && el.dataset.mgr && el.dataset.ch && el.dataset.metric){
+  if(el.dataset && el.dataset.mgr && el.dataset.prod && el.dataset.pm){
+    await saveProduct(el.dataset.mgr, el.dataset.prod, el.dataset.pm, el.value);
+    render();
+  } else if(el.dataset && el.dataset.mgr && el.dataset.ch && el.dataset.metric){
     await saveChannel(el.dataset.mgr, el.dataset.ch, el.dataset.metric, el.value);
     render();
   } else if(el.dataset && el.dataset.mgr && el.dataset.f){
