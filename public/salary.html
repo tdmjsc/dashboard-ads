@@ -479,19 +479,41 @@ fetch('/api/me').then(r=>r.ok?r.json():null).then(me=>{
 }).catch(()=>{});
 
 // ── CHUYỂN LƯƠNG ──
-const BANKS=[{bin:'970436',name:'Vietcombank',short:'VCB'},{bin:'970422',name:'MB Bank',short:'MB'},{bin:'970407',name:'Techcombank',short:'TCB'},{bin:'970432',name:'VPBank',short:'VPB'}];
+const SENDER_BANKS=[{bin:'970436',name:'Vietcombank',short:'VCB'},{bin:'970422',name:'MB Bank',short:'MB'},{bin:'970407',name:'Techcombank',short:'TCB'},{bin:'970432',name:'VPBank',short:'VPB'}];
+const ALL_BANKS=[
+  {bin:'970436',name:'Vietcombank'},{bin:'970422',name:'MB Bank'},{bin:'970407',name:'Techcombank'},{bin:'970432',name:'VPBank'},
+  {bin:'970418',name:'BIDV'},{bin:'970415',name:'VietinBank'},{bin:'970416',name:'ACB'},{bin:'970423',name:'TPBank'},
+  {bin:'970403',name:'Sacombank'},{bin:'970405',name:'Agribank'},{bin:'970443',name:'SHB'},{bin:'970426',name:'MSB'},
+  {bin:'970437',name:'HDBank'},{bin:'970448',name:'OCB'},{bin:'970449',name:'LPBank'},{bin:'970440',name:'SeABank'},
+  {bin:'970441',name:'VIB'},{bin:'970431',name:'Eximbank'},{bin:'970428',name:'Nam A Bank'},{bin:'970406',name:'DongA Bank'},
+  {bin:'970429',name:'SCB'},{bin:'970414',name:'OceanBank'},{bin:'970412',name:'PVcomBank'},{bin:'970409',name:'Bac A Bank'},
+  {bin:'970425',name:'ABBank'},{bin:'970427',name:'VietABank'},{bin:'970433',name:'VietBank'},{bin:'970454',name:'Viet Capital Bank'},
+];
 let BANK_DATA={};
 fetch('/api/bank-accounts').then(r=>r.ok?r.json():{}).then(d=>{BANK_DATA=d||{};}).catch(()=>{});
-
 function getMyBank(){ return localStorage.getItem('myBank')||''; }
 function setMyBank(v){ localStorage.setItem('myBank',v); }
+function makeDesc(name){ const mn=($('month').value||'').split('-')[1]||''; return 'HKD TD chuyen luong '+name+' t'+parseInt(mn); }
+
+// Deep link theo từng ngân hàng gửi
+function buildTransferUrl(senderShort, recipBin, recipAcc, recipName, amount, desc){
+  const e=encodeURIComponent;
+  if(senderShort==='MB')
+    return 'https://online.mbbank.com.vn/pl/transfer/NAPAS247?bankCode='+recipBin+'&accountNo='+recipAcc+'&amount='+amount+'&description='+e(desc);
+  if(senderShort==='VCB')
+    return 'https://vcbdigibank.vietcombank.com.vn/napas247/transfer?bankCode='+recipBin+'&accountNo='+recipAcc+'&amount='+amount+'&remark='+e(desc);
+  if(senderShort==='TCB')
+    return 'https://dl.vietqr.io/pay?app=TCB&ba='+recipAcc+'&bn='+e(recipName)+'&am='+amount+'&info='+e(desc)+'&bankCode='+recipBin;
+  if(senderShort==='VPB')
+    return 'https://dl.vietqr.io/pay?app=VPB&ba='+recipAcc+'&bn='+e(recipName)+'&am='+amount+'&info='+e(desc)+'&bankCode='+recipBin;
+  return 'https://dl.vietqr.io/pay?app='+senderShort+'&ba='+recipAcc+'&bn='+e(recipName)+'&am='+amount+'&info='+e(desc)+'&bankCode='+recipBin;
+}
 
 function xferSalary(i){
   const emp=LIST[i]; if(!emp) return;
   const c=emp._c||{};
   const amount=c.tn||0;
-  const monthNum=($('month').value||'').split('-')[1]||'';
-  const desc='HKD TD chuyển lương '+emp.name+' tháng '+parseInt(monthNum);
+  const desc=makeDesc(emp.name);
   const k=normKey(emp.name);
   const bank=BANK_DATA[k]||{};
   const myBank=getMyBank();
@@ -503,18 +525,16 @@ function xferSalary(i){
   h+='<div class="xfer-row"><span class="xfer-label">Nội dung</span><span style="font-size:13px;">'+esc(desc)+'</span></div>';
   h+='<hr style="border-color:rgba(255,255,255,.08);margin:12px 0;">';
 
-  // Ngân hàng GỬI (của admin)
   h+='<div style="font-size:12px;color:#7BE3B5;margin-bottom:6px;font-weight:600;">Ngân hàng của bạn (gửi)</div>';
   h+='<div class="xfer-row"><span class="xfer-label">NH gửi</span><select class="xfer-inp" id="xf-mybank">';
-  h+='<option value="">Chọn NH của bạn…</option>';
-  BANKS.forEach(b=>{h+='<option value="'+b.short+'" '+(myBank===b.short?'selected':'')+'>'+b.name+'</option>';});
+  h+='<option value="">Chọn…</option>';
+  SENDER_BANKS.forEach(b=>{h+='<option value="'+b.short+'" '+(myBank===b.short?'selected':'')+'>'+b.name+'</option>';});
   h+='</select></div>';
 
-  // Ngân hàng NHẬN (nhân viên)
   h+='<div style="font-size:12px;color:#9FB0C8;margin:10px 0 6px;">Tài khoản nhận (nhân viên)</div>';
   h+='<div class="xfer-row"><span class="xfer-label">NH nhận</span><select class="xfer-inp" id="xf-bank">';
   h+='<option value="">Chọn ngân hàng…</option>';
-  BANKS.forEach(b=>{h+='<option value="'+b.bin+'" '+(bank.bankBin===b.bin?'selected':'')+'>'+b.name+'</option>';});
+  ALL_BANKS.forEach(b=>{h+='<option value="'+b.bin+'" '+(bank.bankBin===b.bin?'selected':'')+'>'+b.name+'</option>';});
   h+='</select></div>';
   h+='<div class="xfer-row"><span class="xfer-label">Số tài khoản</span><input class="xfer-inp" id="xf-acc" value="'+(bank.accountNo||'')+'" placeholder="Nhập STK"></div>';
 
@@ -533,26 +553,23 @@ function xferSalary(i){
 
 function updateXferQR(i){
   const emp=LIST[i]; const c=emp._c||{};
-  const amount=c.tn||0;
-  const monthNum=($('month').value||'').split('-')[1]||'';
-  const desc='HKD TD chuyển lương '+emp.name+' tháng '+parseInt(monthNum);
+  const desc=makeDesc(emp.name);
   const bin=$('xf-bank').value, acc=$('xf-acc').value;
-  if(bin&&acc) showXferQR(bin,acc,emp.name,amount,desc);
+  if(bin&&acc) showXferQR(bin,acc,emp.name,c.tn||0,desc);
   else $('xf-qr').innerHTML='';
 }
 
 function showXferQR(bin,acc,name,amount,desc){
   const qr=$('xf-qr'); if(!qr)return;
   const url='https://img.vietqr.io/image/'+bin+'-'+acc+'-compact2.png?amount='+amount+'&addInfo='+encodeURIComponent(desc)+'&accountName='+encodeURIComponent(name.toUpperCase());
-  qr.innerHTML='<div style="font-size:11px;color:#9FB0C8;margin-bottom:6px;">Quét QR bằng app ngân hàng nếu nút Chuyển khoản không mở được</div>'
+  qr.innerHTML='<div style="font-size:11px;color:#9FB0C8;margin-bottom:6px;">Hoặc quét QR bằng app ngân hàng</div>'
     +'<img src="'+url+'" alt="VietQR" onerror="this.style.display=\'none\'">';
 }
 
 function xferCopy(i){
   const emp=LIST[i]; const c=emp._c||{};
-  const monthNum=($('month').value||'').split('-')[1]||'';
-  const desc='HKD TD chuyển lương '+emp.name+' tháng '+parseInt(monthNum);
-  const bankBin=$('xf-bank').value; const bankObj=BANKS.find(b=>b.bin===bankBin);
+  const desc=makeDesc(emp.name);
+  const bankBin=$('xf-bank').value; const bankObj=ALL_BANKS.find(b=>b.bin===bankBin);
   const acc=$('xf-acc').value||'';
   const txt=desc+'\nSố tiền: '+vnd(c.tn||0)+' ₫'+(bankObj?'\nNgân hàng: '+bankObj.name:'')+(acc?'\nSTK: '+acc:'');
   navigator.clipboard.writeText(txt).then(()=>alert('Đã copy nội dung chuyển khoản')).catch(()=>{});
@@ -561,32 +578,21 @@ function xferCopy(i){
 async function xferGo(i){
   const emp=LIST[i]; const c=emp._c||{};
   const amount=c.tn||0;
-  const monthNum=($('month').value||'').split('-')[1]||'';
-  const desc='HKD TD chuyển lương '+emp.name+' tháng '+parseInt(monthNum);
+  const desc=makeDesc(emp.name);
   const myBankShort=$('xf-mybank').value;
   const recipBin=$('xf-bank').value, recipAcc=$('xf-acc').value;
 
-  // Lưu ngân hàng gửi
   if(myBankShort) setMyBank(myBankShort);
-
-  // Lưu ngân hàng nhận
   if(recipBin||recipAcc){
-    const bankObj=BANKS.find(b=>b.bin===recipBin);
+    const bankObj=ALL_BANKS.find(b=>b.bin===recipBin);
     const payload={name:emp.name, bankBin:recipBin, bankName:bankObj?bankObj.name:'', accountNo:recipAcc};
     BANK_DATA[normKey(emp.name)]=payload;
     try{await fetch('/api/bank-accounts',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(payload)});}catch(e){}
   }
+  if(!myBankShort){alert('Vui lòng chọn ngân hàng của bạn');return;}
+  if(!recipBin||!recipAcc){alert('Vui lòng chọn ngân hàng nhận và nhập STK');return;}
 
-  if(!myBankShort){alert('Vui lòng chọn ngân hàng của bạn (ngân hàng gửi)');return;}
-  if(!recipBin||!recipAcc){alert('Vui lòng chọn ngân hàng nhận và nhập số tài khoản');return;}
-
-  // Deep link VietQR: app = NH gửi, bankCode = BIN NH nhận
-  const url='https://dl.vietqr.io/pay?app='+myBankShort
-    +'&ba='+recipAcc
-    +'&bn='+encodeURIComponent(emp.name.toUpperCase())
-    +'&am='+amount
-    +'&info='+encodeURIComponent(desc)
-    +'&bankCode='+recipBin;
+  const url=buildTransferUrl(myBankShort, recipBin, recipAcc, emp.name.toUpperCase(), amount, desc);
   window.location.href=url;
 }
 
