@@ -104,6 +104,7 @@
     <button class="btn" id="publishBtn" style="background:#7BE3B5;color:#0B1322;">📤 Công khai lương</button>
     <a href="/" class="link navfull">← Dashboard</a>
     <a href="/salary.html" class="link navfull">Lương Marketing</a>
+    <a href="/ket-qua-kinh-doanh.html" class="link navfull">📊 KQ Kinh doanh</a>
     <span class="user-badge" id="userBadge"></span>
     <a href="/logout" class="link">Đăng xuất</a>
   </div>
@@ -142,14 +143,15 @@
   </table>
 </main>
 
+<script src="/salary-calc.js"></script>
 <script>
 const vnd = n => (Math.round(Number(n)||0)).toLocaleString('vi-VN');
-// Làm tròn xuống hàng nghìn (3 số cuối = 000)
-const roundK = n => Math.floor((Number(n)||0)/1000)*1000;
+// Công thức lương dùng chung — xem salary-calc.js
+const roundK = SalaryCalc.roundK;
+const normKey = SalaryCalc.normKey;
 const $ = id => document.getElementById(id);
 const esc = s => String(s==null?'':s).replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
 const pct = n => (Number(n)*100).toFixed(1)+'%';
-const normKey = s => String(s==null?'':s).trim().toLowerCase().replace(/\s+/g,' ');
 const manOf = name => { const k=normKey(name); if(!MANUAL[k]) MANUAL[k]={luongCung:0,thuongSP:0,thuongThang:0,phat:0,bhxh:0}; return MANUAL[k]; };
 
 // Mặc định là THÁNG TRƯỚC (VD: vào ngày 5/6/2025 → hiện tháng 5/2025)
@@ -179,8 +181,10 @@ function render(){
     const isOpen = expanded[m.manager];
     const man = manOf(m.manager);
     man.bhxh = man.bhxh || m.bhxh || 0;
-    const thuongTong = (+man.thuongSP||0) + (+man.thuongThang||0);
-    const thucNhan = roundK(m.hoaHong + (+man.luongCung||0) + thuongTong - (+man.phat||0) - (+man.bhxh||0));
+    // Tính bằng công thức DÙNG CHUNG (salary-calc.js) — khớp trang Kết quả kinh doanh
+    const _p = SalaryCalc.tinhLuongPTSP([m], MANUAL).list[0];
+    const thuongTong = _p.thuong;
+    const thucNhan = _p.tn;
     html += `<tr>
       <td><button class="expand-btn" onclick="toggle('${esc(m.manager)}')">${isOpen?'−':'+'}</button><b>${esc(m.manager)}</b></td>
       <td class="num">${vnd(m.soSP)}</td>
@@ -320,7 +324,7 @@ function render(){
     const man=manOf(m.manager);
     const tt=(+man.thuongSP||0)+(+man.thuongThang||0);
     totThuong+=tt; totPhat+=(+man.phat||0); totBhxh+=(+man.bhxh||0); totLuongCung+=(+man.luongCung||0);
-    totThucNhan+=roundK(m.hoaHong+(+man.luongCung||0)+tt-(+man.phat||0)-(+man.bhxh||0));
+    totThucNhan+=SalaryCalc.tinhLuongPTSP([m], MANUAL).list[0].tn;
   });
   const t = DATA.total || {};
   html += `<tr class="total">

@@ -108,6 +108,7 @@
     <button class="btn" id="publishBtn" style="background:#7BE3B5;color:#0B1322;">📤 Công khai lương</button>
     <a href="/" class="link">← Dashboard</a>
     <a href="/salary-product.html" class="link">Lương PTSP</a>
+    <a href="/ket-qua-kinh-doanh.html" class="link navfull">📊 KQ Kinh doanh</a>
     <span class="user-badge" id="userBadge"></span>
     <a href="/logout" class="link">Đăng xuất</a>
   </div>
@@ -127,10 +128,10 @@
   <div class="note" id="note"></div>
 </main>
 
+<script src="/salary-calc.js"></script>
 <script>
 const vnd=n=>(Math.round(Number(n)||0)).toLocaleString('vi-VN');
-// Làm tròn xuống hàng nghìn (3 số cuối = 000)
-const roundK=n=>Math.floor((Number(n)||0)/1000)*1000;
+const roundK=SalaryCalc.roundK;   // dùng chung từ salary-calc.js
 const $=id=>document.getElementById(id);
 const esc=s=>String(s==null?'':s).replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
 const normKey=s=>String(s==null?'':s).trim().toLowerCase().replace(/\s+/g,' ');
@@ -153,19 +154,8 @@ const TEAM_LEAD_DEFAULT={
   'Tạ Quang Trường':['Nguyễn Thị Trà My','Dương Văn Minh','Lê Thị Ánh'],
 };
 let TEAM_LEAD=TEAM_LEAD_DEFAULT;
-// Tính Thưởng DTT phía client — cùng công thức với server
-// DTT = Doanh thu - Giá vốn - Phí ship (KHÔNG trừ chi phí QC)
-const DTT_BRACKETS=[
-  {min:150e6,max:240e6,bonus:1e6},{min:240e6,max:330e6,bonus:2e6},
-  {min:330e6,max:420e6,bonus:3e6},{min:420e6,max:510e6,bonus:4e6},
-  {min:510e6,max:600e6,bonus:5e6},{min:600e6,max:690e6,bonus:6e6},
-];
-function tinhThuongDTT(dtt){
-  if(dtt<150e6) return 0;
-  for(const b of DTT_BRACKETS){ if(dtt>=b.min&&dtt<=b.max) return b.bonus; }
-  if(dtt>690e6) return 6e6+Math.floor((dtt-690e6)/90e6+1)*1e6;
-  return 0;
-}
+// Thưởng DTT: công thức nằm ở salary-calc.js (dùng chung)
+const tinhThuongDTT=SalaryCalc.tinhThuongDTT;
 
 const THUONG_TYPES=[
   {id:'thuongDTT',      label:'Thưởng DTT',        auto:true,  hint:'Tự động theo DTT'},
@@ -290,24 +280,17 @@ function toggle(i,btn){const r=$('det-'+i);const open=r.style.display==='none';r
 function srcCell(id,i,total,auto,manual){
   $(id+'-'+i).innerHTML='<div class="tot">'+vnd(total)+'</div><div class="auto">TĐ '+vnd(auto)+(manual?' · kênh '+vnd(manual):'')+'</div>';
 }
+/* VẼ 1 dòng — mọi con số đã được SalaryCalc tính sẵn trong emp._x.
+   (Công thức nằm ở salary-calc.js, dùng chung với trang Kết quả kinh doanh) */
 function recompute(i){
-  const emp=LIST[i], m=manOf(emp.key), a=emp.a;
-  const mDt=chSum(m,'dt'),mQc=chSum(m,'qc'),mGv=chSum(m,'gv'),mSh=chSum(m,'ship');
-  const DT=autoVal(a,'dt')+mDt, QC=autoVal(a,'qc')+mQc, GV=autoVal(a,'gv')+mGv, SHIP=autoVal(a,'ship')+mSh;
-  const l2=Math.round((DT-QC-GV-SHIP)*TYLE);
-  srcCell('dt',i,DT,autoVal(a,'dt'),mDt); srcCell('qc',i,QC,autoVal(a,'qc'),mQc);
-  srcCell('gv',i,GV,autoVal(a,'gv'),mGv); srcCell('ship',i,SHIP,autoVal(a,'ship'),mSh);
-  const hl=+m._hhLeader||0;  // HH Leader đã set trong recomputeAll
-  // Tính Thưởng DTT từ DT-GV-SHIP thực tế (gồm cả kênh nhập tay)
-  const dtt=DT-GV-SHIP;
-  m.thuongDTT=tinhThuongDTT(dtt);
-  // thuongTop1 sẽ được gán sau trong recomputeAll (cần so sánh toàn bộ)
-  m.thuong=THUONG_TYPES.reduce((s,t)=>s+(+m[t.id]||0),0);
-  // Tính thực nhận SAU khi đã có đủ thưởng
-  const tn=l2+m.luongCung+m.thuong-m.phat-m.bhxh;
+  const emp=LIST[i], m=manOf(emp.key);
+  const x=emp._x; if(!x) return;
+  const DT=x.DT, QC=x.QC, GV=x.GV, SHIP=x.SHIP, l2=x.l2, hl=x.hl;
+  srcCell('dt',i,DT,x.autoDT,x.manDT); srcCell('qc',i,QC,x.autoQC,x.manQC);
+  srcCell('gv',i,GV,x.autoGV,x.manGV); srcCell('ship',i,SHIP,x.autoSHIP,x.manSHIP);
   const l2e=$('l2-'+i); l2e.textContent=vnd(l2); l2e.className=l2<0?'luong neg':'luong';
   const hle=$('hl-'+i); if(hle){ hle.textContent=hl>0?vnd(hl)+'₫':'–'; }
-  const tnWithHl=roundK(tn+hl);
+  const tnWithHl=x.tn;
   const tne=$('tn-'+i); const tnve=$('tnv-'+i);
   if(tnve) tnve.textContent=vnd(tnWithHl)+' ₫';
   if(tne) tne.className=tnWithHl<0?'thucnhan neg':'thucnhan';
@@ -321,7 +304,7 @@ function recompute(i){
   // Cập nhật nút Thưởng (hiển thị tổng thưởng đã gồm DTT + Top1 + Ngày/Tuần)
   const tbtn=$('tb-'+i);
   if(tbtn){ tbtn.textContent=m.thuong>0?vnd(m.thuong)+' ₫':'–'; tbtn.className='thuong-btn'+(m.thuong>0?' has-data':''); }
-  emp._c={DT,QC,GV,SHIP,l2,hl,lc:m.luongCung,th:m.thuong,ph:m.phat,bh:m.bhxh,tn:tnWithHl};
+  emp._c={DT,QC,GV,SHIP,l2,hl,lc:m.luongCung,th:x.thuong,ph:m.phat,bh:m.bhxh,tn:tnWithHl};
 }
 function updateTotals(){
   const T={DT:0,QC:0,GV:0,SHIP:0,l2:0,hl:0,lc:0,th:0,ph:0,bh:0,tn:0};
@@ -331,42 +314,24 @@ function updateTotals(){
   $('t-tn').textContent=vnd(T.tn)+' ₫';
 }
 function recomputeAll(){
-  // ── Vòng 1: reset HH Leader + Top1, tính lương 2% thực tế từng người ──
-  LIST.forEach(emp=>{ const m=manOf(emp.key); m._hhLeader=0; m.thuongTop1=0; });
-  LIST.forEach((_,i)=>recompute(i));
-
-  // ── Tính HH Leader: ½ tổng lương 2% (KHÔNG gồm Sàn TMĐT/Shopee) ──
-  const l2ByName={};
-  LIST.forEach(emp=>{
+  // ── Tính TOÀN BỘ bằng công thức DÙNG CHUNG (salary-calc.js) ──
+  // Trang "Kết quả kinh doanh" gọi đúng hàm này nên số liệu luôn khớp nhau.
+  const R=SalaryCalc.tinhLuongMKT(AUTO, MAN, {
+    tyLe:TYLE, teamLead:TEAM_LEAD, roster:LIST.map(e=>e.name),
+  });
+  // Đưa kết quả về LIST/MAN để phần vẽ và popup thưởng dùng
+  R.list.forEach((x,i)=>{
+    const emp=LIST[i]; if(!emp) return;
     const m=manOf(emp.key);
-    const l2Full=(emp._c&&emp._c.l2)||0;
-    // Trừ phần lương 2% đến từ kênh "san" (Sàn TMĐT = Shopee)
-    const san=m.channels['san']||{dt:0,qc:0,gv:0,ship:0};
-    const sanNet=(+san.dt||0)-(+san.qc||0)-(+san.gv||0)-(+san.ship||0);
-    const l2San=Math.round(sanNet*TYLE);
-    l2ByName[normKey(emp.name)]=l2Full-l2San;
+    m._hhLeader=x.hl; m.thuongDTT=x.thuongDTT; m.thuongTop1=x.thuongTop1; m.thuong=x.thuong;
+    emp._x=x;
   });
-  const teamByKey={};
-  Object.keys(TEAM_LEAD).forEach(lead=>{ teamByKey[normKey(lead)]=TEAM_LEAD[lead]; });
-  LIST.forEach(emp=>{
-    const members=teamByKey[normKey(emp.name)];
-    if(!members) return;
-    let tong=0;
-    members.forEach(name=>{ tong+=l2ByName[normKey(name)]||0; });
-    manOf(emp.key)._hhLeader=Math.round(tong/2);
-  });
-
-  // ── Xác định Top 1: lương 2% cao nhất (duy nhất) ──
-  const eligible=LIST.map((emp,i)=>({i,l2:(emp._c&&emp._c.l2)||0})).filter(x=>x.l2>0);
-  if(eligible.length){
-    eligible.sort((a,b)=>b.l2-a.l2);
-    if(eligible.length===1||eligible[0].l2!==eligible[1].l2){
-      manOf(LIST[eligible[0].i].key).thuongTop1=Math.round(eligible[0].l2/2);
-    }
-  }
-
-  // ── Vòng 2: vẽ lại TẤT CẢ với HH Leader + Top1 đã có ──
   LIST.forEach((_,i)=>recompute(i));
+  // Cập nhật nhãn nút Thưởng sau khi đã có đủ DTT + Top1
+  LIST.forEach((_,i)=>{
+    const m=manOf(LIST[i].key), tbtn=$('tb-'+i);
+    if(tbtn){ tbtn.textContent=m.thuong>0?vnd(m.thuong)+' ₫':'–'; tbtn.className='thuong-btn'+(m.thuong>0?' has-data':''); }
+  });
   updateTotals();
 }
 
