@@ -143,15 +143,18 @@
 
 <script>
 const vnd = n => (Math.round(Number(n)||0)).toLocaleString('vi-VN');
+// Làm tròn xuống hàng nghìn (3 số cuối = 000)
+const roundK = n => Math.floor((Number(n)||0)/1000)*1000;
 const $ = id => document.getElementById(id);
 const esc = s => String(s==null?'':s).replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
 const pct = n => (Number(n)*100).toFixed(1)+'%';
 const normKey = s => String(s==null?'':s).trim().toLowerCase().replace(/\s+/g,' ');
 const manOf = name => { const k=normKey(name); if(!MANUAL[k]) MANUAL[k]={luongCung:0,thuongSP:0,thuongThang:0,phat:0,bhxh:0}; return MANUAL[k]; };
 
-// Mặc định tháng trước (hoặc tháng hiện tại)
+// Mặc định là THÁNG TRƯỚC (VD: vào ngày 5/6/2025 → hiện tháng 5/2025)
 const now = new Date();
-$('month').value = `${now.getFullYear()}-${String(now.getMonth()+1).padStart(2,'0')}`;
+const prevMonth = new Date(now.getFullYear(), now.getMonth()-1, 1);
+$('month').value = `${prevMonth.getFullYear()}-${String(prevMonth.getMonth()+1).padStart(2,'0')}`;
 
 let DATA = { managers: [], products: [], total: {} };
 let expanded = {};
@@ -176,7 +179,7 @@ function render(){
     const man = manOf(m.manager);
     man.bhxh = man.bhxh || m.bhxh || 0;
     const thuongTong = (+man.thuongSP||0) + (+man.thuongThang||0);
-    const thucNhan = m.hoaHong + (+man.luongCung||0) + thuongTong - (+man.phat||0) - (+man.bhxh||0);
+    const thucNhan = roundK(m.hoaHong + (+man.luongCung||0) + thuongTong - (+man.phat||0) - (+man.bhxh||0));
     html += `<tr>
       <td><button class="expand-btn" onclick="toggle('${esc(m.manager)}')">${isOpen?'−':'+'}</button><b>${esc(m.manager)}</b></td>
       <td class="num">${vnd(m.soSP)}</td>
@@ -302,7 +305,7 @@ function render(){
     const man=manOf(m.manager);
     const tt=(+man.thuongSP||0)+(+man.thuongThang||0);
     totThuong+=tt; totPhat+=(+man.phat||0); totBhxh+=(+man.bhxh||0); totLuongCung+=(+man.luongCung||0);
-    totThucNhan+=m.hoaHong+(+man.luongCung||0)+tt-(+man.phat||0)-(+man.bhxh||0);
+    totThucNhan+=roundK(m.hoaHong+(+man.luongCung||0)+tt-(+man.phat||0)-(+man.bhxh||0));
   });
   const t = DATA.total || {};
   html += `<tr class="total">

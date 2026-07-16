@@ -103,7 +103,7 @@
       <h1>Bảng lương</h1>
       <p class="sub">Thực nhận = Lương 2% + Lương cứng + Thưởng − Phạt − BHXH · bấm ＋ để thêm doanh thu các kênh khác</p>
     </div>
-    <div class="ctrl"><label>Tháng</label><input type="month" id="month" value="2026-05"></div>
+    <div class="ctrl"><label>Tháng</label><input type="month" id="month"></div>
     <button class="btn" id="refreshBtn">Xem</button>
     <button class="btn" id="publishBtn" style="background:#7BE3B5;color:#0B1322;">📤 Công khai lương</button>
     <a href="/" class="link">← Dashboard</a>
@@ -129,10 +129,19 @@
 
 <script>
 const vnd=n=>(Math.round(Number(n)||0)).toLocaleString('vi-VN');
+// Làm tròn xuống hàng nghìn (3 số cuối = 000)
+const roundK=n=>Math.floor((Number(n)||0)/1000)*1000;
 const $=id=>document.getElementById(id);
 const esc=s=>String(s==null?'':s).replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
 const normKey=s=>String(s==null?'':s).trim().toLowerCase().replace(/\s+/g,' ');
 const num=v=>{const n=parseInt(String(v==null?'':v).replace(/[^\d-]/g,''),10);return isFinite(n)?n:0;};
+
+// Mặc định là THÁNG TRƯỚC (VD: vào ngày 5/6/2025 → hiện tháng 5/2025)
+(function(){
+  const now=new Date();
+  const pm=new Date(now.getFullYear(), now.getMonth()-1, 1);
+  $('month').value=`${pm.getFullYear()}-${String(pm.getMonth()+1).padStart(2,'0')}`;
+})();
 
 const CH=[{id:'thailan',label:'Thái Lan'},{id:'pushsale',label:'Pushsale'},{id:'san',label:'Sàn TMĐT'}];
 const MET=[{id:'dt',label:'Doanh thu'},{id:'qc',label:'Chi phí QC'},{id:'gv',label:'Giá vốn'},{id:'ship',label:'Phí ship'}];
@@ -298,7 +307,7 @@ function recompute(i){
   const tn=l2+m.luongCung+m.thuong-m.phat-m.bhxh;
   const l2e=$('l2-'+i); l2e.textContent=vnd(l2); l2e.className=l2<0?'luong neg':'luong';
   const hle=$('hl-'+i); if(hle){ hle.textContent=hl>0?vnd(hl)+'₫':'–'; }
-  const tnWithHl=tn+hl;
+  const tnWithHl=roundK(tn+hl);
   const tne=$('tn-'+i); const tnve=$('tnv-'+i);
   if(tnve) tnve.textContent=vnd(tnWithHl)+' ₫';
   if(tne) tne.className=tnWithHl<0?'thucnhan neg':'thucnhan';
