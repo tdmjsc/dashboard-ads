@@ -521,19 +521,29 @@ async function fetchAccountRetry(acc, token, days, since, until, tries = 3) {
 }
 // Nạp toàn bộ campaign (mọi tài khoản). CHỈ lưu đệm khi nạp ĐỦ tất cả tài khoản,
 // để tránh lưu nhầm dữ liệu thiếu (gây dashboard/lương về 0).
-async function getCampaigns(since, until) {
+async function getCampaigns(since, until, opts = {}) {
   const days = listDays(since, until);
   const key = since + '|' + until;
   const past = isPastRange(until);
+  const force = !!opts.force;   // ép nạp lại từ Facebook, bỏ qua cache thường
+
+  // (0) CACHE ĐÃ GHIM: số liệu do người dùng XÁC NHẬN ĐÚNG → luôn dùng, kể cả khi force.
+  //     Chỉ khi bỏ ghim (unpin) mới nạp lại được. Đây là lớp bảo vệ số liệu đã chốt.
+  const pinnedRec = META_CACHE[key];
+  if (pinnedRec && pinnedRec.pinned && Array.isArray(pinnedRec.campaigns)) {
+    return pinnedRec.campaigns;
+  }
 
   // (1) Khoảng đã qua: nếu có trong cache file → trả luôn, KHÔNG gọi API Facebook
-  if (past && META_CACHE[key] && Array.isArray(META_CACHE[key].campaigns)) {
+  if (!force && past && META_CACHE[key] && Array.isArray(META_CACHE[key].campaigns)) {
     return META_CACHE[key].campaigns;
   }
 
   // (2) Cache RAM ngắn hạn (3 phút) cho khoảng có hôm nay
-  const cached = DATA_CACHE.get(key);
-  if (cached && cached.complete && Date.now() - cached.at < CACHE_MS) return cached.campaigns;
+  if (!force) {
+    const cached = DATA_CACHE.get(key);
+    if (cached && cached.complete && Date.now() - cached.at < CACHE_MS) return cached.campaigns;
+  }
 
   // (3) Gọi API Facebook — theo dõi TỪNG tài khoản
   const accList = [];
@@ -545,36 +555,43 @@ async function getCampaigns(since, until) {
   const results = await Promise.allSettled(tasks);
   const campaigns = [];
   let failed = 0;
-  const emptyAccts = [];   // tài khoản trả về THÀNH CÔNG nhưng RỖNG (nghi lỗi tạm của Facebook)
+  const emptyAccts = [];   // tài khoản trả về THÀNH CÔNG nhưng RỖNG
   results.forEach((r, i) => {
     if (r.status === 'fulfilled') {
       const arr = r.value || [];
       campaigns.push(...arr);
-      if (arr.length === 0) emptyAccts.push(accList[i].acc);  // 0 campaign → đáng ngờ
+      if (arr.length === 0) emptyAccts.push(accList[i].acc);
     } else {
       failed++;
     }
   });
 
-  // CHỈ coi là "đủ dữ liệu" khi: không tài khoản nào lỗi VÀ không tài khoản nào rỗng bất thường.
-  // (Một số tài khoản có thể thật sự không có campaign — nhưng để AN TOÀN cho cache vĩnh viễn,
-  //  ta KHÔNG lưu vĩnh viễn nếu có bất kỳ tài khoản nào rỗng, tránh lưu nhầm dữ liệu thiếu.)
+  // "Đủ dữ liệu" = không tài khoản nào LỖI và có ít nhất 1 campaign.
+  // (Tài khoản rỗng là BÌNH THƯỜNG — nhiều tài khoản không chạy QC trong khoảng ngày này.
+  //  Trước đây chặn cache khi có bất kỳ tài khoản rỗng nào → cache gần như KHÔNG BAO GIỜ lưu,
+  //  khiến mỗi lần vào phải gọi lại Facebook và thỉnh thoảng bị thiếu ngân sách.)
   const complete = (failed === 0);
-  const fullData = (failed === 0 && emptyAccts.length === 0);
+  const fullData = (failed === 0 && campaigns.length > 0);
 
   if (complete) {
     DATA_CACHE.set(key, { at: Date.now(), campaigns, complete: true });
   }
-  // Khoảng đã qua + lấy ĐỦ (không lỗi, không rỗng) → LƯU VĨNH VIỄN
-  if (past && fullData) {
+  // Khoảng đã qua + lấy đủ → LƯU VĨNH VIỄN (không đụng vào bản đã ghim)
+  if (past && fullData && !(META_CACHE[key] && META_CACHE[key].pinned)) {
     META_CACHE[key] = { at: new Date().toISOString(), campaigns };
     saveMetaCache();
+    console.log(`[getCampaigns] Đã lưu cache vĩnh viễn ${key}: ${campaigns.length} campaign, ${emptyAccts.length} TK rỗng`);
   }
-  // Nếu có tài khoản rỗng/lỗi: KHÔNG lưu vĩnh viễn, log lại để biết
   if (past && !fullData) {
-    console.warn(`[getCampaigns] KHÔNG lưu cache vĩnh viễn cho ${key}: failed=${failed}, rỗng=[${emptyAccts.join(',')}]`);
+    console.warn(`[getCampaigns] KHÔNG lưu cache vĩnh viễn cho ${key}: failed=${failed}, tổng campaign=${campaigns.length}`);
   }
   return campaigns;
+}
+
+// Xoá cache RAM (dùng chung cho các endpoint xoá cache)
+function clearRamCache(keys) {
+  if (!keys) { DATA_CACHE.clear(); return; }
+  for (const k of keys) DATA_CACHE.delete(k);
 }
 
 // XÓA CACHE ngân sách Meta đã lưu (dùng khi cache bị lưu nhầm dữ liệu thiếu)
@@ -587,10 +604,17 @@ app.get('/api/admin/clear-cache', (req, res) => {
 
   const before = Object.keys(META_CACHE).length;
   const removed = [];
+  const kept = [];   // các khoảng ĐÃ GHIM → không xoá
+  const isPinned = k => !!(META_CACHE[k] && META_CACHE[k].pinned);
+  // ?includePinned=1 → xoá cả những khoảng đã ghim (dùng khi thật sự muốn làm lại từ đầu)
+  const includePinned = req.query.includePinned === '1';
 
   if (req.query.all === '1') {
-    for (const k of Object.keys(META_CACHE)) removed.push(k);
-    META_CACHE = {};
+    for (const k of Object.keys(META_CACHE)) {
+      if (isPinned(k) && !includePinned) { kept.push(k); continue; }
+      removed.push(k); delete META_CACHE[k];
+    }
+    clearRamCache();   // xoá SẠCH cache RAM, nếu không sẽ vẫn trả số cũ trong 3 phút
   } else if (req.query.overlaps) {
     // overlaps=YYYY-MM-DD..YYYY-MM-DD : xóa mọi cache key mà khoảng của nó GIAO với vùng này
     const [a, b] = String(req.query.overlaps).split('..');
@@ -598,19 +622,105 @@ app.get('/api/admin/clear-cache', (req, res) => {
       for (const k of Object.keys(META_CACHE)) {
         const [ks, ku] = k.split('|');
         // giao nhau nếu ks <= b && ku >= a
-        if (ks && ku && ks <= b && ku >= a) { removed.push(k); delete META_CACHE[k]; }
+        if (ks && ku && ks <= b && ku >= a) {
+          if (isPinned(k) && !includePinned) { kept.push(k); continue; }
+          removed.push(k); delete META_CACHE[k];
+        }
+      }
+      // Xoá cả cache RAM của những khoảng giao nhau (kể cả khoảng chưa có trong META_CACHE)
+      for (const k of DATA_CACHE.keys()) {
+        const [ks, ku] = k.split('|');
+        if (ks && ku && ks <= b && ku >= a) DATA_CACHE.delete(k);
       }
     }
   } else if (req.query.since && req.query.until) {
     const key = req.query.since + '|' + req.query.until;
-    if (META_CACHE[key]) { removed.push(key); delete META_CACHE[key]; }
+    if (isPinned(key) && !includePinned) {
+      kept.push(key);
+    } else if (META_CACHE[key]) {
+      removed.push(key); delete META_CACHE[key];
+    }
+    DATA_CACHE.delete(key);   // xoá cả RAM cache của khoảng này
   } else {
     return res.json({ ok: false, message: 'Cần tham số: ?all=1 HOẶC ?since=..&until=.. HOẶC ?overlaps=A..B' });
   }
 
   // Lưu lại file cache sau khi xóa
   try { fs.writeFileSync(META_CACHE_FILE, JSON.stringify(META_CACHE)); } catch (e) {}
-  res.json({ ok: true, đã_xóa: removed.length, còn_lại: Object.keys(META_CACHE).length, cac_key_da_xoa: removed });
+  res.json({
+    ok: true,
+    đã_xóa: removed.length,
+    giữ_lại_vì_đã_ghim: kept.length,
+    còn_lại: Object.keys(META_CACHE).length,
+    cac_key_da_xoa: removed,
+    cac_key_da_ghim: kept,
+  });
+});
+
+/* ── GHIM CACHE: số liệu đã XÁC NHẬN ĐÚNG, khoá lại vĩnh viễn ──
+   Khoảng đã ghim: không bị xoá bởi nút xoá cache, không bị nạp lại bởi nút tải lại.
+   Muốn cập nhật thì phải BỎ GHIM trước.                                          */
+
+// Ghim khoảng ngày hiện tại: POST /api/meta-cache/pin {since, until}
+app.post('/api/meta-cache/pin', express.json(), async (req, res) => {
+  const me = req.session.user || {};
+  if (me.role !== 'admin') return res.status(403).json({ ok: false, message: 'Chỉ admin' });
+  const { since, until } = req.body || {};
+  if (!since || !until) return res.json({ ok: false, message: 'Cần since và until' });
+  const key = since + '|' + until;
+  try {
+    // Ưu tiên dữ liệu đang có sẵn (chính là số bạn vừa nhìn thấy và xác nhận đúng)
+    let campaigns = null;
+    if (META_CACHE[key] && Array.isArray(META_CACHE[key].campaigns)) campaigns = META_CACHE[key].campaigns;
+    else {
+      const ram = DATA_CACHE.get(key);
+      if (ram && Array.isArray(ram.campaigns)) campaigns = ram.campaigns;
+    }
+    // Chưa có gì trong cache → nạp từ Facebook rồi ghim
+    if (!campaigns) campaigns = await getCampaigns(since, until);
+    if (!campaigns.length)
+      return res.json({ ok: false, message: 'Khoảng này không có chiến dịch nào — không nên ghim dữ liệu rỗng.' });
+
+    const budget = campaigns.reduce((s, c) => s + (Number(c.budget) || 0), 0);
+    META_CACHE[key] = {
+      at: new Date().toISOString(),
+      campaigns,
+      pinned: true,
+      pinnedAt: new Date().toISOString(),
+      pinnedBy: me.user || '',
+    };
+    saveMetaCache();
+    res.json({
+      ok: true, since, until,
+      soChienDich: campaigns.length,
+      tongNganSach: budget,
+      message: `Đã ghim ${campaigns.length} chiến dịch cho ${since} → ${until}. Số liệu này sẽ không bị nạp lại hay xoá.`,
+    });
+  } catch (e) {
+    res.json({ ok: false, message: e.message });
+  }
+});
+
+// Bỏ ghim: POST /api/meta-cache/unpin {since, until, xoaLuon}
+app.post('/api/meta-cache/unpin', express.json(), (req, res) => {
+  const me = req.session.user || {};
+  if (me.role !== 'admin') return res.status(403).json({ ok: false, message: 'Chỉ admin' });
+  const { since, until, xoaLuon } = req.body || {};
+  if (!since || !until) return res.json({ ok: false, message: 'Cần since và until' });
+  const key = since + '|' + until;
+  if (!META_CACHE[key]) return res.json({ ok: false, message: 'Khoảng này chưa có cache' });
+  if (!META_CACHE[key].pinned) return res.json({ ok: false, message: 'Khoảng này chưa được ghim' });
+
+  if (xoaLuon) {
+    delete META_CACHE[key];      // bỏ ghim + xoá luôn → lần sau nạp mới từ Facebook
+    DATA_CACHE.delete(key);
+  } else {
+    delete META_CACHE[key].pinned;
+    delete META_CACHE[key].pinnedAt;
+    delete META_CACHE[key].pinnedBy;
+  }
+  saveMetaCache();
+  res.json({ ok: true, message: xoaLuon ? 'Đã bỏ ghim và xoá cache — lần sau sẽ nạp mới' : 'Đã bỏ ghim' });
 });
 
 app.get('/api/data', async (req, res) => {
@@ -618,7 +728,9 @@ app.get('/api/data', async (req, res) => {
     const since = req.query.since || '2026-06-01';
     const until = req.query.until || '2026-06-09';
     const days = listDays(since, until);
-    const campaigns = await getCampaigns(since, until);
+    // ?refresh=1 → bỏ qua cache, nạp lại từ Facebook (nút "Tải lại" ở dashboard)
+    const force = req.query.refresh === '1' || req.query.force === '1';
+    const campaigns = await getCampaigns(since, until, { force });
 
     // Lọc theo quyền: viewer chỉ thấy nhân viên được phép
     const me = req.session.user;
@@ -1349,8 +1461,7 @@ const PTSP_BHXH = {
 const PTSP_MANUAL_FILE = path.join(DATA_DIR, 'salary-product-manual.json');
 
 // ── Tài khoản ngân hàng nhân viên ──
-const BANK_ACCOUNTS_FILE = path.join(DATA_DIR, 'bank-accounts.json');
-let BANK_ACCOUNTS = {};
+const BANK_ACCOUNTS_FILE = path.join(DATA_DIR, 'bank-accounts.json');let BANK_ACCOUNTS = {};
 try { BANK_ACCOUNTS = JSON.parse(fs.readFileSync(BANK_ACCOUNTS_FILE, 'utf8')) || {}; } catch { BANK_ACCOUNTS = {}; }
 function saveBankAccounts() {
   try { fs.writeFileSync(BANK_ACCOUNTS_FILE, JSON.stringify(BANK_ACCOUNTS)); } catch (e) { console.error('[SAVE] bank-accounts lỗi:', e.message); }
@@ -1368,6 +1479,53 @@ app.post('/api/bank-accounts', (req, res) => {
   else { BANK_ACCOUNTS[k] = { name, bankBin: bankBin || '', bankName: bankName || '', accountNo: accountNo || '' }; }
   saveBankAccounts();
   res.json({ ok: true });
+});
+
+/* ── SẢN PHẨM THỦ CÔNG (PTSP) ──
+   Những SP không có trên Sandbox (VD: chỉ bán Pushsale) nhưng vẫn cần tính lương.
+   Lưu theo tháng: PTSP_CUSTOM[month] = [{ product, manager, ngayDang }]
+   DT/GV/Ship của SP này lấy hoàn toàn từ prodChannels (nhập tay).                     */
+const PTSP_CUSTOM_FILE = path.join(DATA_DIR, 'salary-product-custom.json');
+let PTSP_CUSTOM = {};
+try { PTSP_CUSTOM = JSON.parse(fs.readFileSync(PTSP_CUSTOM_FILE, 'utf8')) || {}; } catch { PTSP_CUSTOM = {}; }
+function savePtspCustom() {
+  try { fs.writeFileSync(PTSP_CUSTOM_FILE, JSON.stringify(PTSP_CUSTOM)); }
+  catch (e) { console.error('[SAVE] salary-product-custom lỗi:', e.message); }
+}
+
+app.get('/api/salary-product/custom', (req, res) => {
+  const me = req.session.user || {};
+  if (me.role !== 'admin') return res.status(403).json({ ok: false, message: 'Chỉ admin' });
+  const month = req.query.month || '';
+  res.json({ ok: true, month, list: PTSP_CUSTOM[month] || [] });
+});
+
+app.post('/api/salary-product/custom', express.json(), (req, res) => {
+  const me = req.session.user || {};
+  if (me.role !== 'admin') return res.status(403).json({ ok: false, message: 'Chỉ admin' });
+  const { month, action, product, manager, ngayDang } = req.body || {};
+  if (!month) return res.json({ ok: false, message: 'Thiếu tháng' });
+  if (!PTSP_CUSTOM[month]) PTSP_CUSTOM[month] = [];
+  const list = PTSP_CUSTOM[month];
+  const pName = String(product || '').trim();
+  const mName = String(manager || '').trim();
+  if (!pName || !mName) return res.json({ ok: false, message: 'Thiếu tên SP hoặc người quản lý' });
+  const idx = list.findIndex(x => normProd(x.product) === normProd(pName) && normProd(x.manager) === normProd(mName));
+
+  if (action === 'delete') {
+    if (idx >= 0) list.splice(idx, 1);
+    // Xoá luôn DT/GV/ship nhập tay của SP này
+    const mk = normProd(mName), pk = normProd(pName);
+    if (PTSP_MANUAL[month] && PTSP_MANUAL[month][mk] && PTSP_MANUAL[month][mk].prodChannels)
+      delete PTSP_MANUAL[month][mk].prodChannels[pk];
+    savePtspCustom(); savePtspManual();
+    return res.json({ ok: true, deleted: true });
+  }
+
+  const rec = { product: pName, manager: mName, ngayDang: ngayDang || null };
+  if (idx >= 0) list[idx] = rec; else list.push(rec);
+  savePtspCustom();
+  res.json({ ok: true, list });
 });
 
 let PTSP_MANUAL = {};
@@ -1500,16 +1658,17 @@ app.post('/api/salary-product/manual', express.json(), (req, res) => {
   const num = parseInt(String(value == null ? '' : value).replace(/[^\d]/g, ''), 10) || 0;
   const { product: prodName } = req.body || {};
   if (prodName && channel && metric) {
-    // Lưu DT/GV theo sản phẩm + kênh: prodChannels["tên sp"]["thailan"] = { dt, gv }
+    // Lưu DT/GV/Ship theo sản phẩm + kênh: prodChannels["tên sp"]["thailan"] = { dt, gv, ship }
+    const ch = ptspChan(channel);   // 'shopee' → 'tmdt'
     if (!PTSP_MANUAL[month][key].prodChannels) PTSP_MANUAL[month][key].prodChannels = {};
     const pk = normProd(prodName);
     if (!PTSP_MANUAL[month][key].prodChannels[pk]) PTSP_MANUAL[month][key].prodChannels[pk] = {};
-    if (!PTSP_MANUAL[month][key].prodChannels[pk][channel]) PTSP_MANUAL[month][key].prodChannels[pk][channel] = {};
-    PTSP_MANUAL[month][key].prodChannels[pk][channel][metric] = num;
+    if (!PTSP_MANUAL[month][key].prodChannels[pk][ch]) PTSP_MANUAL[month][key].prodChannels[pk][ch] = {};
+    PTSP_MANUAL[month][key].prodChannels[pk][ch][metric] = num;
     // Xoá entry nếu dt, gv, ship đều = 0
-    const entry = PTSP_MANUAL[month][key].prodChannels[pk][channel];
+    const entry = PTSP_MANUAL[month][key].prodChannels[pk][ch];
     if (!(+entry.dt || 0) && !(+entry.gv || 0) && !(+entry.ship || 0)) {
-      delete PTSP_MANUAL[month][key].prodChannels[pk][channel];
+      delete PTSP_MANUAL[month][key].prodChannels[pk][ch];
       if (!Object.keys(PTSP_MANUAL[month][key].prodChannels[pk]).length)
         delete PTSP_MANUAL[month][key].prodChannels[pk];
     }
@@ -1528,7 +1687,11 @@ app.post('/api/salary-product/manual', express.json(), (req, res) => {
 });
 
 // Các kênh nhập tay cho PTSP và tỷ lệ hoa hồng cố định 0.7%
-const PTSP_CHANNELS = ['thailan', 'pushsale', 'shopee'];
+// Kênh doanh thu nhập tay. 'shopee' cũ được đổi tên thành 'tmdt' (giữ tương thích dữ liệu cũ).
+const PTSP_CHANNELS = ['thailan', 'pushsale', 'tmdt', 'dt85'];
+// Map kênh cũ → mới (dữ liệu đã lưu trước đây dùng key 'shopee')
+const PTSP_CHANNEL_ALIAS = { shopee: 'tmdt' };
+const ptspChan = c => PTSP_CHANNEL_ALIAS[c] || c;
 const HH_KENH_KHAC = Number(process.env.HH_KENH_KHAC || 0.007);  // 0.7%
 const PHI_SHIP_DON_PTSP = Number(process.env.PHI_SHIP_DON || 30000);  // phí ship mỗi đơn
 
@@ -1618,8 +1781,36 @@ app.get('/api/salary-product/report', async (req, res) => {
       return { product: name, manager, doanhThu, autoDoanhThu: doanhThu, soLuongSP, soDon, giaNhap, giaVon, autoGiaVon: giaVon, phiShip, autoPhiShip: phiShip, loiNhuan, ngayDang, loai, tyLe, hoaHong, chDT: {}, chGV: {}, chSHIP: {} };
     }).filter(p => p.product);
 
-    // Gộp DT/GV/Ship nhập tay theo sản phẩm+kênh vào từng product
+    // ── Thêm SẢN PHẨM THỦ CÔNG (không có trên Sandbox) ──
     const monthKeyPC = (since || '').slice(0, 7);
+    const customList = PTSP_CUSTOM[monthKeyPC] || [];
+    for (const cp of customList) {
+      const pkC = normProd(cp.product);
+      // Bỏ qua nếu Sandbox đã có SP này rồi (tránh trùng)
+      if (products.some(p => normProd(p.product) === pkC)) continue;
+      const own = owners[pkC];
+      // Ưu tiên thông tin từ Google Sheet nếu có, không thì dùng dữ liệu nhập tay
+      const manager = (own && own.manager) || cp.manager || '';
+      const ngayDang = cp.ngayDang || (own ? own.ngayDang : null);
+      // SP thêm thủ công MẶC ĐỊNH là SP MỚI (1%).
+      // Chỉ tính là SP cũ khi có ngày đăng và ngày đó đã quá 2 tháng.
+      let loai = 'moi', tyLe = HH_SP_MOI;
+      if (ngayDang) {
+        const dt = new Date(ngayDang);
+        loai = (dt >= twoMonthsAgo) ? 'moi' : 'cu';
+        tyLe = (loai === 'moi') ? HH_SP_MOI : HH_SP_CU;
+      }
+      products.push({
+        product: cp.product, manager,
+        doanhThu: 0, autoDoanhThu: 0, soLuongSP: 0, soDon: 0,
+        giaNhap: own ? (own.giaNhap || 0) : 0,
+        giaVon: 0, autoGiaVon: 0, phiShip: 0, autoPhiShip: 0,
+        loiNhuan: 0, ngayDang, loai, tyLe, hoaHong: 0,
+        chDT: {}, chGV: {}, chSHIP: {}, isCustom: true,
+      });
+    }
+
+    // Gộp DT/GV/Ship nhập tay theo sản phẩm+kênh vào từng product
     const manualMonthPC = PTSP_MANUAL[monthKeyPC] || {};
     for (const p of products) {
       const mgrKey = normProd(p.manager);
@@ -1629,12 +1820,15 @@ app.get('/api/salary-product/report', async (req, res) => {
       const prodCh = pc[pk];
       if (prodCh) {
         let addDT = 0, addGV = 0, addSHIP = 0;
-        for (const [cid, cv] of Object.entries(prodCh)) {
+        for (const [cidRaw, cv] of Object.entries(prodCh)) {
+          const cid = ptspChan(cidRaw);   // 'shopee' (cũ) → 'tmdt'
           const cdt = +((cv || {}).dt) || 0;
           const cgv = +((cv || {}).gv) || 0;
           const cship = +((cv || {}).ship) || 0;
           addDT += cdt; addGV += cgv; addSHIP += cship;
-          p.chDT[cid] = cdt; p.chGV[cid] = cgv; p.chSHIP[cid] = cship;
+          p.chDT[cid] = (p.chDT[cid] || 0) + cdt;
+          p.chGV[cid] = (p.chGV[cid] || 0) + cgv;
+          p.chSHIP[cid] = (p.chSHIP[cid] || 0) + cship;
         }
         p.doanhThu += addDT;
         p.giaVon += addGV;
@@ -2356,20 +2550,93 @@ app.get('/api/meta-cache/status', (req, res) => {
   if (me.role !== 'admin') return res.status(403).json({ error: 'Chỉ admin' });
   const list = Object.entries(META_CACHE).map(([key, v]) => ({
     range: key, at: v.at, soChienDich: (v.campaigns || []).length,
+    daGhim: !!v.pinned, ghimLuc: v.pinnedAt || null, ghimBoi: v.pinnedBy || null,
+    tongNganSach: (v.campaigns || []).reduce((s, c) => s + (Number(c.budget) || 0), 0),
   })).sort((a, b) => b.range.localeCompare(a.range));
-  res.json({ ok: true, soKhoang: list.length, list });
+  res.json({
+    ok: true,
+    soKhoang: list.length,
+    soKhoangDaGhim: list.filter(x => x.daGhim).length,
+    list,
+  });
+});
+
+// Kiểm tra 1 khoảng đã ghim chưa (để dashboard đổi trạng thái nút)
+app.get('/api/meta-cache/is-pinned', (req, res) => {
+  const me = req.session.user || {};
+  if (me.role !== 'admin') return res.status(403).json({ error: 'Chỉ admin' });
+  const key = (req.query.since || '') + '|' + (req.query.until || '');
+  const rec = META_CACHE[key];
+  res.json({
+    ok: true,
+    daGhim: !!(rec && rec.pinned),
+    coCache: !!rec,
+    ghimLuc: rec && rec.pinnedAt || null,
+    soChienDich: rec ? (rec.campaigns || []).length : 0,
+  });
 });
 
 // Xoá cache 1 khoảng hoặc tất cả (admin) — khi muốn lấy lại số liệu mới từ Facebook
 app.post('/api/meta-cache/clear', express.json(), (req, res) => {
   const me = req.session.user || {};
   if (me.role !== 'admin') return res.status(403).json({ error: 'Chỉ admin' });
-  const { range } = req.body || {};
-  if (range === 'all') { META_CACHE = {}; }
-  else if (range && META_CACHE[range]) { delete META_CACHE[range]; }
+  const { range, includePinned } = req.body || {};
+  const kept = [];
+  if (range === 'all') {
+    for (const k of Object.keys(META_CACHE)) {
+      if (META_CACHE[k].pinned && !includePinned) { kept.push(k); continue; }
+      delete META_CACHE[k];
+    }
+    clearRamCache();
+  } else if (range && META_CACHE[range]) {
+    if (META_CACHE[range].pinned && !includePinned)
+      return res.json({ ok: false, daGhim: true, message: 'Khoảng này đã được ghim. Bỏ ghim trước nếu muốn xoá.' });
+    delete META_CACHE[range]; DATA_CACHE.delete(range);
+  }
+  else if (range) { DATA_CACHE.delete(range); }   // chưa có cache vĩnh viễn nhưng vẫn xoá RAM
   else return res.json({ ok: false, message: 'Không tìm thấy khoảng cần xoá' });
   saveMetaCache();
-  res.json({ ok: true });
+  res.json({ ok: true, giữ_lại_vì_đã_ghim: kept.length, cac_key_da_ghim: kept });
+});
+
+// Nạp lại ngân sách Meta cho 1 khoảng ngày — xoá cache rồi gọi lại Facebook NGAY
+// Dùng cho nút "Tải lại cache" ở dashboard: POST /api/meta-cache/reload {since, until}
+app.post('/api/meta-cache/reload', express.json(), async (req, res) => {
+  const me = req.session.user || {};
+  if (me.role !== 'admin') return res.status(403).json({ ok: false, message: 'Chỉ admin' });
+  const { since, until } = req.body || {};
+  if (!since || !until) return res.json({ ok: false, message: 'Cần since và until' });
+  const key = since + '|' + until;
+
+  // Khoảng ĐÃ GHIM → không nạp lại, giữ nguyên số đã xác nhận
+  if (META_CACHE[key] && META_CACHE[key].pinned) {
+    const campaigns = META_CACHE[key].campaigns || [];
+    return res.json({
+      ok: true, since, until, daGhim: true, khongNapLai: true,
+      soChienDich: campaigns.length,
+      tongNganSach: campaigns.reduce((s, c) => s + (Number(c.budget) || 0), 0),
+      message: 'Khoảng này đã được ghim — giữ nguyên số liệu đã xác nhận, không nạp lại từ Facebook.',
+    });
+  }
+
+  try {
+    // Xoá cả 2 tầng cache của khoảng này
+    delete META_CACHE[key];
+    DATA_CACHE.delete(key);
+    // Nạp lại từ Facebook (force = bỏ qua cache)
+    const campaigns = await getCampaigns(since, until, { force: true });
+    const budget = campaigns.reduce((s, c) => s + (Number(c.budget) || 0), 0);
+    saveMetaCache();
+    res.json({
+      ok: true, since, until,
+      soChienDich: campaigns.length,
+      tongNganSach: budget,
+      daLuuVinhVien: !!META_CACHE[key],
+      message: `Đã nạp lại ${campaigns.length} chiến dịch từ Facebook`,
+    });
+  } catch (e) {
+    res.json({ ok: false, message: e.message });
+  }
 });
 
 app.use(express.static(path.join(__dirname, 'public')));
