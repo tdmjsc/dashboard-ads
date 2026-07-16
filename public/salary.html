@@ -481,13 +481,13 @@ fetch('/api/me').then(r=>r.ok?r.json():null).then(me=>{
 // ── CHUYỂN LƯƠNG ──
 const SENDER_BANKS=[{bin:'970436',name:'Vietcombank',short:'VCB'},{bin:'970422',name:'MB Bank',short:'MB'},{bin:'970407',name:'Techcombank',short:'TCB'},{bin:'970432',name:'VPBank',short:'VPB'}];
 const ALL_BANKS=[
-  {bin:'970436',name:'Vietcombank'},{bin:'970422',name:'MB Bank'},{bin:'970407',name:'Techcombank'},{bin:'970432',name:'VPBank'},
-  {bin:'970418',name:'BIDV'},{bin:'970415',name:'VietinBank'},{bin:'970416',name:'ACB'},{bin:'970423',name:'TPBank'},
-  {bin:'970403',name:'Sacombank'},{bin:'970405',name:'Agribank'},{bin:'970443',name:'SHB'},{bin:'970426',name:'MSB'},
-  {bin:'970437',name:'HDBank'},{bin:'970448',name:'OCB'},{bin:'970449',name:'LPBank'},{bin:'970440',name:'SeABank'},
-  {bin:'970441',name:'VIB'},{bin:'970431',name:'Eximbank'},{bin:'970428',name:'Nam A Bank'},{bin:'970406',name:'DongA Bank'},
-  {bin:'970429',name:'SCB'},{bin:'970414',name:'OceanBank'},{bin:'970412',name:'PVcomBank'},{bin:'970409',name:'Bac A Bank'},
-  {bin:'970425',name:'ABBank'},{bin:'970427',name:'VietABank'},{bin:'970433',name:'VietBank'},{bin:'970454',name:'Viet Capital Bank'},
+  {bin:'970436',code:'vcb',name:'Vietcombank'},{bin:'970422',code:'mb',name:'MB Bank'},{bin:'970407',code:'tcb',name:'Techcombank'},{bin:'970432',code:'vpbank',name:'VPBank'},
+  {bin:'970418',code:'bidv',name:'BIDV'},{bin:'970415',code:'icb',name:'VietinBank'},{bin:'970416',code:'acb',name:'ACB'},{bin:'970423',code:'tpbank',name:'TPBank'},
+  {bin:'970403',code:'stb',name:'Sacombank'},{bin:'970405',code:'vba',name:'Agribank'},{bin:'970443',code:'shb',name:'SHB'},{bin:'970426',code:'msb',name:'MSB'},
+  {bin:'970437',code:'hdb',name:'HDBank'},{bin:'970448',code:'ocb',name:'OCB'},{bin:'970449',code:'lpb',name:'LPBank'},{bin:'970440',code:'seab',name:'SeABank'},
+  {bin:'970441',code:'vib',name:'VIB'},{bin:'970431',code:'eib',name:'Eximbank'},{bin:'970428',code:'nab',name:'Nam A Bank'},{bin:'970406',code:'dab',name:'DongA Bank'},
+  {bin:'970429',code:'scb',name:'SCB'},{bin:'970414',code:'oceanbank',name:'OceanBank'},{bin:'970412',code:'pvcb',name:'PVcomBank'},{bin:'970409',code:'bab',name:'Bac A Bank'},
+  {bin:'970425',code:'abb',name:'ABBank'},{bin:'970427',code:'vab',name:'VietABank'},{bin:'970433',code:'vietbank',name:'VietBank'},{bin:'970454',code:'vccb',name:'Viet Capital Bank'},
 ];
 let BANK_DATA={};
 fetch('/api/bank-accounts').then(r=>r.ok?r.json():{}).then(d=>{BANK_DATA=d||{};}).catch(()=>{});
@@ -495,18 +495,17 @@ function getMyBank(){ return localStorage.getItem('myBank')||''; }
 function setMyBank(v){ localStorage.setItem('myBank',v); }
 function makeDesc(name){ const mn=($('month').value||'').split('-')[1]||''; return 'HKD TD chuyen luong '+name+' t'+parseInt(mn); }
 
-// Deep link theo từng ngân hàng gửi
+// Deep link chuẩn VietQR Quicklink: ba={stk}@{bankCode}, am=số tiền, tn=nội dung
+const APP_IDS={VCB:'vcb',MB:'mb',TCB:'tcb',VPB:'vpbank'};
 function buildTransferUrl(senderShort, recipBin, recipAcc, recipName, amount, desc){
   const e=encodeURIComponent;
-  if(senderShort==='MB')
-    return 'https://online.mbbank.com.vn/pl/transfer/NAPAS247?bankCode='+recipBin+'&accountNo='+recipAcc+'&amount='+amount+'&description='+e(desc);
-  if(senderShort==='VCB')
-    return 'https://vcbdigibank.vietcombank.com.vn/napas247/transfer?bankCode='+recipBin+'&accountNo='+recipAcc+'&amount='+amount+'&remark='+e(desc);
-  if(senderShort==='TCB')
-    return 'https://dl.vietqr.io/pay?app=TCB&ba='+recipAcc+'&bn='+e(recipName)+'&am='+amount+'&info='+e(desc)+'&bankCode='+recipBin;
-  if(senderShort==='VPB')
-    return 'https://dl.vietqr.io/pay?app=VPB&ba='+recipAcc+'&bn='+e(recipName)+'&am='+amount+'&info='+e(desc)+'&bankCode='+recipBin;
-  return 'https://dl.vietqr.io/pay?app='+senderShort+'&ba='+recipAcc+'&bn='+e(recipName)+'&am='+amount+'&info='+e(desc)+'&bankCode='+recipBin;
+  const appId=APP_IDS[senderShort]||senderShort.toLowerCase();
+  const recipBank=ALL_BANKS.find(b=>b.bin===recipBin);
+  const recipCode=recipBank?recipBank.code:recipBin;
+  return 'https://dl.vietqr.io/pay?app='+appId
+    +'&ba='+recipAcc+'@'+recipCode
+    +'&am='+amount
+    +'&tn='+e(desc);
 }
 
 function xferSalary(i){
