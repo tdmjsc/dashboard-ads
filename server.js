@@ -1506,9 +1506,9 @@ app.post('/api/salary-product/manual', express.json(), (req, res) => {
     if (!PTSP_MANUAL[month][key].prodChannels[pk]) PTSP_MANUAL[month][key].prodChannels[pk] = {};
     if (!PTSP_MANUAL[month][key].prodChannels[pk][channel]) PTSP_MANUAL[month][key].prodChannels[pk][channel] = {};
     PTSP_MANUAL[month][key].prodChannels[pk][channel][metric] = num;
-    // Xoá entry nếu cả dt và gv đều = 0
+    // Xoá entry nếu dt, gv, ship đều = 0
     const entry = PTSP_MANUAL[month][key].prodChannels[pk][channel];
-    if (!(+entry.dt || 0) && !(+entry.gv || 0)) {
+    if (!(+entry.dt || 0) && !(+entry.gv || 0) && !(+entry.ship || 0)) {
       delete PTSP_MANUAL[month][key].prodChannels[pk][channel];
       if (!Object.keys(PTSP_MANUAL[month][key].prodChannels[pk]).length)
         delete PTSP_MANUAL[month][key].prodChannels[pk];
@@ -1615,10 +1615,10 @@ app.get('/api/salary-product/report', async (req, res) => {
       }
       const hoaHong = Math.round(loiNhuan * tyLe);
 
-      return { product: name, manager, doanhThu, autoDoanhThu: doanhThu, soLuongSP, soDon, giaNhap, giaVon, autoGiaVon: giaVon, phiShip, loiNhuan, ngayDang, loai, tyLe, hoaHong, chDT: {}, chGV: {} };
+      return { product: name, manager, doanhThu, autoDoanhThu: doanhThu, soLuongSP, soDon, giaNhap, giaVon, autoGiaVon: giaVon, phiShip, autoPhiShip: phiShip, loiNhuan, ngayDang, loai, tyLe, hoaHong, chDT: {}, chGV: {}, chSHIP: {} };
     }).filter(p => p.product);
 
-    // Gộp DT/GV nhập tay theo sản phẩm+kênh vào từng product
+    // Gộp DT/GV/Ship nhập tay theo sản phẩm+kênh vào từng product
     const monthKeyPC = (since || '').slice(0, 7);
     const manualMonthPC = PTSP_MANUAL[monthKeyPC] || {};
     for (const p of products) {
@@ -1628,15 +1628,17 @@ app.get('/api/salary-product/report', async (req, res) => {
       const pk = normProd(p.product);
       const prodCh = pc[pk];
       if (prodCh) {
-        let addDT = 0, addGV = 0;
+        let addDT = 0, addGV = 0, addSHIP = 0;
         for (const [cid, cv] of Object.entries(prodCh)) {
           const cdt = +((cv || {}).dt) || 0;
           const cgv = +((cv || {}).gv) || 0;
-          addDT += cdt; addGV += cgv;
-          p.chDT[cid] = cdt; p.chGV[cid] = cgv;
+          const cship = +((cv || {}).ship) || 0;
+          addDT += cdt; addGV += cgv; addSHIP += cship;
+          p.chDT[cid] = cdt; p.chGV[cid] = cgv; p.chSHIP[cid] = cship;
         }
         p.doanhThu += addDT;
         p.giaVon += addGV;
+        p.phiShip += addSHIP;
         p.loiNhuan = p.doanhThu - p.giaVon - p.phiShip;
         p.hoaHong = Math.round(p.loiNhuan * p.tyLe);
       }
