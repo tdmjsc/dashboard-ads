@@ -114,7 +114,8 @@
     <span>📅 <b>SP mới</b>: đăng ≤ 2 tháng → hoa hồng <b>1%</b></span>
     <span>📦 <b>SP cũ</b>: đăng > 2 tháng → hoa hồng <b>0.7%</b></span>
     <span>⛔ <b>Không ngày đăng</b>: không tính lương</span>
-    <span>⊕ <b>Kênh khác</b>: DT/GV nhập tay theo SP → cộng vào SP, tính theo tỷ lệ SP</span>
+    <span>⊕ <b>Kênh khác</b>: Thái Lan · Pushsale · TMĐT · DT85% — nhập tay theo SP, tính theo tỷ lệ SP</span>
+    <span>✚ <b>SP thủ công</b>: SP chưa có trên Sandbox (VD: chỉ bán Pushsale)</span>
   </div>
   <div class="status" id="status">Đang tải…</div>
   <table id="tbl">
@@ -206,8 +207,8 @@ function render(){
     </tr>`;
     // Chi tiết SP của người này
     if(isOpen){
-      const chans = DATA.channels || ['thailan','pushsale','shopee'];
-      const chLabels = {thailan:'Thái Lan', pushsale:'Pushsale', shopee:'Shopee'};
+      const chans = DATA.channels || ['thailan','pushsale','tmdt','dt85'];
+      const chLabels = {thailan:'Thái Lan', pushsale:'Pushsale', tmdt:'TMĐT', dt85:'DT85%', shopee:'TMĐT'};
       const prods = (DATA.products||[]).filter(p => p.manager === m.manager)
         .sort((a,b)=>b.hoaHong-a.hoaHong);
 
@@ -241,15 +242,16 @@ function render(){
         chHtml += '</tbody></table>';
       }
 
-      // Form thêm mới
+      // Form thêm mới — có ô TÌM KIẾM sản phẩm
       chHtml += '<div class="ch-grid" style="align-items:flex-end;">';
       chHtml += '<div class="ch-item" style="flex-direction:column;align-items:stretch;min-width:400px;">';
       chHtml += '<div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;">';
-      chHtml += `<select class="cell-inp" style="width:180px;text-align:left;" id="pc-prod-${idx}">`;
+      chHtml += `<input class="cell-inp" style="width:150px;text-align:left;" id="pc-find-${idx}" placeholder="🔎 Tìm sản phẩm…" oninput="filterProds(${idx})">`;
+      chHtml += `<select class="cell-inp" style="width:200px;text-align:left;" id="pc-prod-${idx}">`;
       chHtml += '<option value="">Chọn sản phẩm…</option>';
-      prods.forEach(p => { chHtml += `<option value="${esc(p.product)}">${esc(p.product)}</option>`; });
+      prods.forEach(p => { chHtml += `<option value="${esc(p.product)}">${esc(p.product)}${p.isCustom?' [thủ công]':''}</option>`; });
       chHtml += '</select>';
-      chHtml += `<select class="cell-inp" style="width:110px;text-align:left;" id="pc-ch-${idx}">`;
+      chHtml += `<select class="cell-inp" style="width:100px;text-align:left;" id="pc-ch-${idx}">`;
       chans.forEach(cid => { chHtml += `<option value="${cid}">${chLabels[cid]||cid}</option>`; });
       chHtml += '</select>';
       chHtml += `<label style="font-size:11px;color:#9FB0C8;">DT</label><input class="cell-inp" style="width:100px;" inputmode="numeric" id="pc-dt-${idx}" placeholder="0">`;
@@ -258,12 +260,24 @@ function render(){
       chHtml += `<button class="btn" style="padding:5px 12px;font-size:12px;" onclick="saveProdChannel(${idx},'${esc(m.manager)}')">+ Thêm</button>`;
       chHtml += '</div></div></div>';
 
+      // Form THÊM SẢN PHẨM THỦ CÔNG (SP không có trên Sandbox)
+      chHtml += '<div class="ch-title" style="margin-top:12px;">Thêm sản phẩm thủ công (SP chưa có trên Sandbox)</div>';
+      chHtml += '<div class="ch-grid"><div class="ch-item" style="flex-direction:column;align-items:stretch;min-width:400px;">';
+      chHtml += '<div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;">';
+      chHtml += `<input class="cell-inp" style="width:220px;text-align:left;" id="cp-name-${idx}" placeholder="Tên sản phẩm">`;
+      chHtml += `<label style="font-size:11px;color:#9FB0C8;">Ngày đăng <span style="color:#6B7C97;">(tùy chọn)</span></label><input class="cell-inp" type="date" style="width:140px;" id="cp-date-${idx}">`;
+      chHtml += `<button class="btn" style="padding:5px 12px;font-size:12px;" onclick="addCustomProduct(${idx},'${esc(m.manager)}')">+ Thêm SP</button>`;
+      chHtml += '</div>';
+      chHtml += '<div style="font-size:10px;color:#6B7C97;margin-top:4px;">Mặc định tính là <b style="color:#7BE3B5;">SP mới (1%)</b>. Nếu điền ngày đăng quá 2 tháng thì tính là SP cũ (0.7%). Sau khi thêm, chọn SP ở form trên để nhập DT/GV/Ship.</div>';
+      chHtml += '</div></div>';
+
       html += `<tr class="ch-row"><td colspan="15">${chHtml}</td></tr>`;
 
       prods.forEach(p => {
         const chip = p.loai==='moi' ? '<span class="chip chip-moi">SP mới 1%</span>'
                    : p.loai==='cu' ? '<span class="chip chip-cu">SP cũ 0.7%</span>'
                    : '<span class="chip chip-khong">không tính</span>';
+        const customChip = p.isCustom ? ' <span class="chip" style="background:rgba(157,178,255,.15);color:#9DB2FF;">thủ công</span>' : '';
         // Hiện chi tiết kênh khác đã cộng vào SP này
         const chD = p.chDT||{}, chG = p.chGV||{}, chS = p.chSHIP||{};
         let totalChDT=0, totalChGV=0, totalChSHIP=0;
@@ -285,8 +299,9 @@ function render(){
           ? `<span>${vnd(p.autoPhiShip||0)}</span> <span style="color:#ff9b8a;font-size:11px;">+${vnd(totalChSHIP)}</span><br><b style="font-size:12px;">${vnd(p.phiShip)}</b>`
           : `${vnd(p.phiShip)}`;
         const chNote = chParts.length ? ' <span style="font-size:10px;color:#9DB2FF;">⊕ '+chParts.join(' · ')+'</span>' : '';
+        const delBtn = p.isCustom ? ` <button class="expand-btn" style="width:18px;height:18px;font-size:10px;color:#ff9b8a;border-color:rgba(255,155,138,.3);" onclick="delCustomProduct('${esc(m.manager)}','${esc(p.product)}')" title="Xoá SP thủ công">✕</button>` : '';
         html += `<tr class="detail-row">
-          <td colspan="4" style="padding-left:46px;">${esc(p.product)} ${chip}
+          <td colspan="4" style="padding-left:46px;">${esc(p.product)} ${chip}${customChip}${delBtn}
             <span class="muted" style="font-size:11px;margin-left:6px;">Ngày đăng: ${p.ngayDang||'(trống)'} · SL bán: ${vnd(p.soLuongSP)} · giá nhập: ${vnd(p.giaNhap)}</span>${chNote}</td>
           <td class="num">${vnd(p.soDon)}</td>
           <td class="num">${vnd(p.soLuongSP)}</td>
@@ -394,6 +409,51 @@ async function saveField(mgr, field, value){
       body: JSON.stringify({ month: curMonth, key: normKey(mgr), field, value: num })
     });
   } catch(e){}
+}
+
+// Lọc danh sách sản phẩm theo từ khoá tìm kiếm (không phân biệt dấu/hoa thường)
+function filterProds(idx){
+  const q = boDau(String($('pc-find-'+idx).value||'')).toLowerCase().trim();
+  const sel = $('pc-prod-'+idx);
+  if(!sel) return;
+  let firstMatch = '';
+  Array.from(sel.options).forEach(op=>{
+    if(!op.value){ op.hidden=false; return; }   // giữ dòng "Chọn sản phẩm…"
+    const match = !q || boDau(op.textContent).toLowerCase().includes(q);
+    op.hidden = !match;
+    if(match && !firstMatch) firstMatch = op.value;
+  });
+  // Nếu SP đang chọn bị ẩn → tự chọn SP khớp đầu tiên
+  const cur = sel.selectedOptions[0];
+  if(q && (!cur || cur.hidden)) sel.value = firstMatch;
+  if(!q) sel.value = '';
+}
+
+// Thêm sản phẩm thủ công (SP chưa có trên Sandbox)
+async function addCustomProduct(idx, mgr){
+  const name = String($('cp-name-'+idx).value||'').trim();
+  const date = $('cp-date-'+idx).value || null;
+  if(!name){ alert('Nhập tên sản phẩm'); return; }
+  try{
+    const r = await fetch('/api/salary-product/custom',{method:'POST',headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({month:curMonth, product:name, manager:mgr, ngayDang:date})});
+    const d = await r.json();
+    if(!d.ok){ alert('❌ '+(d.message||'Không thêm được')); return; }
+    $('cp-name-'+idx).value=''; $('cp-date-'+idx).value='';
+    await load();   // nạp lại để SP mới xuất hiện trong danh sách
+  }catch(e){ alert('❌ Lỗi: '+e.message); }
+}
+
+// Xoá sản phẩm thủ công
+async function delCustomProduct(mgr, prod){
+  if(!confirm('Xoá SP thủ công "'+prod+'"?\nDoanh thu/giá vốn/phí ship đã nhập cho SP này cũng sẽ bị xoá.')) return;
+  try{
+    const r = await fetch('/api/salary-product/custom',{method:'POST',headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({month:curMonth, action:'delete', product:prod, manager:mgr})});
+    const d = await r.json();
+    if(!d.ok){ alert('❌ '+(d.message||'Không xoá được')); return; }
+    await load();
+  }catch(e){ alert('❌ Lỗi: '+e.message); }
 }
 
 // Lưu DT/GV theo sản phẩm + kênh (THÊM MỚI từ form)
@@ -641,7 +701,8 @@ $('publishBtn').addEventListener('click', async ()=>{
     const products=(DATA.products||[]).filter(p=>p.manager===m.manager)
       .map(p=>({product:p.product,ngayDang:p.ngayDang,loai:p.loai,soDon:p.soDon,soLuongSP:p.soLuongSP,
         giaNhap:p.giaNhap,doanhThu:p.doanhThu,giaVon:p.giaVon,phiShip:p.phiShip,hoaHong:p.hoaHong,
-        autoDoanhThu:p.autoDoanhThu,autoGiaVon:p.autoGiaVon,chDT:p.chDT||{},chGV:p.chGV||{}}));
+        autoDoanhThu:p.autoDoanhThu,autoGiaVon:p.autoGiaVon,autoPhiShip:p.autoPhiShip,
+        chDT:p.chDT||{},chGV:p.chGV||{},chSHIP:p.chSHIP||{},isCustom:!!p.isCustom}));
     return {
       manager:m.manager, soSP:m.soSP, soSPmoi:m.soSPmoi, soSPcu:m.soSPcu,
       soDon:m.soDon, soLuongSP:m.soLuongSP,

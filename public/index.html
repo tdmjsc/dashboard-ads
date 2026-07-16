@@ -171,8 +171,9 @@
     .searchbtn{order:2;flex:1 1 auto;}
     .menu-toggle{order:3;flex-shrink:0;}
     .avatar{order:4;flex-shrink:0;}
-    /* Hàng 3 RIÊNG: Tải lại cache full chiều ngang, chữ nhỏ */
-    #reloadCacheBtn{order:5;flex:1 1 100%;text-align:center;font-size:12px;padding:8px;}
+    /* Hàng 3 RIÊNG: 2 nút cache chia đôi chiều ngang, chữ nhỏ */
+    #reloadCacheBtn{order:5;flex:1 1 48%;text-align:center;font-size:12px;padding:8px;}
+    #pinCacheBtn{order:6;flex:1 1 48%;text-align:center;font-size:12px;padding:8px;}
     /* Menu xổ: canh trong màn hình */
     .navlinks{display:none;position:absolute;top:100%;left:12px;right:12px;width:auto;flex-direction:column;align-items:stretch;gap:6px;background:#10192B;border:1px solid rgba(255,255,255,.14);border-radius:12px;padding:10px;margin-top:8px;z-index:100;box-shadow:0 8px 24px rgba(0,0,0,.5);box-sizing:border-box;}
     .navlinks.open{display:flex;}
@@ -248,6 +249,7 @@
       </div>
       <button type="button" id="searchBtn" class="searchbtn">Tìm kiếm</button>
       <button type="button" id="reloadCacheBtn" class="logout" style="display:none;cursor:pointer" title="Xóa dữ liệu ngân sách đã lưu của khoảng ngày này rồi tải lại từ Facebook">🔄 Tải lại cache</button>
+      <button type="button" id="pinCacheBtn" class="logout" style="display:none;cursor:pointer" title="Xác nhận số liệu đang hiển thị là đúng và khoá lại — sẽ không bị tải lại hay xoá">🔒 Ghim cache</button>
       <button type="button" id="menuToggle" class="menu-toggle" aria-label="Menu">☰</button>
       <div class="navlinks" id="navlinks">
         <a href="/marketing.html" class="logout">Marketing</a>
@@ -375,12 +377,13 @@ async function loadMarketing(since,until){
 })();
 
 /* ---------- tải dữ liệu thật ---------- */
-async function loadData(){
+async function loadData(opts){
   const since=document.getElementById('from').value, until=document.getElementById('to').value;
   if(!since||!until)return;
-  msg.style.display='block'; msg.textContent='Đang tải dữ liệu từ Meta…';
+  const force = opts && opts.force;
+  msg.style.display='block'; msg.textContent = force ? 'Đang nạp lại từ Facebook…' : 'Đang tải dữ liệu từ Meta…';
   try{
-    const res=await fetch(`/api/data?since=${since}&until=${until}`);
+    const res=await fetch(`/api/data?since=${since}&until=${until}`+(force?'&refresh=1':''));
     if(res.status===401){ location.href='/login'; return; }
     const data=await res.json();
     if(data.error){ msg.textContent='Lỗi: '+data.error; return; }
@@ -436,20 +439,95 @@ document.getElementById('searchBtn').addEventListener('click',loadData);
 const _mt=document.getElementById('menuToggle'), _nl=document.getElementById('navlinks');
 if(_mt&&_nl){ _mt.addEventListener('click',()=>_nl.classList.toggle('open'));
   _nl.querySelectorAll('a').forEach(a=>a.addEventListener('click',()=>_nl.classList.remove('open'))); }
-// Nút Tải lại cache: xóa cache khoảng ngày đang chọn rồi tải lại
+/* ===== CACHE NGÂN SÁCH: Tải lại + Ghim ===== */
 const _rcBtn = document.getElementById('reloadCacheBtn');
+const _pinBtn = document.getElementById('pinCacheBtn');
+
+// Cập nhật trạng thái 2 nút theo khoảng ngày đang chọn
+async function refreshPinState(){
+  if(!_pinBtn || _pinBtn.style.display==='none') return;
+  const since=document.getElementById('from').value, until=document.getElementById('to').value;
+  if(!since||!until) return;
+  try{
+    const r=await fetch(`/api/meta-cache/is-pinned?since=${since}&until=${until}`);
+    if(!r.ok) return;
+    const d=await r.json();
+    if(d.daGhim){
+      _pinBtn.textContent='🔓 Bỏ ghim';
+      _pinBtn.dataset.pinned='1';
+      _pinBtn.title='Khoảng này đã ghim ('+(d.soChienDich||0)+' chiến dịch) — số liệu được khoá. Bấm để bỏ ghim.';
+      if(_rcBtn){ _rcBtn.disabled=true; _rcBtn.style.opacity='.4'; _rcBtn.title='Khoảng này đã ghim — bỏ ghim trước nếu muốn tải lại'; }
+    } else {
+      _pinBtn.textContent='🔒 Ghim cache';
+      _pinBtn.dataset.pinned='';
+      _pinBtn.title='Xác nhận số liệu đang hiển thị là đúng và khoá lại — sẽ không bị tải lại hay xoá';
+      if(_rcBtn){ _rcBtn.disabled=false; _rcBtn.style.opacity='1'; _rcBtn.title='Xóa dữ liệu ngân sách đã lưu của khoảng ngày này rồi tải lại từ Facebook'; }
+    }
+  }catch(e){}
+}
+
+// Nút Tải lại cache: xoá cache (RAM + file) rồi nạp lại thẳng từ Facebook
 if(_rcBtn) _rcBtn.addEventListener('click', async ()=>{
   const since=document.getElementById('from').value, until=document.getElementById('to').value;
   if(!since||!until){ alert('Chọn khoảng ngày trước'); return; }
   if(!confirm('Xóa dữ liệu ngân sách đã lưu của '+since+' → '+until+' và tải lại từ Facebook?')) return;
-  _rcBtn.disabled=true; const old=_rcBtn.textContent; _rcBtn.textContent='⏳ Đang xóa…';
+  _rcBtn.disabled=true; const old=_rcBtn.textContent; _rcBtn.textContent='⏳ Đang nạp lại…';
   try{
-    const r=await fetch('/api/admin/clear-cache?overlaps='+since+'..'+until);
+    const r=await fetch('/api/meta-cache/reload',{method:'POST',headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({since,until})});
     const d=await r.json();
-    if(d.ok){ _rcBtn.textContent='⏳ Đang tải lại…'; await loadData(); alert('✅ Đã xóa cache và tải lại dữ liệu mới từ Facebook'); }
-    else alert('❌ '+(d.message||'Lỗi xóa cache'));
+    if(!d.ok){ alert('❌ '+(d.message||'Lỗi tải lại cache')); return; }
+    if(d.khongNapLai){ alert('🔒 '+d.message); return; }
+    _rcBtn.textContent='⏳ Đang vẽ lại…';
+    await loadData({force:true});
+    alert('✅ '+d.message+'\nTổng ngân sách: '+Math.round(d.tongNganSach||0).toLocaleString('vi-VN')+' đ');
   }catch(e){ alert('Lỗi kết nối: '+e.message); }
-  finally{ _rcBtn.disabled=false; _rcBtn.textContent=old; }
+  finally{ _rcBtn.disabled=false; _rcBtn.textContent=old; refreshPinState(); }
+});
+
+// Nút Ghim / Bỏ ghim cache
+if(_pinBtn) _pinBtn.addEventListener('click', async ()=>{
+  const since=document.getElementById('from').value, until=document.getElementById('to').value;
+  if(!since||!until){ alert('Chọn khoảng ngày trước'); return; }
+  const isPinned = _pinBtn.dataset.pinned==='1';
+  const old=_pinBtn.textContent;
+
+  if(isPinned){
+    if(!confirm('BỎ GHIM khoảng '+since+' → '+until+'?\n\nSau khi bỏ ghim, số liệu có thể bị tải lại từ Facebook và thay đổi.')) return;
+    _pinBtn.disabled=true; _pinBtn.textContent='⏳…';
+    try{
+      const r=await fetch('/api/meta-cache/unpin',{method:'POST',headers:{'Content-Type':'application/json'},
+        body:JSON.stringify({since,until})});
+      const d=await r.json();
+      alert(d.ok ? '✅ '+d.message : '❌ '+(d.message||'Lỗi'));
+    }catch(e){ alert('❌ '+e.message); }
+    finally{ _pinBtn.disabled=false; _pinBtn.textContent=old; refreshPinState(); }
+    return;
+  }
+
+  const tongNS = document.getElementById('k-budget').textContent || '?';
+  if(!confirm('GHIM số liệu khoảng '+since+' → '+until+'?\n\n'
+    +'Tổng ngân sách/ngày đang hiển thị: '+tongNS+'\n\n'
+    +'Bạn xác nhận số liệu này ĐÚNG. Sau khi ghim:\n'
+    +'  • Không bị tải lại từ Facebook\n'
+    +'  • Không bị xoá bởi nút xoá cache\n'
+    +'  • Muốn cập nhật phải Bỏ ghim trước')) return;
+
+  _pinBtn.disabled=true; _pinBtn.textContent='⏳ Đang ghim…';
+  try{
+    const r=await fetch('/api/meta-cache/pin',{method:'POST',headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({since,until})});
+    const d=await r.json();
+    if(d.ok) alert('✅ '+d.message+'\n\nTổng ngân sách đã ghim: '+Math.round(d.tongNganSach||0).toLocaleString('vi-VN')+' đ');
+    else alert('❌ '+(d.message||'Không ghim được'));
+  }catch(e){ alert('❌ '+e.message); }
+  finally{ _pinBtn.disabled=false; _pinBtn.textContent=old; refreshPinState(); }
+});
+
+// Đổi khoảng ngày → cập nhật lại trạng thái nút ghim
+['from','to'].forEach(id=>{
+  const el=document.getElementById(id);
+  if(el) el.addEventListener('change', refreshPinState);
 });
 
 function setView(v){
@@ -612,7 +690,9 @@ async function setupMenu(){
     });
     const nms=document.getElementById('navMySalary'); if(nms) nms.style.display = isAdmin ? 'none' : 'inline-block';
     const rc=document.getElementById('reloadCacheBtn'); if(rc) rc.style.display = isAdmin ? 'inline-block' : 'none';
+    const pb=document.getElementById('pinCacheBtn'); if(pb) pb.style.display = isAdmin ? 'inline-block' : 'none';
     const ub=document.getElementById('userBadge'); if(ub&&me.displayName) ub.textContent='👤 '+me.displayName;
+    if(isAdmin) refreshPinState();   // hiện đúng trạng thái ghim của khoảng ngày mặc định
   }catch(e){}
 }
 setupMenu();
