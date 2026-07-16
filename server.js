@@ -1695,11 +1695,10 @@ const ptspChan = c => PTSP_CHANNEL_ALIAS[c] || c;
 const HH_KENH_KHAC = Number(process.env.HH_KENH_KHAC || 0.007);  // 0.7%
 const PHI_SHIP_DON_PTSP = Number(process.env.PHI_SHIP_DON || 30000);  // phí ship mỗi đơn
 
-app.get('/api/salary-product/report', async (req, res) => {
-  const today = new Date().toISOString().slice(0, 10);
-  const since = req.query.since || today;
-  const until = req.query.until || since;
-  try {
+/* Dựng báo cáo lương PTSP — tách thành hàm để trang "Kết quả kinh doanh" dùng lại */
+async function buildPtspReport(since, until, me) {
+  me = me || { role: 'admin' };
+  {
     const owners = await loadOwners(false);
 
     const statusParam = process.env.SALARY_STATUS_PARAM || 'giaoHangTrangThaiMa';
@@ -1714,7 +1713,7 @@ app.get('/api/salary-product/report', async (req, res) => {
 
     if (!(rpGiao.json && (rpGiao.json.success ?? rpGiao.json.Success)) ||
         !(rpTT.json && (rpTT.json.success ?? rpTT.json.Success))) {
-      return res.json({ ok: false, since, until, message: 'Lỗi gọi báo cáo sản phẩm Sandbox' });
+      return { ok: false, since, until, message: 'Lỗi gọi báo cáo sản phẩm Sandbox' };
     }
 
     const pick = (o, keys) => { for (const k of keys) if (o[k] != null) return o[k]; return null; };
@@ -1839,7 +1838,7 @@ app.get('/api/salary-product/report', async (req, res) => {
     }
 
     // Quyền: tài khoản "product" chỉ thấy SP của mình
-    const me = req.session.user || {};
+    // 'me' là tham số của hàm — dùng để lọc quyền xem
     let visible = products;
     if (me.role === 'product') {
       const mine = normProd(me.manager || '');
@@ -1910,7 +1909,7 @@ app.get('/api/salary-product/report', async (req, res) => {
     total.giaVon += total.gvKhac;
     total.phiShip = (total.phiShip || 0) + total.shipKhac;
 
-    res.json({
+    return {
       ok: true, since, until,
       tyLeMoi: HH_SP_MOI, tyLeCu: HH_SP_CU, tyLeKhac: HH_KENH_KHAC,
       channels: PTSP_CHANNELS,
@@ -1919,7 +1918,16 @@ app.get('/api/salary-product/report', async (req, res) => {
       ownersCount: Object.keys(owners).length,
       me: { role: me.role, manager: me.manager || '' },
       lastUpdated: new Date().toISOString(),
-    });
+    };
+  }
+}
+
+app.get('/api/salary-product/report', async (req, res) => {
+  const today = new Date().toISOString().slice(0, 10);
+  const since = req.query.since || today;
+  const until = req.query.until || since;
+  try {
+    res.json(await buildPtspReport(since, until, req.session.user || {}));
   } catch (e) {
     const msg = e.name === 'AbortError' ? 'API Sandbox không phản hồi (timeout 30s). Vui lòng thử lại.' : e.message;
     res.json({ ok: false, since, until, message: msg });
@@ -2068,14 +2076,14 @@ const SALARY_SAMPLE = {
 };
 
 // Bảng lương: /api/salary/report?since=2026-05-01&until=2026-05-31
-app.get('/api/salary/report', async (req, res) => {
-  const today = new Date().toISOString().slice(0, 10);
-  const since = req.query.since || today, until = req.query.until || since;
+/* Dựng báo cáo lương MKT (dữ liệu TỰ ĐỘNG) — tách thành hàm để trang
+   "Kết quả kinh doanh" dùng lại, không phải gọi HTTP vòng vo.            */
+async function buildSalaryReport(since, until) {
   const useConfig = !!(SALARY_VAL_GIAO && SALARY_VAL_TT);
   const sample = SALARY_SAMPLE[since.slice(0, 7)];
   if (!useConfig && !sample)
-    return res.json({ ok: false, since, until, message: 'Hiện chỉ có sẵn dữ liệu mẫu tháng 5/2026. Để xem tự động các tháng khác: lấy 2 giá trị trạng thái qua /api/salary/probe rồi khai SALARY_VAL_GIAO, SALARY_VAL_TT trên máy chủ.' });
-  try {
+    return { ok: false, since, until, message: 'Hiện chỉ có sẵn dữ liệu mẫu tháng 5/2026. Để xem tự động các tháng khác: lấy 2 giá trị trạng thái qua /api/salary/probe rồi khai SALARY_VAL_GIAO, SALARY_VAL_TT trên máy chủ.' };
+  {
     await sandboxLogin();   // luôn đăng nhập lại để đảm bảo cookie còn hạn
     const p = SALARY_STATUS_PARAM;
     const map = {};
@@ -2187,7 +2195,15 @@ app.get('/api/salary/report', async (req, res) => {
 
     rows.sort((a, b) => b.luong - a.luong);
     const roster = EMPLOYEES.filter(e => e.code).map(e => e.full).concat('Admin');
-    res.json({ ok: true, since, until, nguon: useConfig ? 'live' : 'mau-t5', tyLe: LUONG_TY_LE, phiShipDon: PHI_SHIP_DON, roster, rows, teamLead: TEAM_LEAD, lastUpdated: new Date().toISOString() });
+    return { ok: true, since, until, nguon: useConfig ? 'live' : 'mau-t5', tyLe: LUONG_TY_LE, phiShipDon: PHI_SHIP_DON, roster, rows, teamLead: TEAM_LEAD, lastUpdated: new Date().toISOString() };
+  }
+}
+
+app.get('/api/salary/report', async (req, res) => {
+  const today = new Date().toISOString().slice(0, 10);
+  const since = req.query.since || today, until = req.query.until || since;
+  try {
+    res.json(await buildSalaryReport(since, until));
   } catch (e) {
     const msg = e.name === 'AbortError' ? 'API Sandbox không phản hồi (timeout 30s). Vui lòng thử lại.' : e.message;
     res.json({ ok: false, since, until, message: msg });
@@ -2637,6 +2653,131 @@ app.post('/api/meta-cache/reload', express.json(), async (req, res) => {
   } catch (e) {
     res.json({ ok: false, message: e.message });
   }
+});
+
+/* ═══════════════════════════════════════════════════════════════════
+   KẾT QUẢ KINH DOANH (P&L theo tháng)
+
+   Lợi nhuận trước thuế = Tổng doanh thu − Tổng ngân sách − Tổng giá vốn
+                          − Tổng phí ship − Tổng lương − Tổng chi phí
+   Thuế = 17% × Lợi nhuận trước thuế (chỉ tính khi LNTT > 0)
+   Lợi nhuận sau thuế = LNTT − Thuế
+
+   LƯU Ý VỀ "TỔNG NGÂN SÁCH": lấy CHI TIÊU THỰC TẾ trên Meta (đã +11% VAT),
+   không phải "ngân sách/ngày" cấu hình trên Facebook. Ngân sách/ngày chỉ là
+   mức trần cài đặt, không phải tiền thật đã tiêu → không dùng cho P&L được.
+
+   ⚠ Công thức lương MKT/PTSP dưới đây PHẢI KHỚP với salary.html và
+     salary-product.html. Nếu sau này đổi quy tắc lương ở 2 trang đó,
+     nhớ sửa cả ở đây.
+   ═══════════════════════════════════════════════════════════════════ */
+
+const THUE_SUAT = Number(process.env.THUE_SUAT || 0.17);   // 17% thuế TNDN
+
+// Chi phí + lương nhập tay theo tháng
+//   { luongSale, luongKeToan, luongKho, chiPhiList:[{ten, soTien}] }
+const KQKD_FILE = path.join(DATA_DIR, 'ket-qua-kinh-doanh.json');
+let KQKD_MANUAL = {};
+try { KQKD_MANUAL = JSON.parse(fs.readFileSync(KQKD_FILE, 'utf8')) || {}; } catch { KQKD_MANUAL = {}; }
+function saveKqkd() {
+  try { fs.writeFileSync(KQKD_FILE, JSON.stringify(KQKD_MANUAL)); }
+  catch (e) { console.error('[SAVE] ket-qua-kinh-doanh lỗi:', e.message); }
+}
+const KQKD_FIELDS = ['luongSale', 'luongKeToan', 'luongKho'];
+
+// Lấy bản ghi 1 tháng, tự nâng cấp dữ liệu cũ (chiPhi là 1 số) sang danh sách
+function kqkdOf(month) {
+  const r = KQKD_MANUAL[month] || (KQKD_MANUAL[month] = {});
+  if (!Array.isArray(r.chiPhiList)) {
+    r.chiPhiList = (+r.chiPhi) ? [{ ten: 'Chi phí khác', soTien: +r.chiPhi }] : [];
+    delete r.chiPhi;
+  }
+  return r;
+}
+
+/* GET /api/business-result?month=YYYY-MM
+   Trả DỮ LIỆU THÔ (báo cáo lương MKT + PTSP + số nhập tay).
+   Việc TÍNH LƯƠNG do salary-calc.js làm ở trình duyệt — dùng chung với
+   trang Lương MKT / Lương PTSP nên số liệu luôn khớp nhau tuyệt đối.     */
+app.get('/api/business-result', async (req, res) => {
+  const me = req.session.user || {};
+  if (me.role !== 'admin') return res.status(403).json({ ok: false, message: 'Chỉ admin' });
+  const month = req.query.month || new Date().toISOString().slice(0, 7);
+  const [y, mo] = month.split('-').map(Number);
+  if (!y || !mo) return res.json({ ok: false, message: 'Tháng không hợp lệ' });
+  const since = `${y}-${String(mo).padStart(2, '0')}-01`;
+  const until = `${y}-${String(mo).padStart(2, '0')}-${String(new Date(y, mo, 0).getDate()).padStart(2, '0')}`;
+
+  try {
+    const [repMKT, repPTSP] = await Promise.all([
+      buildSalaryReport(since, until),
+      buildPtspReport(since, until, { role: 'admin' }),
+    ]);
+    if (!repMKT.ok) return res.json({ ok: false, message: 'Lương MKT: ' + (repMKT.message || 'lỗi') });
+    if (!repPTSP.ok) return res.json({ ok: false, message: 'Lương PTSP: ' + (repPTSP.message || 'lỗi') });
+
+    res.json({
+      ok: true, month, since, until,
+      thueSuat: THUE_SUAT,
+      mkt: { rows: repMKT.rows, roster: repMKT.roster, tyLe: repMKT.tyLe, teamLead: repMKT.teamLead },
+      mktManual: SALARY_MANUAL[month] || {},
+      ptsp: { managers: repPTSP.managers },
+      ptspManual: PTSP_MANUAL[month] || {},
+      tay: kqkdOf(month),
+      lastUpdated: new Date().toISOString(),
+    });
+  } catch (e) {
+    const msg = e.name === 'AbortError' ? 'API Sandbox không phản hồi (timeout). Thử lại.' : e.message;
+    res.json({ ok: false, month, message: msg });
+  }
+});
+
+/* Danh sách chi phí: thêm / sửa / xoá
+   POST /api/business-result/chi-phi {month, action:'add'|'update'|'delete', index, ten, soTien} */
+app.post('/api/business-result/chi-phi', express.json(), (req, res) => {
+  const me = req.session.user || {};
+  if (me.role !== 'admin') return res.status(403).json({ ok: false, message: 'Chỉ admin' });
+  const { month, action, index, ten, soTien } = req.body || {};
+  if (!month) return res.json({ ok: false, message: 'Thiếu tháng' });
+  const rec = kqkdOf(month);
+  const money = v => parseInt(String(v == null ? '' : v).replace(/[^\d-]/g, ''), 10) || 0;
+  const i = Number(index);
+
+  if (action === 'add') {
+    const name = String(ten || '').trim();
+    if (!name) return res.json({ ok: false, message: 'Nhập tên loại chi phí' });
+    rec.chiPhiList.push({ ten: name, soTien: money(soTien) });
+  } else if (action === 'update') {
+    if (!(i >= 0 && i < rec.chiPhiList.length)) return res.json({ ok: false, message: 'Dòng không tồn tại' });
+    if (ten != null) rec.chiPhiList[i].ten = String(ten).trim();
+    if (soTien != null) rec.chiPhiList[i].soTien = money(soTien);
+  } else if (action === 'delete') {
+    if (!(i >= 0 && i < rec.chiPhiList.length)) return res.json({ ok: false, message: 'Dòng không tồn tại' });
+    rec.chiPhiList.splice(i, 1);
+  } else {
+    return res.json({ ok: false, message: 'action phải là add / update / delete' });
+  }
+  saveKqkd();
+  res.json({ ok: true, chiPhiList: rec.chiPhiList });
+});
+
+// Lưu số nhập tay: POST /api/business-result/manual {month, field, value}
+app.post('/api/business-result/manual', express.json(), (req, res) => {
+  const me = req.session.user || {};
+  if (me.role !== 'admin') return res.status(403).json({ ok: false, message: 'Chỉ admin' });
+  const { month, field, value } = req.body || {};
+  if (!month || !KQKD_FIELDS.includes(field))
+    return res.json({ ok: false, message: 'Thiếu tháng hoặc field không hợp lệ' });
+  const rec = kqkdOf(month);
+  rec[field] = parseInt(String(value == null ? '' : value).replace(/[^\d-]/g, ''), 10) || 0;
+  saveKqkd();
+  res.json({ ok: true, month, data: rec });
+});
+
+app.get('/api/business-result/manual', (req, res) => {
+  const me = req.session.user || {};
+  if (me.role !== 'admin') return res.status(403).json({ ok: false, message: 'Chỉ admin' });
+  res.json({ ok: true, data: kqkdOf(req.query.month || '') });
 });
 
 app.use(express.static(path.join(__dirname, 'public')));
