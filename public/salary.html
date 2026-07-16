@@ -493,7 +493,10 @@ let BANK_DATA={};
 fetch('/api/bank-accounts').then(r=>r.ok?r.json():{}).then(d=>{BANK_DATA=d||{};}).catch(()=>{});
 function getMyBank(){ return localStorage.getItem('myBank')||''; }
 function setMyBank(v){ localStorage.setItem('myBank',v); }
-function makeDesc(name){ const mn=($('month').value||'').split('-')[1]||''; return 'HKD TD chuyen luong '+name+' t'+parseInt(mn); }
+function boDau(s){
+  return String(s).normalize('NFD').replace(/[\u0300-\u036f]/g,'').replace(/đ/g,'d').replace(/Đ/g,'D');
+}
+function makeDesc(name){ const mn=($('month').value||'').split('-')[1]||''; return boDau('HKD TD chuyen luong '+name+' t'+parseInt(mn)); }
 
 // Deep link chuẩn VietQR Quicklink: ba={stk}@{bankCode}, am=số tiền, tn=nội dung
 const APP_IDS={VCB:'vcb',MB:'mb',TCB:'tcb',VPB:'vpbank'};
@@ -560,9 +563,10 @@ function updateXferQR(i){
 
 function showXferQR(bin,acc,name,amount,desc){
   const qr=$('xf-qr'); if(!qr)return;
-  const url='https://img.vietqr.io/image/'+bin+'-'+acc+'-compact2.png?amount='+amount+'&addInfo='+encodeURIComponent(desc)+'&accountName='+encodeURIComponent(name.toUpperCase());
-  qr.innerHTML='<div style="font-size:11px;color:#9FB0C8;margin-bottom:6px;">Hoặc quét QR bằng app ngân hàng</div>'
-    +'<img src="'+url+'" alt="VietQR" onerror="this.style.display=\'none\'">';
+  const url='https://img.vietqr.io/image/'+bin+'-'+acc+'-compact2.png?amount='+amount+'&addInfo='+encodeURIComponent(desc)+'&accountName='+encodeURIComponent(boDau(name).toUpperCase());
+  qr.innerHTML='<div style="font-size:11px;color:#9FB0C8;margin-bottom:6px;">Quét QR bằng app ngân hàng — tự điền đủ STK, số tiền, nội dung</div>'
+    +'<img src="'+url+'" alt="VietQR" style="max-width:230px;" onerror="this.style.display=\'none\'">'
+    +'<div style="margin-top:8px;"><a href="'+url+'" download="chuyen-luong-qr.png" target="_blank" style="font-size:12px;color:#9DB2FF;text-decoration:underline;">⬇ Tải QR về máy (mở app NH → quét từ ảnh)</a></div>';
 }
 
 function xferCopy(i){
