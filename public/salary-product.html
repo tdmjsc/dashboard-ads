@@ -72,6 +72,22 @@
   .ch-title{font-size:11px;color:#6B7C97;text-transform:uppercase;letter-spacing:.05em;font-weight:700;margin-bottom:8px;}
   @media(max-width:680px){ h1{font-size:15px;} th,td{padding:9px 7px;font-size:12px;} .ctrl{flex:1 1 100%;} }
   .user-badge{display:inline-flex;align-items:center;gap:6px;font-size:13px;color:#9DB2FF;background:rgba(157,178,255,.1);border:1px solid rgba(157,178,255,.2);padding:7px 12px;border-radius:9px;font-weight:600;white-space:nowrap;}
+  .xfer-btn{background:none;border:none;cursor:pointer;font-size:16px;padding:2px 4px;opacity:.6;vertical-align:middle;display:none;}
+  .xfer-btn:hover{opacity:1;}
+  body.is-admin .xfer-btn{display:inline;}
+  .xfer-modal{position:fixed;top:0;left:0;right:0;bottom:0;background:rgba(0,0,0,.65);display:flex;align-items:center;justify-content:center;z-index:999;}
+  .xfer-box{background:#1A2332;border:1px solid rgba(255,255,255,.12);border-radius:14px;padding:24px;min-width:340px;max-width:440px;}
+  .xfer-box h3{margin:0 0 14px;font-size:15px;}
+  .xfer-row{display:flex;align-items:center;gap:8px;margin:8px 0;}
+  .xfer-label{font-size:12px;color:#9FB0C8;width:90px;flex-shrink:0;}
+  .xfer-val{font-size:14px;font-weight:600;color:#ffc56b;}
+  .xfer-inp{background:rgba(255,255,255,.06);border:1px solid rgba(255,255,255,.12);color:#E7EEF8;border-radius:7px;padding:6px 10px;font-size:13px;flex:1;}
+  .xfer-actions{display:flex;gap:8px;margin-top:16px;justify-content:flex-end;}
+  .xfer-actions button{padding:7px 16px;border-radius:8px;border:none;cursor:pointer;font-size:13px;font-weight:600;}
+  .xfer-primary{background:#7BE3B5;color:#0B1322;}
+  .xfer-secondary{background:rgba(255,255,255,.08);color:#E7EEF8;}
+  .xfer-qr{text-align:center;margin-top:12px;}
+  .xfer-qr img{border-radius:8px;max-width:200px;}
 </style>
 </head>
 <body>
@@ -183,7 +199,7 @@ function render(){
         </div></div></td>
       <td class="num"><input class="cell-inp" inputmode="numeric" data-mgr="${esc(m.manager)}" data-f="phat" value="${man.phat?vnd(man.phat):''}" placeholder="0"></td>
       <td class="num bhxh-val">${vnd(man.bhxh)}</td>
-      <td class="num thuc-nhan">${vnd(thucNhan)} ₫</td>
+      <td class="num thuc-nhan">${vnd(thucNhan)} ₫ <button class="xfer-btn" onclick="xferSalary('${esc(m.manager)}',${thucNhan})" title="Chuyển lương">💸</button></td>
     </tr>`;
     // Chi tiết SP của người này
     if(isOpen){
@@ -194,6 +210,34 @@ function render(){
 
       // Form nhập doanh thu kênh khác theo sản phẩm
       let chHtml = '<div class="ch-title">Thêm doanh thu kênh khác theo sản phẩm</div>';
+
+      // Hiện danh sách đã nhập — CÓ THỂ SỬA
+      const manRec = MANUAL[normKey(m.manager)] || {};
+      const pc = manRec.prodChannels || {};
+      const entries = [];
+      for(const pk in pc) for(const cid in pc[pk]){
+        const cv = pc[pk][cid];
+        if((+cv.dt||0)||(+cv.gv||0)) entries.push({pk,cid,dt:+cv.dt||0,gv:+cv.gv||0});
+      }
+      if(entries.length){
+        chHtml += '<table style="width:100%;border-collapse:collapse;margin-bottom:10px;"><thead><tr style="font-size:11px;color:#9FB0C8;">'
+          +'<th style="text-align:left;padding:4px 6px;">Sản phẩm</th><th style="text-align:left;padding:4px 6px;">Kênh</th>'
+          +'<th style="text-align:right;padding:4px 6px;">Doanh thu</th><th style="text-align:right;padding:4px 6px;">Giá vốn</th><th style="width:30px;"></th></tr></thead><tbody>';
+        entries.forEach(e=>{
+          const origP = prods.find(p=>normKey(p.product)===e.pk);
+          const pName = origP ? origP.product : e.pk;
+          chHtml += `<tr style="border-top:1px solid rgba(255,255,255,.04);">`;
+          chHtml += `<td style="padding:4px 6px;font-size:12px;">${esc(pName)}</td>`;
+          chHtml += `<td style="padding:4px 6px;font-size:12px;color:#9DB2FF;"><b>${chLabels[e.cid]||e.cid}</b></td>`;
+          chHtml += `<td style="padding:4px 6px;text-align:right;"><input class="cell-inp" style="width:110px;text-align:right;" inputmode="numeric" data-pcmgr="${esc(m.manager)}" data-pcprod="${esc(pName)}" data-pcch="${e.cid}" data-pcm="dt" value="${vnd(e.dt)}"></td>`;
+          chHtml += `<td style="padding:4px 6px;text-align:right;"><input class="cell-inp" style="width:110px;text-align:right;" inputmode="numeric" data-pcmgr="${esc(m.manager)}" data-pcprod="${esc(pName)}" data-pcch="${e.cid}" data-pcm="gv" value="${vnd(e.gv)}"></td>`;
+          chHtml += `<td style="padding:4px 6px;text-align:center;"><button class="expand-btn" style="width:20px;height:20px;font-size:11px;color:#ff9b8a;border-color:rgba(255,155,138,.3);" onclick="delProdChannel('${esc(m.manager)}','${esc(pName)}','${e.cid}')">✕</button></td>`;
+          chHtml += '</tr>';
+        });
+        chHtml += '</tbody></table>';
+      }
+
+      // Form thêm mới
       chHtml += '<div class="ch-grid" style="align-items:flex-end;">';
       chHtml += '<div class="ch-item" style="flex-direction:column;align-items:stretch;min-width:400px;">';
       chHtml += '<div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;">';
@@ -206,31 +250,8 @@ function render(){
       chHtml += '</select>';
       chHtml += `<label style="font-size:11px;color:#9FB0C8;">DT</label><input class="cell-inp" style="width:110px;" inputmode="numeric" id="pc-dt-${idx}" placeholder="0">`;
       chHtml += `<label style="font-size:11px;color:#9FB0C8;">GV</label><input class="cell-inp" style="width:110px;" inputmode="numeric" id="pc-gv-${idx}" placeholder="0">`;
-      chHtml += `<button class="btn" style="padding:5px 12px;font-size:12px;" onclick="saveProdChannel(${idx},'${esc(m.manager)}')">Lưu</button>`;
+      chHtml += `<button class="btn" style="padding:5px 12px;font-size:12px;" onclick="saveProdChannel(${idx},'${esc(m.manager)}')">+ Thêm</button>`;
       chHtml += '</div></div></div>';
-
-      // Hiện danh sách đã nhập
-      const manRec = MANUAL[normKey(m.manager)] || {};
-      const pc = manRec.prodChannels || {};
-      const entries = [];
-      for(const pk in pc) for(const cid in pc[pk]){
-        const cv = pc[pk][cid];
-        if((+cv.dt||0)||(+cv.gv||0)) entries.push({pk,cid,dt:+cv.dt||0,gv:+cv.gv||0});
-      }
-      if(entries.length){
-        chHtml += '<div style="margin-top:10px;">';
-        entries.forEach(e=>{
-          // Tìm tên gốc từ products
-          const origP = prods.find(p=>normKey(p.product)===e.pk);
-          const pName = origP ? origP.product : e.pk;
-          chHtml += `<div class="ch-item" style="justify-content:space-between;min-width:380px;">`;
-          chHtml += `<span style="font-size:12px;"><b style="color:#9DB2FF;">${chLabels[e.cid]||e.cid}</b> · ${esc(pName)}</span>`;
-          chHtml += `<span style="font-size:12px;color:#C4D0E2;">DT: ${vnd(e.dt)} · GV: ${vnd(e.gv)}</span>`;
-          chHtml += `<button class="expand-btn" style="width:20px;height:20px;font-size:11px;color:#ff9b8a;border-color:rgba(255,155,138,.3);" onclick="delProdChannel('${esc(m.manager)}','${esc(pName)}','${e.cid}')">✕</button>`;
-          chHtml += '</div>';
-        });
-        chHtml += '</div>';
-      }
 
       html += `<tr class="ch-row"><td colspan="15">${chHtml}</td></tr>`;
 
@@ -240,16 +261,29 @@ function render(){
                    : '<span class="chip chip-khong">không tính</span>';
         // Hiện chi tiết kênh khác đã cộng vào SP này
         const chD = p.chDT||{}, chG = p.chGV||{};
+        let totalChDT=0, totalChGV=0;
         const chParts = [];
-        chans.forEach(cid=>{ if(chD[cid]||chG[cid]) chParts.push(`${chLabels[cid]}: DT +${vnd(chD[cid]||0)}, GV +${vnd(chG[cid]||0)}`); });
-        const chNote = chParts.length ? ' <span style="font-size:10px;color:#9DB2FF;">⊕ '+chParts.join(' | ')+'</span>' : '';
+        chans.forEach(cid=>{
+          const cdt=chD[cid]||0, cgv=chG[cid]||0;
+          totalChDT+=cdt; totalChGV+=cgv;
+          if(cdt||cgv) chParts.push(`${chLabels[cid]}: +${vnd(cdt)}`);
+        });
+        const hasManual = totalChDT>0 || totalChGV>0;
+        // Cột DT/GV: hiện tự động + thủ công riêng biệt
+        const dtCell = hasManual
+          ? `<span>${vnd(p.autoDoanhThu||0)}</span> <span style="color:#9DB2FF;font-size:11px;">+${vnd(totalChDT)}</span><br><b style="font-size:12px;">${vnd(p.doanhThu)}</b>`
+          : `${vnd(p.doanhThu)}`;
+        const gvCell = hasManual
+          ? `<span>${vnd(p.autoGiaVon||0)}</span> <span style="color:#FFC56B;font-size:11px;">+${vnd(totalChGV)}</span><br><b style="font-size:12px;">${vnd(p.giaVon)}</b>`
+          : `${vnd(p.giaVon)}`;
+        const chNote = chParts.length ? ' <span style="font-size:10px;color:#9DB2FF;">⊕ '+chParts.join(' · ')+'</span>' : '';
         html += `<tr class="detail-row">
           <td colspan="4" style="padding-left:46px;">${esc(p.product)} ${chip}
             <span class="muted" style="font-size:11px;margin-left:6px;">Ngày đăng: ${p.ngayDang||'(trống)'} · SL bán: ${vnd(p.soLuongSP)} · giá nhập: ${vnd(p.giaNhap)}</span>${chNote}</td>
           <td class="num">${vnd(p.soDon)}</td>
           <td class="num">${vnd(p.soLuongSP)}</td>
-          <td class="num">${vnd(p.doanhThu)}</td>
-          <td class="num muted">${vnd(p.giaVon)}</td>
+          <td class="num" style="line-height:1.4;">${dtCell}</td>
+          <td class="num muted" style="line-height:1.4;">${gvCell}</td>
           <td class="num muted">${vnd(p.phiShip)}</td>
           <td class="num ${p.loai==='khong-tinh'?'khong':'hh'}">${p.hoaHong>0?vnd(p.hoaHong)+' ₫':'–'}</td>
           <td></td><td></td><td></td><td></td><td></td>
@@ -354,7 +388,7 @@ async function saveField(mgr, field, value){
   } catch(e){}
 }
 
-// Lưu DT/GV theo sản phẩm + kênh
+// Lưu DT/GV theo sản phẩm + kênh (THÊM MỚI từ form)
 async function saveProdChannel(idx, mgr){
   const prod = $('pc-prod-'+idx).value;
   const ch = $('pc-ch-'+idx).value;
@@ -362,35 +396,57 @@ async function saveProdChannel(idx, mgr){
   const gv = parseInt(String($('pc-gv-'+idx).value).replace(/[^\d]/g,''),10) || 0;
   if(!prod){ alert('Vui lòng chọn sản phẩm'); return; }
   if(!dt && !gv){ alert('Nhập doanh thu hoặc giá vốn'); return; }
-  // Cập nhật MANUAL tại chỗ
+  await _saveProdChannelData(mgr, prod, ch, dt, gv);
+  render();
+}
+
+// Sửa DT hoặc GV inline (từ bảng đã nhập)
+async function editProdChannel(mgr, prod, ch, metric, value){
+  const num = parseInt(String(value).replace(/[^\d]/g,''),10) || 0;
+  const mk=normKey(mgr), pk=normKey(prod);
+  // Đọc giá trị hiện tại
+  const cur = (MANUAL[mk]&&MANUAL[mk].prodChannels&&MANUAL[mk].prodChannels[pk]&&MANUAL[mk].prodChannels[pk][ch])||{dt:0,gv:0};
+  const dt = metric==='dt' ? num : (+cur.dt||0);
+  const gv = metric==='gv' ? num : (+cur.gv||0);
+  await _saveProdChannelData(mgr, prod, ch, dt, gv);
+  // Chỉ cập nhật lại tổng manager row, không render toàn bộ (tránh mất focus)
+}
+
+// Hàm chung: lưu prodChannel data lên MANUAL + server + cập nhật DATA.products
+async function _saveProdChannelData(mgr, prod, ch, dt, gv){
   const mk = normKey(mgr);
   if(!MANUAL[mk]) MANUAL[mk] = {};
   if(!MANUAL[mk].prodChannels) MANUAL[mk].prodChannels = {};
   const pk = normKey(prod);
   if(!MANUAL[mk].prodChannels[pk]) MANUAL[mk].prodChannels[pk] = {};
   MANUAL[mk].prodChannels[pk][ch] = { dt, gv };
-  // Cập nhật DATA.products tại chỗ
+  // Cập nhật DATA.products
   const p = (DATA.products||[]).find(x=>x.product===prod && x.manager===mgr);
-  if(p){
-    // Tính lại tổng channel cộng thêm
-    const allPC = MANUAL[mk].prodChannels[pk] || {};
-    let addDT=0, addGV=0; p.chDT={}; p.chGV={};
-    for(const cid in allPC){ const c=allPC[cid]; addDT+=(+c.dt||0); addGV+=(+c.gv||0); p.chDT[cid]=(+c.dt||0); p.chGV[cid]=(+c.gv||0); }
-    p.doanhThu = (p.autoDoanhThu||0) + addDT;
-    p.giaVon = (p.autoGiaVon||0) + addGV;
-    p.loiNhuan = p.doanhThu - p.giaVon - p.phiShip;
-    p.hoaHong = Math.round(p.loiNhuan * p.tyLe);
-    // Tính lại tổng manager
-    recalcManager(mgr);
-  }
-  // Lưu lên server
+  if(p) _recalcProduct(p, mk, pk);
+  recalcManager(mgr);
+  // Lưu server
   try {
     await fetch('/api/salary-product/manual',{method:'POST',headers:{'Content-Type':'application/json'},
-      body:JSON.stringify({month:curMonth, key:normKey(mgr), product:prod, channel:ch, metric:'dt', value:dt})});
+      body:JSON.stringify({month:curMonth, key:mk, product:prod, channel:ch, metric:'dt', value:dt})});
     await fetch('/api/salary-product/manual',{method:'POST',headers:{'Content-Type':'application/json'},
-      body:JSON.stringify({month:curMonth, key:normKey(mgr), product:prod, channel:ch, metric:'gv', value:gv})});
+      body:JSON.stringify({month:curMonth, key:mk, product:prod, channel:ch, metric:'gv', value:gv})});
   } catch(e){}
-  render();
+}
+
+// Tính lại DT/GV/HH 1 sản phẩm từ auto + tất cả kênh thủ công
+function _recalcProduct(p, mk, pk){
+  const allPC = (MANUAL[mk]&&MANUAL[mk].prodChannels&&MANUAL[mk].prodChannels[pk])||{};
+  let addDT=0, addGV=0; p.chDT={}; p.chGV={};
+  for(const cid in allPC){
+    const c=allPC[cid];
+    const cdt=(+c.dt||0), cgv=(+c.gv||0);
+    addDT+=cdt; addGV+=cgv;
+    p.chDT[cid]=cdt; p.chGV[cid]=cgv;
+  }
+  p.doanhThu = (p.autoDoanhThu||0) + addDT;
+  p.giaVon = (p.autoGiaVon||0) + addGV;
+  p.loiNhuan = p.doanhThu - p.giaVon - p.phiShip;
+  p.hoaHong = Math.round(p.loiNhuan * p.tyLe);
 }
 
 // Xoá doanh thu kênh khác của 1 sản phẩm
@@ -400,23 +456,14 @@ async function delProdChannel(mgr, prod, ch){
     delete MANUAL[mk].prodChannels[pk][ch];
     if(!Object.keys(MANUAL[mk].prodChannels[pk]).length) delete MANUAL[mk].prodChannels[pk];
   }
-  // Cập nhật product
   const p = (DATA.products||[]).find(x=>x.product===prod && x.manager===mgr);
-  if(p){
-    const allPC = (MANUAL[mk]&&MANUAL[mk].prodChannels&&MANUAL[mk].prodChannels[pk])||{};
-    let addDT=0, addGV=0; p.chDT={}; p.chGV={};
-    for(const cid in allPC){ const c=allPC[cid]; addDT+=(+c.dt||0); addGV+=(+c.gv||0); p.chDT[cid]=(+c.dt||0); p.chGV[cid]=(+c.gv||0); }
-    p.doanhThu = (p.autoDoanhThu||0) + addDT;
-    p.giaVon = (p.autoGiaVon||0) + addGV;
-    p.loiNhuan = p.doanhThu - p.giaVon - p.phiShip;
-    p.hoaHong = Math.round(p.loiNhuan * p.tyLe);
-    recalcManager(mgr);
-  }
+  if(p) _recalcProduct(p, mk, pk);
+  recalcManager(mgr);
   try {
     await fetch('/api/salary-product/manual',{method:'POST',headers:{'Content-Type':'application/json'},
-      body:JSON.stringify({month:curMonth, key:normKey(mgr), product:prod, channel:ch, metric:'dt', value:0})});
+      body:JSON.stringify({month:curMonth, key:mk, product:prod, channel:ch, metric:'dt', value:0})});
     await fetch('/api/salary-product/manual',{method:'POST',headers:{'Content-Type':'application/json'},
-      body:JSON.stringify({month:curMonth, key:normKey(mgr), product:prod, channel:ch, metric:'gv', value:0})});
+      body:JSON.stringify({month:curMonth, key:mk, product:prod, channel:ch, metric:'gv', value:0})});
   } catch(e){}
   render();
 }
@@ -437,7 +484,11 @@ function recalcManager(mgr){
 // Bắt sự kiện change trên toàn bảng (event delegation)
 $('rows').addEventListener('change', async e=>{
   const el = e.target;
-  if(el.dataset && el.dataset.mgr && el.dataset.f){
+  if(el.dataset && el.dataset.pcmgr && el.dataset.pcprod && el.dataset.pcch && el.dataset.pcm){
+    // Sửa inline prodChannel
+    await editProdChannel(el.dataset.pcmgr, el.dataset.pcprod, el.dataset.pcch, el.dataset.pcm, el.value);
+    render();
+  } else if(el.dataset && el.dataset.mgr && el.dataset.f){
     await saveField(el.dataset.mgr, el.dataset.f, el.value);
     render();
   }
@@ -445,6 +496,66 @@ $('rows').addEventListener('change', async e=>{
 
 $('refreshBtn').addEventListener('click', load);
 $('month').addEventListener('change', load);
+
+// ── CHUYỂN LƯƠNG ──
+const BANKS=[{bin:'970436',name:'Vietcombank',short:'VCB'},{bin:'970422',name:'MB Bank',short:'MB'},{bin:'970407',name:'Techcombank',short:'TCB'},{bin:'970432',name:'VPBank',short:'VPB'}];
+let BANK_DATA={};
+fetch('/api/bank-accounts').then(r=>r.ok?r.json():{}).then(d=>{BANK_DATA=d||{};}).catch(()=>{});
+
+function xferSalary(name, amount){
+  const monthNum=(curMonth||'').split('-')[1]||'';
+  const desc='HKD TD chuyển lương '+name+' tháng '+parseInt(monthNum);
+  const k=normKey(name);
+  const bank=BANK_DATA[k]||{};
+
+  let h='<div class="xfer-modal" id="xferModal" onclick="if(event.target===this)this.remove()">';
+  h+='<div class="xfer-box">';
+  h+='<h3>💸 Chuyển lương — '+esc(name)+'</h3>';
+  h+='<div class="xfer-row"><span class="xfer-label">Số tiền</span><span class="xfer-val">'+vnd(amount)+' ₫</span></div>';
+  h+='<div class="xfer-row"><span class="xfer-label">Nội dung</span><span style="font-size:13px;">'+esc(desc)+'</span></div>';
+  h+='<hr style="border-color:rgba(255,255,255,.08);margin:12px 0;">';
+  h+='<div style="font-size:12px;color:#9FB0C8;margin-bottom:6px;">Tài khoản nhận (lưu lại cho lần sau)</div>';
+  h+='<div class="xfer-row"><span class="xfer-label">Ngân hàng</span><select class="xfer-inp" id="xf-bank">';
+  h+='<option value="">Chọn ngân hàng…</option>';
+  BANKS.forEach(b=>{h+='<option value="'+b.bin+'" '+(bank.bankBin===b.bin?'selected':'')+'>'+b.name+'</option>';});
+  h+='</select></div>';
+  h+='<div class="xfer-row"><span class="xfer-label">Số tài khoản</span><input class="xfer-inp" id="xf-acc" value="'+(bank.accountNo||'')+'" placeholder="Nhập STK"></div>';
+  h+='<div id="xf-qr" class="xfer-qr"></div>';
+  h+='<div class="xfer-actions">';
+  h+='<button class="xfer-secondary" onclick="document.getElementById(\'xferModal\').remove()">Đóng</button>';
+  h+='<button class="xfer-secondary" onclick="xferCopyPTSP(\''+esc(name)+'\','+amount+')">📋 Copy</button>';
+  h+='<button class="xfer-primary" onclick="xferGoPTSP(\''+esc(name)+'\','+amount+')">Chuyển khoản →</button>';
+  h+='</div></div></div>';
+  document.body.insertAdjacentHTML('beforeend',h);
+  if(bank.bankBin && bank.accountNo) showXferQR(bank.bankBin,bank.accountNo,name,amount,desc);
+  $('xf-bank').addEventListener('change',()=>{const bin=$('xf-bank').value,acc=$('xf-acc').value;if(bin&&acc)showXferQR(bin,acc,name,amount,desc);else $('xf-qr').innerHTML='';});
+  $('xf-acc').addEventListener('input',()=>{const bin=$('xf-bank').value,acc=$('xf-acc').value;if(bin&&acc)showXferQR(bin,acc,name,amount,desc);else $('xf-qr').innerHTML='';});
+}
+function showXferQR(bin,acc,name,amount,desc){
+  const qr=$('xf-qr'); if(!qr)return;
+  const url='https://img.vietqr.io/image/'+bin+'-'+acc+'-compact2.png?amount='+amount+'&addInfo='+encodeURIComponent(desc)+'&accountName='+encodeURIComponent(name.toUpperCase());
+  qr.innerHTML='<img src="'+url+'" alt="VietQR" onerror="this.style.display=\'none\'">';
+}
+function xferCopyPTSP(name,amount){
+  const monthNum=(curMonth||'').split('-')[1]||'';
+  const desc='HKD TD chuyển lương '+name+' tháng '+parseInt(monthNum);
+  navigator.clipboard.writeText(desc+'\nSố tiền: '+vnd(amount)+' ₫').then(()=>alert('Đã copy')).catch(()=>{});
+}
+async function xferGoPTSP(name,amount){
+  const monthNum=(curMonth||'').split('-')[1]||'';
+  const desc='HKD TD chuyển lương '+name+' tháng '+parseInt(monthNum);
+  const bin=$('xf-bank').value, acc=$('xf-acc').value;
+  if(bin||acc){
+    const bankObj=BANKS.find(b=>b.bin===bin);
+    const payload={name, bankBin:bin, bankName:bankObj?bankObj.name:'', accountNo:acc};
+    BANK_DATA[normKey(name)]=payload;
+    try{await fetch('/api/bank-accounts',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(payload)});}catch(e){}
+  }
+  if(!bin||!acc){alert('Vui lòng chọn ngân hàng và nhập số tài khoản');return;}
+  const bankShort=(BANKS.find(b=>b.bin===bin)||{}).short||bin;
+  const url='https://dl.vietqr.io/pay?app='+bankShort+'&ba='+acc+'&bn='+encodeURIComponent(name.toUpperCase())+'&am='+amount+'&info='+encodeURIComponent(desc);
+  window.open(url,'_blank');
+}
 
 // Ẩn nav nếu là tài khoản product
 fetch('/api/me').then(r=>r.ok?r.json():null).then(me=>{
@@ -497,6 +608,7 @@ $('publishBtn').addEventListener('click', async ()=>{
 // Ẩn nút nếu không phải admin
 fetch('/api/me').then(r=>r.ok?r.json():null).then(me=>{
   if(!me||me.role!=='admin'){ const b=$('publishBtn'); if(b)b.style.display='none'; }
+  else { document.body.classList.add('is-admin'); }
 }).catch(()=>{});
 
 

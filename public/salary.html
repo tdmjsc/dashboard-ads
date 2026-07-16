@@ -77,6 +77,23 @@
   .note{font-size:12px;color:#7C8CA6;margin-top:12px;line-height:1.6;}
   @media(max-width:680px){ h1{font-size:15px;} th,td{padding:8px 8px;font-size:12px;} input.cell{width:88px;} td.nm,th:first-child{min-width:135px;} }
   .user-badge{display:inline-flex;align-items:center;gap:6px;font-size:13px;color:#9DB2FF;background:rgba(157,178,255,.1);border:1px solid rgba(157,178,255,.2);padding:7px 12px;border-radius:9px;font-weight:600;white-space:nowrap;}
+  .xfer-btn{background:none;border:none;cursor:pointer;font-size:16px;padding:2px 4px;opacity:.6;vertical-align:middle;display:none;}
+  .xfer-btn:hover{opacity:1;}
+  body.is-admin .xfer-btn{display:inline;}
+  .thucnhan{white-space:nowrap;}
+  .xfer-modal{position:fixed;top:0;left:0;right:0;bottom:0;background:rgba(0,0,0,.65);display:flex;align-items:center;justify-content:center;z-index:999;}
+  .xfer-box{background:#1A2332;border:1px solid rgba(255,255,255,.12);border-radius:14px;padding:24px;min-width:340px;max-width:440px;}
+  .xfer-box h3{margin:0 0 14px;font-size:15px;}
+  .xfer-row{display:flex;align-items:center;gap:8px;margin:8px 0;}
+  .xfer-label{font-size:12px;color:#9FB0C8;width:90px;flex-shrink:0;}
+  .xfer-val{font-size:14px;font-weight:600;color:#ffc56b;}
+  .xfer-inp{background:rgba(255,255,255,.06);border:1px solid rgba(255,255,255,.12);color:#E7EEF8;border-radius:7px;padding:6px 10px;font-size:13px;flex:1;}
+  .xfer-actions{display:flex;gap:8px;margin-top:16px;justify-content:flex-end;}
+  .xfer-actions button{padding:7px 16px;border-radius:8px;border:none;cursor:pointer;font-size:13px;font-weight:600;}
+  .xfer-primary{background:#7BE3B5;color:#0B1322;}
+  .xfer-secondary{background:rgba(255,255,255,.08);color:#E7EEF8;}
+  .xfer-qr{text-align:center;margin-top:12px;}
+  .xfer-qr img{border-radius:8px;max-width:200px;}
 </style>
 </head>
 <body>
@@ -246,7 +263,8 @@ function buildTable(){
       +'<div class="tp-total" id="tpt-'+i+'">Tổng: 0 ₫</div>'
       +'</div></div></td>'
       +'<td>'+pInp(i,'phat',m.phat)+'</td><td>'+pInp(i,'bhxh',m.bhxh)+'</td>'
-      +'<td class="thucnhan" id="tn-'+i+'"></td></tr>';
+      +'<td class="thucnhan" id="tn-'+i+'"><span id="tnv-'+i+'"></span>'
+      +'<button class="xfer-btn" id="xf-'+i+'" onclick="xferSalary('+i+')" title="Chuyển lương">💸</button></td></tr>';
     html+=detailHTML(i,emp);
   });
   html+='<tr class="total"><td class="nm">Tổng ('+LIST.length+')</td>'
@@ -281,7 +299,9 @@ function recompute(i){
   const l2e=$('l2-'+i); l2e.textContent=vnd(l2); l2e.className=l2<0?'luong neg':'luong';
   const hle=$('hl-'+i); if(hle){ hle.textContent=hl>0?vnd(hl)+'₫':'–'; }
   const tnWithHl=tn+hl;
-  const tne=$('tn-'+i); tne.textContent=vnd(tnWithHl)+' ₫'; tne.className=tnWithHl<0?'thucnhan neg':'thucnhan';
+  const tne=$('tn-'+i); const tnve=$('tnv-'+i);
+  if(tnve) tnve.textContent=vnd(tnWithHl)+' ₫';
+  if(tne) tne.className=tnWithHl<0?'thucnhan neg':'thucnhan';
   // nhãn kênh có dữ liệu + viền thẻ
   let chips='';
   CH.forEach(c=>{const has=chHasData(m,c.id);
@@ -449,6 +469,7 @@ $('publishBtn').addEventListener('click', async ()=>{
 // Ẩn nút Công khai nếu không phải admin
 fetch('/api/me').then(r=>r.ok?r.json():null).then(me=>{
   if(!me||me.role!=='admin'){ const b=$('publishBtn'); if(b)b.style.display='none'; }
+  else { document.body.classList.add('is-admin'); }
 }).catch(()=>{});
 
 
@@ -456,6 +477,92 @@ fetch('/api/me').then(r=>r.ok?r.json():null).then(me=>{
 fetch('/api/me').then(r=>r.ok?r.json():null).then(me=>{
   if(me&&me.displayName){ const b=document.getElementById('userBadge'); if(b) b.textContent='👤 '+me.displayName; }
 }).catch(()=>{});
+
+// ── CHUYỂN LƯƠNG ──
+const BANKS=[{bin:'970436',name:'Vietcombank',short:'VCB'},{bin:'970422',name:'MB Bank',short:'MB'},{bin:'970407',name:'Techcombank',short:'TCB'},{bin:'970432',name:'VPBank',short:'VPB'}];
+let BANK_DATA={};
+fetch('/api/bank-accounts').then(r=>r.ok?r.json():{}).then(d=>{BANK_DATA=d||{};}).catch(()=>{});
+
+function xferSalary(i){
+  const emp=LIST[i]; if(!emp) return;
+  const c=emp._c||{};
+  const amount=c.tn||0;
+  const monthNum=($('month').value||'').split('-')[1]||'';
+  const desc='HKD TD chuyển lương '+emp.name+' tháng '+parseInt(monthNum);
+  const k=normKey(emp.name);
+  const bank=BANK_DATA[k]||{};
+
+  // Tạo modal
+  let h='<div class="xfer-modal" id="xferModal" onclick="if(event.target===this)this.remove()">';
+  h+='<div class="xfer-box">';
+  h+='<h3>💸 Chuyển lương — '+esc(emp.name)+'</h3>';
+  h+='<div class="xfer-row"><span class="xfer-label">Số tiền</span><span class="xfer-val">'+vnd(amount)+' ₫</span></div>';
+  h+='<div class="xfer-row"><span class="xfer-label">Nội dung</span><span style="font-size:13px;">'+esc(desc)+'</span></div>';
+  h+='<hr style="border-color:rgba(255,255,255,.08);margin:12px 0;">';
+  h+='<div style="font-size:12px;color:#9FB0C8;margin-bottom:6px;">Tài khoản nhận (lưu lại cho lần sau)</div>';
+  h+='<div class="xfer-row"><span class="xfer-label">Ngân hàng</span><select class="xfer-inp" id="xf-bank">';
+  h+='<option value="">Chọn ngân hàng…</option>';
+  BANKS.forEach(b=>{h+='<option value="'+b.bin+'" '+(bank.bankBin===b.bin?'selected':'')+'>'+b.name+'</option>';});
+  h+='</select></div>';
+  h+='<div class="xfer-row"><span class="xfer-label">Số tài khoản</span><input class="xfer-inp" id="xf-acc" value="'+(bank.accountNo||'')+'" placeholder="Nhập STK"></div>';
+  h+='<div id="xf-qr" class="xfer-qr"></div>';
+  h+='<div class="xfer-actions">';
+  h+='<button class="xfer-secondary" onclick="document.getElementById(\'xferModal\').remove()">Đóng</button>';
+  h+='<button class="xfer-secondary" onclick="xferCopy('+i+')">📋 Copy</button>';
+  h+='<button class="xfer-primary" onclick="xferGo('+i+')">Chuyển khoản →</button>';
+  h+='</div></div></div>';
+  document.body.insertAdjacentHTML('beforeend',h);
+  // Hiện QR nếu đã có bank info
+  if(bank.bankBin && bank.accountNo) showXferQR(bank.bankBin,bank.accountNo,emp.name,amount,desc);
+  // Auto update QR khi thay đổi
+  $('xf-bank').addEventListener('change',()=>updateXferPreview(i));
+  $('xf-acc').addEventListener('input',()=>updateXferPreview(i));
+}
+
+function updateXferPreview(i){
+  const emp=LIST[i]; const c=emp._c||{};
+  const amount=c.tn||0;
+  const monthNum=($('month').value||'').split('-')[1]||'';
+  const desc='HKD TD chuyển lương '+emp.name+' tháng '+parseInt(monthNum);
+  const bin=$('xf-bank').value, acc=$('xf-acc').value;
+  if(bin&&acc) showXferQR(bin,acc,emp.name,amount,desc);
+  else $('xf-qr').innerHTML='';
+}
+
+function showXferQR(bin,acc,name,amount,desc){
+  const qr=$('xf-qr'); if(!qr)return;
+  const url='https://img.vietqr.io/image/'+bin+'-'+acc+'-compact2.png?amount='+amount+'&addInfo='+encodeURIComponent(desc)+'&accountName='+encodeURIComponent(name.toUpperCase());
+  qr.innerHTML='<img src="'+url+'" alt="VietQR" onerror="this.style.display=\'none\'">';
+}
+
+function xferCopy(i){
+  const emp=LIST[i]; const c=emp._c||{};
+  const monthNum=($('month').value||'').split('-')[1]||'';
+  const desc='HKD TD chuyển lương '+emp.name+' tháng '+parseInt(monthNum);
+  const txt=desc+'\nSố tiền: '+vnd(c.tn||0)+' ₫';
+  navigator.clipboard.writeText(txt).then(()=>alert('Đã copy nội dung chuyển khoản')).catch(()=>{});
+}
+
+async function xferGo(i){
+  const emp=LIST[i]; const c=emp._c||{};
+  const amount=c.tn||0;
+  const monthNum=($('month').value||'').split('-')[1]||'';
+  const desc='HKD TD chuyển lương '+emp.name+' tháng '+parseInt(monthNum);
+  const bin=$('xf-bank').value, acc=$('xf-acc').value;
+  // Lưu bank info
+  if(bin||acc){
+    const bankObj=BANKS.find(b=>b.bin===bin);
+    const payload={name:emp.name, bankBin:bin, bankName:bankObj?bankObj.name:'', accountNo:acc};
+    BANK_DATA[normKey(emp.name)]=payload;
+    try{await fetch('/api/bank-accounts',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(payload)});}catch(e){}
+  }
+  if(!bin||!acc){alert('Vui lòng chọn ngân hàng và nhập số tài khoản');return;}
+  // Mở deep link VietQR
+  const bankShort=(BANKS.find(b=>b.bin===bin)||{}).short||bin;
+  const url='https://dl.vietqr.io/pay?app='+bankShort+'&ba='+acc+'&bn='+encodeURIComponent(emp.name.toUpperCase())+'&am='+amount+'&info='+encodeURIComponent(desc);
+  window.open(url,'_blank');
+}
+
 
 </script>
 <script>
