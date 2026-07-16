@@ -502,11 +502,15 @@ const BANKS=[{bin:'970436',name:'Vietcombank',short:'VCB'},{bin:'970422',name:'M
 let BANK_DATA={};
 fetch('/api/bank-accounts').then(r=>r.ok?r.json():{}).then(d=>{BANK_DATA=d||{};}).catch(()=>{});
 
+function getMyBank(){ return localStorage.getItem('myBank')||''; }
+function setMyBank(v){ localStorage.setItem('myBank',v); }
+
 function xferSalary(name, amount){
   const monthNum=(curMonth||'').split('-')[1]||'';
   const desc='HKD TD chuyển lương '+name+' tháng '+parseInt(monthNum);
   const k=normKey(name);
   const bank=BANK_DATA[k]||{};
+  const myBank=getMyBank();
 
   let h='<div class="xfer-modal" id="xferModal" onclick="if(event.target===this)this.remove()">';
   h+='<div class="xfer-box">';
@@ -514,8 +518,15 @@ function xferSalary(name, amount){
   h+='<div class="xfer-row"><span class="xfer-label">Số tiền</span><span class="xfer-val">'+vnd(amount)+' ₫</span></div>';
   h+='<div class="xfer-row"><span class="xfer-label">Nội dung</span><span style="font-size:13px;">'+esc(desc)+'</span></div>';
   h+='<hr style="border-color:rgba(255,255,255,.08);margin:12px 0;">';
-  h+='<div style="font-size:12px;color:#9FB0C8;margin-bottom:6px;">Tài khoản nhận (lưu lại cho lần sau)</div>';
-  h+='<div class="xfer-row"><span class="xfer-label">Ngân hàng</span><select class="xfer-inp" id="xf-bank">';
+
+  h+='<div style="font-size:12px;color:#7BE3B5;margin-bottom:6px;font-weight:600;">Ngân hàng của bạn (gửi)</div>';
+  h+='<div class="xfer-row"><span class="xfer-label">NH gửi</span><select class="xfer-inp" id="xf-mybank">';
+  h+='<option value="">Chọn NH của bạn…</option>';
+  BANKS.forEach(b=>{h+='<option value="'+b.short+'" '+(myBank===b.short?'selected':'')+'>'+b.name+'</option>';});
+  h+='</select></div>';
+
+  h+='<div style="font-size:12px;color:#9FB0C8;margin:10px 0 6px;">Tài khoản nhận (nhân viên)</div>';
+  h+='<div class="xfer-row"><span class="xfer-label">NH nhận</span><select class="xfer-inp" id="xf-bank">';
   h+='<option value="">Chọn ngân hàng…</option>';
   BANKS.forEach(b=>{h+='<option value="'+b.bin+'" '+(bank.bankBin===b.bin?'selected':'')+'>'+b.name+'</option>';});
   h+='</select></div>';
@@ -523,38 +534,52 @@ function xferSalary(name, amount){
   h+='<div id="xf-qr" class="xfer-qr"></div>';
   h+='<div class="xfer-actions">';
   h+='<button class="xfer-secondary" onclick="document.getElementById(\'xferModal\').remove()">Đóng</button>';
-  h+='<button class="xfer-secondary" onclick="xferCopyPTSP(\''+esc(name)+'\','+amount+')">📋 Copy</button>';
-  h+='<button class="xfer-primary" onclick="xferGoPTSP(\''+esc(name)+'\','+amount+')">Chuyển khoản →</button>';
+  h+='<button class="xfer-secondary" onclick="xferCopyP(\''+esc(name)+'\','+amount+')">📋 Copy</button>';
+  h+='<button class="xfer-primary" onclick="xferGoP(\''+esc(name)+'\','+amount+')">Chuyển khoản →</button>';
   h+='</div></div></div>';
   document.body.insertAdjacentHTML('beforeend',h);
-  if(bank.bankBin && bank.accountNo) showXferQR(bank.bankBin,bank.accountNo,name,amount,desc);
+
+  if(bank.bankBin&&bank.accountNo) showXferQR(bank.bankBin,bank.accountNo,name,amount,desc);
   $('xf-bank').addEventListener('change',()=>{const bin=$('xf-bank').value,acc=$('xf-acc').value;if(bin&&acc)showXferQR(bin,acc,name,amount,desc);else $('xf-qr').innerHTML='';});
   $('xf-acc').addEventListener('input',()=>{const bin=$('xf-bank').value,acc=$('xf-acc').value;if(bin&&acc)showXferQR(bin,acc,name,amount,desc);else $('xf-qr').innerHTML='';});
 }
 function showXferQR(bin,acc,name,amount,desc){
   const qr=$('xf-qr'); if(!qr)return;
   const url='https://img.vietqr.io/image/'+bin+'-'+acc+'-compact2.png?amount='+amount+'&addInfo='+encodeURIComponent(desc)+'&accountName='+encodeURIComponent(name.toUpperCase());
-  qr.innerHTML='<img src="'+url+'" alt="VietQR" onerror="this.style.display=\'none\'">';
+  qr.innerHTML='<div style="font-size:11px;color:#9FB0C8;margin-bottom:6px;">Quét QR bằng app ngân hàng nếu nút Chuyển khoản không mở được</div>'
+    +'<img src="'+url+'" alt="VietQR" onerror="this.style.display=\'none\'">';
 }
-function xferCopyPTSP(name,amount){
+function xferCopyP(name,amount){
   const monthNum=(curMonth||'').split('-')[1]||'';
   const desc='HKD TD chuyển lương '+name+' tháng '+parseInt(monthNum);
-  navigator.clipboard.writeText(desc+'\nSố tiền: '+vnd(amount)+' ₫').then(()=>alert('Đã copy')).catch(()=>{});
+  const bankBin=$('xf-bank').value; const bankObj=BANKS.find(b=>b.bin===bankBin);
+  const acc=$('xf-acc').value||'';
+  const txt=desc+'\nSố tiền: '+vnd(amount)+' ₫'+(bankObj?'\nNgân hàng: '+bankObj.name:'')+(acc?'\nSTK: '+acc:'');
+  navigator.clipboard.writeText(txt).then(()=>alert('Đã copy')).catch(()=>{});
 }
-async function xferGoPTSP(name,amount){
+async function xferGoP(name,amount){
   const monthNum=(curMonth||'').split('-')[1]||'';
   const desc='HKD TD chuyển lương '+name+' tháng '+parseInt(monthNum);
-  const bin=$('xf-bank').value, acc=$('xf-acc').value;
-  if(bin||acc){
-    const bankObj=BANKS.find(b=>b.bin===bin);
-    const payload={name, bankBin:bin, bankName:bankObj?bankObj.name:'', accountNo:acc};
+  const myBankShort=$('xf-mybank').value;
+  const recipBin=$('xf-bank').value, recipAcc=$('xf-acc').value;
+
+  if(myBankShort) setMyBank(myBankShort);
+  if(recipBin||recipAcc){
+    const bankObj=BANKS.find(b=>b.bin===recipBin);
+    const payload={name, bankBin:recipBin, bankName:bankObj?bankObj.name:'', accountNo:recipAcc};
     BANK_DATA[normKey(name)]=payload;
     try{await fetch('/api/bank-accounts',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(payload)});}catch(e){}
   }
-  if(!bin||!acc){alert('Vui lòng chọn ngân hàng và nhập số tài khoản');return;}
-  const bankShort=(BANKS.find(b=>b.bin===bin)||{}).short||bin;
-  const url='https://dl.vietqr.io/pay?app='+bankShort+'&ba='+acc+'&bn='+encodeURIComponent(name.toUpperCase())+'&am='+amount+'&info='+encodeURIComponent(desc);
-  window.open(url,'_blank');
+  if(!myBankShort){alert('Vui lòng chọn ngân hàng của bạn (ngân hàng gửi)');return;}
+  if(!recipBin||!recipAcc){alert('Vui lòng chọn ngân hàng nhận và nhập số tài khoản');return;}
+
+  const url='https://dl.vietqr.io/pay?app='+myBankShort
+    +'&ba='+recipAcc
+    +'&bn='+encodeURIComponent(name.toUpperCase())
+    +'&am='+amount
+    +'&info='+encodeURIComponent(desc)
+    +'&bankCode='+recipBin;
+  window.location.href=url;
 }
 
 // Ẩn nav nếu là tài khoản product
