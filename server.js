@@ -472,11 +472,23 @@ app.use((req, res, next) => {
       return res.redirect('/');
     }
   }
-  // Trang Lương: chỉ admin
+  // ── CHỈ ADMIN: trang Lương + Kết quả kinh doanh ──
+  // Liệt kê tường minh để không sót khi thêm trang mới.
   if (me && me.role !== 'admin') {
     const p = req.path;
-    if (p === '/salary.html' || p.startsWith('/api/salary')) {
-      if (p.startsWith('/api/')) return res.status(403).json({ error: 'Chỉ quản trị viên xem được mục Lương.' });
+    const TRANG_CHI_ADMIN = [
+      '/salary.html',              // Lương Marketing
+      '/salary-product.html',      // Lương Phát triển sản phẩm
+      '/ket-qua-kinh-doanh.html',  // Kết quả kinh doanh
+    ];
+    const API_CHI_ADMIN =
+         p.startsWith('/api/salary')            // gồm cả /api/salary-product/*
+      || p.startsWith('/api/business-result')   // Kết quả kinh doanh
+      || p.startsWith('/api/bank-accounts')     // STK nhân viên (chuyển lương)
+      || p.startsWith('/api/meta-cache')        // ghim / xoá / nạp lại cache
+      || p.startsWith('/api/admin/');
+    if (TRANG_CHI_ADMIN.includes(p) || API_CHI_ADMIN) {
+      if (p.startsWith('/api/')) return res.status(403).json({ error: 'Chỉ quản trị viên xem được mục này.' });
       return res.redirect('/');
     }
   }
@@ -2692,6 +2704,8 @@ function kqkdOf(month) {
     r.chiPhiList = (+r.chiPhi) ? [{ ten: 'Chi phí khác', soTien: +r.chiPhi }] : [];
     delete r.chiPhi;
   }
+  // Dòng chi phí lưu từ trước chưa có mảng ảnh → bổ sung cho đủ
+  r.chiPhiList.forEach(x => { if (!Array.isArray(x.anh)) x.anh = []; });
   return r;
 }
 
@@ -2753,12 +2767,112 @@ app.post('/api/business-result/chi-phi', express.json(), (req, res) => {
     if (soTien != null) rec.chiPhiList[i].soTien = money(soTien);
   } else if (action === 'delete') {
     if (!(i >= 0 && i < rec.chiPhiList.length)) return res.json({ ok: false, message: 'Dòng không tồn tại' });
+    // Xoá luôn các file ảnh giải trình kèm theo dòng này
+    (rec.chiPhiList[i].anh || []).forEach(a => xoaFileAnh(a.id));
     rec.chiPhiList.splice(i, 1);
   } else {
     return res.json({ ok: false, message: 'action phải là add / update / delete' });
   }
   saveKqkd();
   res.json({ ok: true, chiPhiList: rec.chiPhiList });
+});
+
+/* ── ẢNH GIẢI TRÌNH CHI PHÍ ────────────────────────────────────────
+   Kế toán tải ảnh (hoá đơn, bảng kê các khoản con…) đính vào từng dòng chi phí.
+   Ảnh lưu thành FILE THẬT trong DATA_DIR/kqkd-anh, chỉ metadata nằm trong JSON.
+   Nhận base64 qua JSON để không phải cài thêm thư viện upload.        */
+const ANH_DIR = path.join(DATA_DIR, 'kqkd-anh');
+try { fs.mkdirSync(ANH_DIR, { recursive: true }); } catch (e) {}
+
+const KIEU_ANH = {                       // chỉ nhận đúng các định dạng ảnh này
+  'image/jpeg': 'jpg', 'image/png': 'png', 'image/webp': 'webp', 'image/gif': 'gif',
+};
+const ANH_MAX = 8 * 1024 * 1024;         // 8 MB / ảnh (sau khi giải mã)
+const ANH_MOI_DONG = 12;                 // tối đa 12 ảnh cho 1 dòng chi phí
+
+function duongDanAnh(id) {
+  // id có dạng "<uuid>.<ext>" — chặn mọi ký tự lạ để không thoát khỏi thư mục
+  if (!/^[a-f0-9-]{36}\.(jpg|png|webp|gif)$/i.test(String(id || ''))) return null;
+  return path.join(ANH_DIR, id);
+}
+function xoaFileAnh(id) {
+  const p = duongDanAnh(id);
+  if (p) { try { fs.unlinkSync(p); } catch (e) {} }
+}
+
+// Tải ảnh lên: POST /api/business-result/chi-phi/anh {month, index, ten, data}
+//   data = chuỗi data URL: "data:image/jpeg;base64,...."
+app.post('/api/business-result/chi-phi/anh', express.json({ limit: '12mb' }), (req, res) => {
+  const me = req.session.user || {};
+  if (me.role !== 'admin') return res.status(403).json({ ok: false, message: 'Chỉ admin' });
+  const { month, index, ten, data } = req.body || {};
+  if (!month) return res.json({ ok: false, message: 'Thiếu tháng' });
+  const rec = kqkdOf(month);
+  const i = Number(index);
+  if (!(i >= 0 && i < rec.chiPhiList.length)) return res.json({ ok: false, message: 'Dòng chi phí không tồn tại' });
+
+  const m = /^data:([\w/+.-]+);base64,(.+)$/s.exec(String(data || ''));
+  if (!m) return res.json({ ok: false, message: 'Dữ liệu ảnh không hợp lệ' });
+  const mime = m[1].toLowerCase();
+  const ext = KIEU_ANH[mime];
+  if (!ext) return res.json({ ok: false, message: 'Chỉ nhận ảnh JPG, PNG, WEBP hoặc GIF' });
+
+  let buf;
+  try { buf = Buffer.from(m[2], 'base64'); } catch { return res.json({ ok: false, message: 'Ảnh hỏng' }); }
+  if (!buf.length) return res.json({ ok: false, message: 'Ảnh rỗng' });
+  if (buf.length > ANH_MAX) return res.json({ ok: false, message: `Ảnh quá lớn (tối đa ${ANH_MAX / 1024 / 1024} MB)` });
+
+  const dong = rec.chiPhiList[i];
+  if (!Array.isArray(dong.anh)) dong.anh = [];
+  if (dong.anh.length >= ANH_MOI_DONG)
+    return res.json({ ok: false, message: `Mỗi dòng chi phí tối đa ${ANH_MOI_DONG} ảnh` });
+
+  // Tên file do server sinh — KHÔNG dùng tên người dùng gửi lên (tránh lộ đường dẫn)
+  const id = `${crypto.randomUUID()}.${ext}`;
+  try { fs.writeFileSync(path.join(ANH_DIR, id), buf); }
+  catch (e) { return res.json({ ok: false, message: 'Không lưu được ảnh: ' + e.message }); }
+
+  dong.anh.push({
+    id,
+    ten: String(ten || 'anh').slice(0, 120),   // tên gốc chỉ để hiển thị
+    co: buf.length,
+    at: new Date().toISOString(),
+    boi: me.user || '',
+  });
+  saveKqkd();
+  res.json({ ok: true, chiPhiList: rec.chiPhiList });
+});
+
+// Xoá 1 ảnh: POST /api/business-result/chi-phi/anh/xoa {month, index, anhId}
+app.post('/api/business-result/chi-phi/anh/xoa', express.json(), (req, res) => {
+  const me = req.session.user || {};
+  if (me.role !== 'admin') return res.status(403).json({ ok: false, message: 'Chỉ admin' });
+  const { month, index, anhId } = req.body || {};
+  if (!month) return res.json({ ok: false, message: 'Thiếu tháng' });
+  const rec = kqkdOf(month);
+  const i = Number(index);
+  if (!(i >= 0 && i < rec.chiPhiList.length)) return res.json({ ok: false, message: 'Dòng chi phí không tồn tại' });
+  const dong = rec.chiPhiList[i];
+  const k = (dong.anh || []).findIndex(a => a.id === anhId);
+  if (k < 0) return res.json({ ok: false, message: 'Không tìm thấy ảnh' });
+  xoaFileAnh(anhId);
+  dong.anh.splice(k, 1);
+  saveKqkd();
+  res.json({ ok: true, chiPhiList: rec.chiPhiList });
+});
+
+// Xem ảnh: GET /api/business-result/anh/<id>
+app.get('/api/business-result/anh/:id', (req, res) => {
+  const me = req.session.user || {};
+  if (me.role !== 'admin') return res.status(403).send('Chỉ admin');
+  const p = duongDanAnh(req.params.id);
+  if (!p || !fs.existsSync(p)) return res.status(404).send('Không tìm thấy ảnh');
+  const ext = path.extname(p).slice(1).toLowerCase();
+  const mime = Object.keys(KIEU_ANH).find(k => KIEU_ANH[k] === ext) || 'application/octet-stream';
+  res.setHeader('Content-Type', mime);
+  res.setHeader('Cache-Control', 'private, max-age=86400');
+  res.setHeader('X-Content-Type-Options', 'nosniff');   // trình duyệt không đoán kiểu file
+  fs.createReadStream(p).pipe(res);
 });
 
 // Lưu số nhập tay: POST /api/business-result/manual {month, field, value}
