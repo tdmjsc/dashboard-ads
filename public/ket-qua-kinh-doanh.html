@@ -52,6 +52,33 @@
   .tag{font-size:10px;padding:2px 6px;border-radius:5px;margin-left:7px;font-weight:600;vertical-align:middle;}
   .tag-auto{background:rgba(123,227,181,.14);color:#7BE3B5;}
   .tag-tay{background:rgba(255,197,107,.14);color:#FFC56B;}
+  .tag-anh{background:rgba(157,178,255,.14);color:#9DB2FF;}
+
+  /* ── Ảnh giải trình chi phí ── */
+  .anh-row td{padding:0 0 12px 36px;border-top:none;}
+  .anh-wrap{display:flex;align-items:center;gap:7px;flex-wrap:wrap;}
+  .anh-lb{font-size:11px;color:#6B7C97;font-weight:600;}
+  .anh-hint{font-size:11px;color:#5A6B85;font-style:italic;}
+  .thumb{position:relative;display:inline-block;line-height:0;}
+  .thumb img{width:46px;height:46px;object-fit:cover;border-radius:7px;border:1px solid rgba(255,255,255,.16);cursor:zoom-in;background:#0B1322;transition:border-color .15s;}
+  .thumb img:hover{border-color:#9DB2FF;}
+  .thumb-x{position:absolute;top:-6px;right:-6px;width:17px;height:17px;border-radius:50%;background:#B03A2E;color:#fff;border:1.5px solid #141E33;cursor:pointer;font-size:9px;line-height:1;padding:0;display:none;}
+  .thumb:hover .thumb-x{display:block;}
+  .up-btn{display:inline-flex;align-items:center;gap:4px;background:rgba(157,178,255,.1);color:#9DB2FF;border:1px dashed rgba(157,178,255,.4);border-radius:7px;padding:6px 11px;font-size:11.5px;font-weight:600;cursor:pointer;white-space:nowrap;}
+  .up-btn:hover{background:rgba(157,178,255,.2);border-style:solid;}
+
+  /* ── Xem ảnh phóng to ── */
+  .lightbox{position:fixed;inset:0;background:rgba(0,0,0,.9);z-index:999;display:flex;align-items:center;justify-content:center;flex-direction:column;padding:18px;}
+  .lb-bar{position:absolute;top:0;left:0;right:0;display:flex;align-items:center;gap:12px;padding:11px 16px;background:rgba(10,16,28,.94);border-bottom:1px solid rgba(255,255,255,.1);font-size:13px;flex-wrap:wrap;}
+  .lb-meta{font-size:11.5px;color:#8C9BB4;}
+  .lb-bar b{color:#E7EEF8;}
+  .lb-btn{margin-left:auto;background:rgba(255,255,255,.1);border:none;color:#E7EEF8;width:29px;height:29px;border-radius:7px;cursor:pointer;font-size:14px;line-height:1;text-decoration:none;display:inline-flex;align-items:center;justify-content:center;flex-shrink:0;}
+  .lb-btn+.lb-btn{margin-left:6px;}
+  .lb-btn:hover{background:rgba(255,255,255,.22);}
+  .lb-img{max-width:100%;max-height:calc(100vh - 100px);object-fit:contain;border-radius:9px;margin-top:34px;background:#fff;}
+  .lb-nav{position:absolute;top:50%;transform:translateY(-50%);background:rgba(255,255,255,.12);border:none;color:#fff;width:42px;height:64px;border-radius:9px;cursor:pointer;font-size:28px;line-height:1;}
+  .lb-nav:hover{background:rgba(255,255,255,.26);}
+  .lb-prev{left:14px;} .lb-next{right:14px;}
   .exp{background:none;border:1px solid rgba(255,255,255,.16);color:#9FB0C8;width:19px;height:19px;border-radius:5px;cursor:pointer;font-size:11px;line-height:1;padding:0;margin-right:8px;}
   .exp:hover{border-color:#9DB2FF;color:#9DB2FF;}
   .det{display:none;background:rgba(0,0,0,.16);}
@@ -66,6 +93,12 @@
     main{padding:13px;} h1{font-size:15px;}
     td{padding:9px 11px;font-size:12.5px;} .sub-lbl{padding-left:20px;}
     .kpi .vl{font-size:19px;} .inp{width:100px;} .inp.ten{width:120px;}
+    /* Điện thoại không có hover → nút xoá ảnh luôn hiện */
+    .anh-row td{padding-left:20px;}
+    .thumb-x{display:block;}
+    .thumb img{width:52px;height:52px;}
+    .lb-nav{width:34px;height:52px;font-size:22px;}
+    .lb-prev{left:6px;} .lb-next{right:6px;}
   }
 </style>
 </head>
@@ -98,6 +131,7 @@
     • <b>Tổng ngân sách</b> = chi tiêu thực tế trên Meta trong tháng, đã cộng 11% VAT (không phải mức ngân sách/ngày cài trên Facebook).<br>
     • <b>Lương MKT / Lương SP</b> tính bằng đúng công thức của trang Lương MKT và Lương PTSP (chung file <code>salary-calc.js</code>) nên luôn khớp số với 2 bảng đó. Lương MKT <b>đã trừ phần của Admin</b>.<br>
     • <b>Lương sale / kế toán / kho</b> và <b>các loại chi phí</b> nhập tay, tự lưu theo từng tháng.<br>
+    • <b>📎 Ảnh giải trình</b>: mỗi loại chi phí đính được tối đa 12 ảnh (hoá đơn, bảng kê các khoản con). Ảnh tự thu nhỏ trước khi tải lên cho nhẹ, bấm vào ảnh để xem to.<br>
     • <b>Thuế</b> = 17% × lợi nhuận trước thuế (lỗ thì thuế = 0).
   </div>
 </main>
@@ -193,15 +227,30 @@ function render(){
     +inpRow('Lương Kho','luongKho',L.kho)
     +'</table></td></tr>';
 
-  // ── Tổng chi phí: danh sách có TÊN + SỐ TIỀN ──
+  // ── Tổng chi phí: danh sách có TÊN + SỐ TIỀN + ẢNH GIẢI TRÌNH ──
+  const soAnh=S.chiPhiList.reduce(function(s,x){return s+((x.anh||[]).length);},0);
   h+='<tr class="minus"><td class="lbl"><button class="exp" onclick="tog(this)">＋</button>Tổng chi phí'
-    +'<span class="tag tag-tay">'+S.chiPhiList.length+' loại</span></td>'
+    +'<span class="tag tag-tay">'+S.chiPhiList.length+' loại</span>'
+    +(soAnh?'<span class="tag tag-anh">📎 '+soAnh+' ảnh</span>':'')+'</td>'
     +'<td class="num">−'+vnd(S.chiPhi)+'</td></tr>';
   let cp='<table>';
   S.chiPhiList.forEach(function(x,i){
+    const anh=x.anh||[];
     cp+='<tr><td class="sub-lbl"><input class="inp ten" value="'+esc(x.ten)+'" data-cp-ten="'+i+'" placeholder="Tên loại chi phí"></td>'
       +'<td class="num"><input class="inp" inputmode="numeric" value="'+(x.soTien?vnd(x.soTien):'')+'" data-cp-tien="'+i+'" placeholder="0">'
-      +'<button class="xbtn" onclick="xoaChiPhi('+i+')" title="Xoá">✕</button></td></tr>';
+      +'<button class="xbtn" onclick="xoaChiPhi('+i+')" title="Xoá dòng chi phí">✕</button></td></tr>';
+    // Hàng ảnh giải trình
+    cp+='<tr class="anh-row"><td colspan="2"><div class="anh-wrap">'
+      +'<span class="anh-lb">📎 Ảnh giải trình</span>';
+    anh.forEach(function(a){
+      cp+='<span class="thumb" title="'+esc(a.ten)+' · '+kb(a.co)+' · '+new Date(a.at).toLocaleString('vi-VN')+'">'
+        +'<img src="/api/business-result/anh/'+a.id+'" onclick="xemAnh('+i+',\''+a.id+'\')" alt="'+esc(a.ten)+'">'
+        +'<button class="thumb-x" onclick="xoaAnh('+i+',\''+a.id+'\')" title="Xoá ảnh">✕</button></span>';
+    });
+    cp+='<label class="up-btn" id="up-'+i+'">＋ Tải ảnh'
+      +'<input type="file" accept="image/*" multiple hidden onchange="chonAnh(this,'+i+')"></label>';
+    if(!anh.length) cp+='<span class="anh-hint">Kế toán tải ảnh hoá đơn / bảng kê các khoản con của mục này</span>';
+    cp+='</div></td></tr>';
   });
   cp+='<tr class="addrow"><td class="sub-lbl"><input class="inp ten" id="cp-new-ten" placeholder="Tên loại chi phí mới"></td>'
     +'<td class="num"><input class="inp" inputmode="numeric" id="cp-new-tien" placeholder="0">'
@@ -277,6 +326,109 @@ async function luuLuong(field,value){
   tinhLai(); veLai();
   try{ await fetch('/api/business-result/manual',{method:'POST',headers:{'Content-Type':'application/json'},
     body:JSON.stringify({month:curMonth, field:field, value:num})}); }catch(e){}
+}
+
+/* ── ẢNH GIẢI TRÌNH CHI PHÍ ─────────────────────────────────────── */
+const kb=n=>n>=1048576?(n/1048576).toFixed(1)+' MB':Math.max(1,Math.round(n/1024))+' KB';
+
+/* Thu nhỏ ảnh ngay trên máy trước khi gửi: cạnh dài tối đa 1800px, JPEG 82%.
+   Ảnh chụp hoá đơn từ điện thoại thường 4–8 MB → sau nén còn ~200–500 KB,
+   vẫn đọc rõ chữ mà tải nhanh và đỡ tốn đĩa.                                */
+function nenAnh(file){
+  return new Promise(function(resolve,reject){
+    if(file.type==='image/gif') {   // GIF giữ nguyên (canvas làm mất ảnh động)
+      const fr=new FileReader();
+      fr.onload=()=>resolve(fr.result); fr.onerror=()=>reject(new Error('Không đọc được ảnh'));
+      fr.readAsDataURL(file); return;
+    }
+    const fr=new FileReader();
+    fr.onerror=()=>reject(new Error('Không đọc được ảnh'));
+    fr.onload=function(){
+      const img=new Image();
+      img.onerror=()=>reject(new Error('Ảnh hỏng hoặc không đúng định dạng'));
+      img.onload=function(){
+        const MAX=1800;
+        let w=img.width, h=img.height;
+        if(w>MAX||h>MAX){ const r=Math.min(MAX/w,MAX/h); w=Math.round(w*r); h=Math.round(h*r); }
+        const cv=document.createElement('canvas'); cv.width=w; cv.height=h;
+        const ctx=cv.getContext('2d');
+        ctx.fillStyle='#fff'; ctx.fillRect(0,0,w,h);   // nền trắng cho ảnh PNG trong suốt
+        ctx.drawImage(img,0,0,w,h);
+        resolve(cv.toDataURL('image/jpeg',0.82));
+      };
+      img.src=fr.result;
+    };
+    fr.readAsDataURL(file);
+  });
+}
+
+async function chonAnh(input,index){
+  const files=Array.from(input.files||[]);
+  input.value='';                       // cho phép chọn lại đúng file đó lần sau
+  if(!files.length) return;
+  const btn=$('up-'+index); const nhan=btn?btn.firstChild:null;
+  let ok=0, loi=[];
+  for(let k=0;k<files.length;k++){
+    const f=files[k];
+    if(!/^image\//.test(f.type)){ loi.push(f.name+': không phải ảnh'); continue; }
+    if(nhan) nhan.nodeValue='⏳ '+(k+1)+'/'+files.length;
+    try{
+      const data=await nenAnh(f);
+      const r=await fetch('/api/business-result/chi-phi/anh',{method:'POST',headers:{'Content-Type':'application/json'},
+        body:JSON.stringify({month:curMonth, index:index, ten:f.name, data:data})});
+      const d=await r.json();
+      if(!d.ok){ loi.push(f.name+': '+(d.message||'lỗi')); continue; }
+      RAW.tay.chiPhiList=d.chiPhiList; ok++;
+    }catch(e){ loi.push(f.name+': '+e.message); }
+  }
+  if(nhan) nhan.nodeValue='＋ Tải ảnh';
+  if(loi.length) alert('Không tải được '+loi.length+' ảnh:\n\n'+loi.join('\n'));
+  if(ok){ tinhLai(); veLai(); }   // vẽ lại, giữ nguyên trạng thái mở
+}
+
+async function xoaAnh(index,anhId){
+  if(!confirm('Xoá ảnh này?')) return;
+  try{
+    const r=await fetch('/api/business-result/chi-phi/anh/xoa',{method:'POST',headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({month:curMonth, index:index, anhId:anhId})});
+    const d=await r.json();
+    if(!d.ok){ alert('❌ '+(d.message||'Lỗi')); return; }
+    RAW.tay.chiPhiList=d.chiPhiList; tinhLai(); veLai();
+  }catch(e){ alert('❌ '+e.message); }
+}
+
+// Xem ảnh phóng to — bấm trái/phải để chuyển giữa các ảnh của cùng dòng chi phí
+function xemAnh(index,anhId){
+  const ds=(S.chiPhiList[index].anh)||[];
+  let k=ds.findIndex(a=>a.id===anhId); if(k<0) k=0;
+  const ten=S.chiPhiList[index].ten||'Chi phí';
+  const box=document.createElement('div');
+  box.className='lightbox'; box.id='lightbox';
+  box.onclick=function(e){ if(e.target===box) dongAnh(); };
+  document.body.appendChild(box);
+  function ve(){
+    const a=ds[k];
+    box.innerHTML='<div class="lb-bar"><b>'+esc(ten)+'</b>'
+      +'<span class="lb-meta">'+esc(a.ten)+' · '+kb(a.co)+' · '+new Date(a.at).toLocaleString('vi-VN')+(a.boi?' · '+esc(a.boi):'')+'</span>'
+      +'<span class="lb-meta">'+(k+1)+'/'+ds.length+'</span>'
+      +'<a class="lb-btn" href="/api/business-result/anh/'+a.id+'" target="_blank" title="Mở ảnh gốc">⤢</a>'
+      +'<button class="lb-btn" onclick="dongAnh()" title="Đóng">✕</button></div>'
+      +'<img class="lb-img" src="/api/business-result/anh/'+a.id+'" alt="'+esc(a.ten)+'">'
+      +(ds.length>1?'<button class="lb-nav lb-prev" onclick="event.stopPropagation();window._lbGo(-1)">‹</button>'
+                   +'<button class="lb-nav lb-next" onclick="event.stopPropagation();window._lbGo(1)">›</button>':'');
+  }
+  window._lbGo=function(d){ k=(k+d+ds.length)%ds.length; ve(); };
+  window._lbKey=function(e){
+    if(e.key==='Escape') dongAnh();
+    else if(e.key==='ArrowLeft'&&ds.length>1) window._lbGo(-1);
+    else if(e.key==='ArrowRight'&&ds.length>1) window._lbGo(1);
+  };
+  document.addEventListener('keydown',window._lbKey);
+  ve();
+}
+function dongAnh(){
+  const b=$('lightbox'); if(b) b.remove();
+  document.removeEventListener('keydown',window._lbKey);
 }
 
 async function themChiPhi(){
