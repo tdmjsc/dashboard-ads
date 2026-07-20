@@ -1640,6 +1640,7 @@ table{width:100%;border-collapse:collapse;background:#101B2E;min-width:900px;}
   <a class="link" href="/thailand/api/export" id="csvBtn">⬇ Xuất CSV</a>
   <a class="link" href="/marketing-thailand.html">📊 MKT Thái Lan</a>
   <a class="link" href="/thailand/salary" id="salaryLink" style="display:none;">📊 Doanh thu Thái</a>
+  <a class="link" href="/pricing.html">💰 Tính giá bán</a>
   <a class="link" href="/">← Dashboard</a>
   <button class="btn ghost" id="syncBtn" style="display:none;">🔄 Đồng bộ HC</button>
   <span class="sync-badge" id="syncBadge" style="display:none;"></span>
