@@ -1,0 +1,181 @@
+<!DOCTYPE html><html lang="vi"><head><meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Quản lý nhân viên — TDMJSC</title>
+<style>
+*{box-sizing:border-box;}body{margin:0;font-family:'Inter',system-ui,sans-serif;background:#0B1322;color:#E7EEF8;}
+header{background:#10192B;border-bottom:1px solid rgba(255,255,255,.07);padding:14px 18px;display:flex;align-items:center;gap:12px;flex-wrap:wrap;}
+h1{font-size:17px;margin:0;flex:1;}
+.link{color:#C4D0E2;font-size:13px;text-decoration:none;border:1px solid rgba(255,255,255,.14);padding:7px 12px;border-radius:9px;white-space:nowrap;}
+.link:hover{background:rgba(255,255,255,.08);color:#fff;}
+.btn{font-size:13px;font-weight:600;color:#fff;border:none;padding:8px 14px;border-radius:9px;cursor:pointer;white-space:nowrap;}
+.btn.g{background:#7BE3B5;color:#0B1322;}.btn.blue{background:#3D5AFE;}
+.btn.ghost{background:rgba(255,255,255,.06);border:1px solid rgba(255,255,255,.14);color:#C4D0E2;}
+main{padding:18px;max-width:1200px;margin:0 auto;}
+.status{font-size:13px;color:#9FB0C8;margin:4px 0 14px;min-height:18px;}
+.status .ok{color:#7BE3B5;} .status .err{color:#ff9b8a;}
+table{width:100%;border-collapse:collapse;background:#101B2E;border-radius:12px;overflow:hidden;}
+th,td{padding:10px 12px;text-align:left;font-size:13px;border-bottom:1px solid rgba(255,255,255,.05);white-space:nowrap;}
+th{background:#16233A;color:#9FB0C8;font-size:11.5px;text-transform:uppercase;font-weight:600;}
+td.num{text-align:right;font-variant-numeric:tabular-nums;}
+select.st,input.ed{font-size:12.5px;color:#fff;background:rgba(255,255,255,.06);border:1px solid rgba(255,255,255,.12);border-radius:6px;padding:5px 8px;color-scheme:dark;font-family:inherit;}
+input.ed{min-width:100px;}
+.del{color:#ff9b8a;cursor:pointer;font-size:16px;}.del:hover{color:#ff6b5a;}
+.muted{color:#6B7C97;}.empty{padding:36px;text-align:center;color:#6B7C97;}
+.badge{display:inline-block;font-size:11px;padding:3px 8px;border-radius:5px;font-weight:600;}
+.badge.lead{background:rgba(61,90,254,.2);color:#9DB2FF;border:1px solid rgba(61,90,254,.3);}
+.badge.member{background:rgba(123,227,181,.1);color:#7BE3B5;border:1px solid rgba(123,227,181,.2);}
+.badge.none{background:rgba(255,255,255,.04);color:#6B7C97;border:1px solid rgba(255,255,255,.08);}
+.form-row{display:flex;gap:8px;margin-bottom:16px;flex-wrap:wrap;align-items:flex-end;}
+.form-row>div{display:flex;flex-direction:column;gap:4px;}
+.form-row label{font-size:11px;color:#9FB0C8;font-weight:600;text-transform:uppercase;}
+.form-row input,.form-row select{font-size:13px;padding:8px 10px;border-radius:8px;border:1px solid rgba(255,255,255,.12);background:rgba(255,255,255,.06);color:#fff;color-scheme:dark;font-family:inherit;}
+.chk{display:flex;align-items:center;gap:6px;font-size:13px;cursor:pointer;user-select:none;color:#C4D0E2;}
+.chk input{accent-color:#3D5AFE;width:16px;height:16px;}
+.team-section{margin-top:24px;padding:18px;background:#101B2E;border-radius:12px;border:1px solid rgba(255,255,255,.07);}
+.team-section h3{margin:0 0 12px;font-size:14px;color:#9DB2FF;}
+.team-grid{display:flex;flex-wrap:wrap;gap:12px;}
+.team-card{background:rgba(255,255,255,.03);border:1px solid rgba(255,255,255,.08);border-radius:10px;padding:14px;min-width:260px;flex:1;}
+.team-card .lead-name{font-size:14px;font-weight:700;color:#9DB2FF;margin-bottom:8px;}
+.team-card .member{font-size:13px;padding:4px 0;color:#C4D0E2;border-bottom:1px solid rgba(255,255,255,.04);}
+.team-card .member:last-child{border:none;}
+.no-team{margin-top:14px;font-size:13px;color:#6B7C97;}
+</style></head>
+<body>
+<header>
+  <h1>👥 Quản lý nhân viên</h1>
+  <a href="/" class="link">← Dashboard</a>
+  <a href="/marketing.html" class="link">Marketing</a>
+  <span style="font-size:13px;color:#6B7C97;" id="userBadge"></span>
+</header>
+<main>
+  <div class="status" id="status">Đang tải…</div>
+
+  <!-- Form thêm nhân viên -->
+  <div id="addForm">
+    <h3 style="margin:0 0 10px;font-size:14px;">➕ Thêm nhân viên mới</h3>
+    <div class="form-row">
+      <div style="flex:2;min-width:180px;"><label>Tên đầy đủ *</label><input id="aFull" placeholder="VD: Nguyễn Văn A"></div>
+      <div style="flex:1;min-width:100px;"><label>Tên ngắn (campaign)</label><input id="aShort" placeholder="VD: Văn A"></div>
+      <div style="width:80px;"><label>Mã NV</label><input id="aCode" placeholder="Tự tạo"></div>
+      <div style="width:100px;"><label>BHXH/tháng</label><input id="aBhxh" inputmode="numeric" placeholder="0"></div>
+      <div style="flex:1;min-width:140px;"><label>Team (chọn lead)</label><select id="aTeam"><option value="">— Chưa phân team —</option></select></div>
+      <div><label>&nbsp;</label><label class="chk"><input type="checkbox" id="aLead"> Team Lead</label></div>
+      <div><label>&nbsp;</label><button class="btn g" id="aBtn">+ Thêm</button></div>
+    </div>
+  </div>
+
+  <!-- Bảng nhân viên -->
+  <div style="overflow-x:auto;border-radius:12px;margin-top:8px;" id="tblWrap"></div>
+
+  <!-- Sơ đồ team -->
+  <div class="team-section" id="teamSection">
+    <h3>🏢 Cơ cấu Team</h3>
+    <div class="team-grid" id="teamGrid"></div>
+    <div class="no-team" id="noTeam"></div>
+  </div>
+</main>
+
+<script>
+const $=id=>document.getElementById(id);
+const esc=s=>String(s==null?'':s).replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]);
+const vnd=n=>(Number(n)||0).toLocaleString('vi-VN');
+let EMPS=[], LEADS=[], TEAM={};
+
+async function load(){
+  $('status').innerHTML='Đang tải…';
+  try{
+    const r=await fetch('/api/employees');
+    if(r.status===401){location.href='/login';return;}
+    if(r.status===403){$('status').innerHTML='<span class="err">Chỉ admin mới truy cập được trang này</span>';return;}
+    const d=await r.json();
+    if(!d.ok){$('status').innerHTML='<span class="err">'+(d.message||'Lỗi')+'</span>';return;}
+    EMPS=d.employees; LEADS=d.leads; TEAM=d.teamLead;
+    fillLeadSelect();
+    render();
+    renderTeams();
+    $('status').innerHTML='<span class="ok">✓ '+EMPS.length+' nhân viên</span>';
+  }catch(e){$('status').innerHTML='<span class="err">Lỗi: '+e.message+'</span>';}
+}
+
+function fillLeadSelect(){
+  const sel=$('aTeam');
+  sel.innerHTML='<option value="">— Chưa phân team —</option>';
+  LEADS.forEach(l=>sel.insertAdjacentHTML('beforeend','<option value="'+esc(l)+'">'+esc(l)+'</option>'));
+}
+
+function render(){
+  if(!EMPS.length){$('tblWrap').innerHTML='<div class="empty">Chưa có nhân viên</div>';return;}
+  let h='<table><thead><tr><th>Mã</th><th>Tên đầy đủ</th><th>Tên ngắn</th><th>Vai trò</th><th>Team</th><th class="num">BHXH</th><th></th></tr></thead><tbody>';
+  EMPS.forEach(e=>{
+    const teamOpts=LEADS.map(l=>'<option value="'+esc(l)+'"'+(e.team===l?' selected':'')+'>'+esc(l)+'</option>').join('');
+    const roleBadge=e.isLead?'<span class="badge lead">Team Lead</span>':'';
+    h+='<tr>'
+      +'<td><input class="ed" value="'+esc(e.code)+'" style="width:60px;" onchange="upd(\''+esc(e.full)+'\',{code:this.value})"></td>'
+      +'<td><b>'+esc(e.full)+'</b></td>'
+      +'<td><input class="ed" value="'+esc(e.short)+'" onchange="upd(\''+esc(e.full)+'\',{short:this.value})"></td>'
+      +'<td>'+roleBadge+' <label class="chk" style="display:inline-flex;"><input type="checkbox" '+(e.isLead?'checked':'')+' onchange="upd(\''+esc(e.full)+'\',{isLead:this.checked})"> Lead</label></td>'
+      +'<td><select class="st" onchange="upd(\''+esc(e.full)+'\',{team:this.value})"'+(e.isLead?' disabled':'')+'><option value="">— Không —</option>'+teamOpts+'</select></td>'
+      +'<td class="num"><input class="ed" value="'+e.bhxh+'" style="width:80px;text-align:right;" onchange="upd(\''+esc(e.full)+'\',{bhxh:parseInt(this.value)||0})"></td>'
+      +'<td><span class="del" onclick="del(\''+esc(e.full)+'\')">✕</span></td>'
+      +'</tr>';
+  });
+  h+='</tbody></table>';
+  $('tblWrap').innerHTML=h;
+}
+
+function renderTeams(){
+  let h='';
+  for(const [lead, members] of Object.entries(TEAM)){
+    h+='<div class="team-card"><div class="lead-name">👑 '+esc(lead)+'</div>';
+    if(members.length) members.forEach(m=>h+='<div class="member">'+esc(m)+'</div>');
+    else h+='<div class="member muted">(chưa có thành viên)</div>';
+    h+='</div>';
+  }
+  $('teamGrid').innerHTML=h||'<div class="muted">Chưa có team nào</div>';
+  // NV chưa phân team
+  const allInTeam=new Set(Object.values(TEAM).flat().concat(Object.keys(TEAM)));
+  const noTeam=EMPS.filter(e=>!allInTeam.has(e.full));
+  $('noTeam').innerHTML=noTeam.length?'<b>Chưa phân team:</b> '+noTeam.map(e=>esc(e.full)).join(', '):'';
+}
+
+// Thêm nhân viên
+$('aBtn').onclick=async()=>{
+  const full=$('aFull').value.trim();
+  if(!full){alert('Nhập tên nhân viên');return;}
+  const body={full, short:$('aShort').value.trim(), code:$('aCode').value.trim(), bhxh:parseInt($('aBhxh').value)||0, team:$('aTeam').value, isLead:$('aLead').checked};
+  try{
+    const r=await fetch('/api/employees/add',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});
+    const d=await r.json();
+    if(!d.ok){alert(d.message||'Lỗi');return;}
+    ['aFull','aShort','aCode','aBhxh'].forEach(id=>$(id).value='');
+    $('aTeam').value='';$('aLead').checked=false;
+    load();
+  }catch(e){alert('Lỗi kết nối');}
+};
+
+// Sửa nhân viên
+async function upd(full,fields){
+  try{
+    await fetch('/api/employees/update',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({full,...fields})});
+    // Reload nếu thay đổi team/lead (ảnh hưởng cơ cấu)
+    if(fields.isLead!==undefined||fields.team!==undefined) load();
+  }catch(e){}
+}
+
+// Xoá nhân viên
+async function del(full){
+  if(!confirm('Xoá nhân viên "'+full+'"?'))return;
+  try{
+    await fetch('/api/employees/delete',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({full})});
+    load();
+  }catch(e){}
+}
+
+fetch('/api/me').then(r=>r.ok?r.json():null).then(me=>{
+  if(!me) return;
+  if(me.displayName){$('userBadge').textContent='👤 '+me.displayName;}
+  if(me.role!=='admin'){$('status').innerHTML='<span class="err">Chỉ admin mới truy cập được trang này</span>';$('addForm').style.display='none';}
+}).catch(()=>{});
+load();
+</script>
+</body></html>
