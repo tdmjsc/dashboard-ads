@@ -229,7 +229,7 @@
 </style>
 <style>
 /* Ẩn sẵn menu admin để tránh hiện nhấp nháy với nhân viên; JS sẽ hiện lại nếu là admin */
-#navProducts, #navSalary, #navSalaryProduct, #navKQKD { display: none; }
+#navProducts, #navSalary, #navSalaryProduct, #navKQKD, #navEmployees { display: none; }
 #navMySalary { display: none; }
 </style>
 </head>
@@ -257,6 +257,7 @@
         <a href="/salary.html" class="logout" id="navSalary">Lương MKT</a>
         <a href="/salary-product.html" class="logout" id="navSalaryProduct">Lương PTSP</a>
         <a href="/ket-qua-kinh-doanh.html" class="logout" id="navKQKD">📊 KQ Kinh doanh</a>
+        <a href="/employees.html" class="logout" id="navEmployees">👥 Nhân viên</a>
         <a href="/my-salary.html" class="logout" id="navMySalary">Lương của tôi</a>
         <a href="/thailand" class="logout" id="navThailand">🇹🇭 Đơn Thái Lan</a>
         <span class="user-badge" id="userBadge"></span>
@@ -393,7 +394,7 @@ async function loadData(opts){
       const ub=document.getElementById('userBadge'); if(ub&&data.me.displayName) ub.textContent='👤 '+data.me.displayName;
       const isAdmin=data.me.role==='admin';
       // Menu admin: chỉ hiện khi là admin (mặc định CSS đã ẩn)
-      ['navProducts','navSalary','navSalaryProduct','navKQKD'].forEach(id=>{
+      ['navProducts','navSalary','navSalaryProduct','navKQKD','navEmployees'].forEach(id=>{
         const el=document.getElementById(id); if(el) el.style.display = isAdmin ? 'inline-block' : 'none';
       });
       // "Lương của tôi": chỉ nhân viên cần (admin đã có bảng đầy đủ)
@@ -686,7 +687,7 @@ async function setupMenu(){
     const me = await (await fetch('/api/me')).json();
     if(!me) return;
     const isAdmin = me.role==='admin';
-    ['navProducts','navSalary','navSalaryProduct','navKQKD'].forEach(id=>{
+    ['navProducts','navSalary','navSalaryProduct','navKQKD','navEmployees'].forEach(id=>{
       const el=document.getElementById(id); if(el) el.style.display = isAdmin ? 'inline-block' : 'none';
     });
     const nms=document.getElementById('navMySalary'); if(nms) nms.style.display = isAdmin ? 'none' : 'inline-block';
