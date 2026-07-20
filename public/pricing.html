@@ -1,0 +1,324 @@
+<!DOCTYPE html><html lang="vi"><head><meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Tính giá bán — TDMJSC</title>
+<style>
+*{box-sizing:border-box;}
+body{margin:0;font-family:'Inter',system-ui,sans-serif;background:#0B1322;color:#E7EEF8;}
+header{background:#10192B;border-bottom:1px solid rgba(255,255,255,.07);padding:14px 18px;display:flex;align-items:center;gap:12px;flex-wrap:wrap;}
+h1{font-size:17px;margin:0;flex:1;}
+.link{color:#C4D0E2;font-size:13px;text-decoration:none;border:1px solid rgba(255,255,255,.14);padding:7px 12px;border-radius:9px;white-space:nowrap;}
+.link:hover{background:rgba(255,255,255,.08);color:#fff;}
+main{padding:18px;max-width:1500px;margin:0 auto;}
+/* Tabs quốc gia */
+.ctabs{display:flex;gap:8px;margin-bottom:16px;flex-wrap:wrap;}
+.ctab{font-size:14px;font-weight:600;color:#9FB0C8;background:rgba(255,255,255,.05);border:1px solid rgba(255,255,255,.10);padding:9px 18px;border-radius:10px;cursor:pointer;display:flex;align-items:center;gap:7px;}
+.ctab.on{background:#3D5AFE;color:#fff;border-color:#3D5AFE;}
+/* Thanh cấu hình tỷ giá + phí */
+.config{display:flex;gap:14px;flex-wrap:wrap;background:#101B2E;border:1px solid rgba(255,255,255,.07);border-radius:12px;padding:14px 16px;margin-bottom:16px;align-items:flex-end;}
+.config .fld{display:flex;flex-direction:column;gap:4px;}
+.config label{font-size:11px;color:#9FB0C8;font-weight:600;text-transform:uppercase;letter-spacing:.02em;}
+.config input{width:120px;font-size:13px;padding:8px 10px;border-radius:8px;border:1px solid rgba(255,255,255,.12);background:rgba(255,255,255,.06);color:#fff;font-family:inherit;text-align:right;}
+.config .sep{width:1px;background:rgba(255,255,255,.08);align-self:stretch;margin:2px 4px;}
+.config .rate{width:130px;}
+.hintbar{font-size:11.5px;color:#6B7C97;margin:-8px 0 16px 2px;}
+.toolbar{display:flex;gap:10px;margin-bottom:14px;flex-wrap:wrap;}
+.btn{font-size:13px;font-weight:600;color:#fff;background:#3D5AFE;border:none;padding:9px 16px;border-radius:9px;cursor:pointer;}
+.btn.g{background:#7BE3B5;color:#0B1322;} .btn.ghost{background:rgba(255,255,255,.06);border:1px solid rgba(255,255,255,.14);color:#C4D0E2;}
+.btn:hover{filter:brightness(1.08);}
+/* Bảng */
+.tblwrap{overflow-x:auto;border-radius:12px;border:1px solid rgba(255,255,255,.07);}
+table{width:100%;border-collapse:collapse;background:#101B2E;min-width:1400px;}
+th,td{padding:9px 10px;text-align:right;font-size:12.5px;border-bottom:1px solid rgba(255,255,255,.05);white-space:nowrap;}
+th{background:#16233A;color:#9FB0C8;font-size:10.5px;text-transform:uppercase;font-weight:600;position:sticky;top:0;letter-spacing:.02em;}
+th:first-child,td:first-child{text-align:left;position:sticky;left:0;background:#101B2E;z-index:1;}
+th:first-child{background:#16233A;z-index:2;}
+td.calc{color:#9FB0C8;font-variant-numeric:tabular-nums;}
+td.result{font-weight:700;font-variant-numeric:tabular-nums;}
+.vnd{color:#7BE3B5;} .thb{color:#FFD479;}
+input.cell{width:100%;min-width:90px;font-size:12.5px;padding:6px 8px;border-radius:6px;border:1px solid rgba(255,255,255,.12);background:rgba(255,255,255,.06);color:#fff;text-align:right;font-family:inherit;}
+input.cell.name{text-align:left;min-width:150px;}
+input.cell:focus{outline:none;border-color:#3D5AFE;background:rgba(61,90,254,.08);}
+.del{color:#ff9b8a;cursor:pointer;font-size:15px;} .del:hover{color:#ff6b5a;}
+.muted{color:#6B7C97;} .empty{padding:36px;text-align:center;color:#6B7C97;}
+.grp{font-size:10px;color:#5C6E8C;text-transform:uppercase;}
+tfoot td{background:#16233A;font-weight:700;}
+</style></head>
+<body>
+<header>
+  <h1>💰 Tính giá bán quốc tế</h1>
+  <a href="/" class="link">← Dashboard</a>
+  <a href="/products.html" class="link">Sản phẩm</a>
+</header>
+<main>
+  <!-- Tabs quốc gia -->
+  <div class="ctabs" id="ctabs">
+    <div class="ctab on" data-c="thai">🇹🇭 Thái Lan</div>
+    <div class="ctab" data-c="lao">🇱🇦 Lào</div>
+    <div class="ctab" data-c="cam">🇰🇭 Campuchia</div>
+  </div>
+
+  <!-- Cấu hình tỷ giá + phí (mỗi nước lưu riêng) -->
+  <div class="config" id="config">
+    <div class="fld"><label>Tỷ giá (VNĐ/THB)</label><input class="rate" id="cfgRate" inputmode="decimal"></div>
+    <div class="sep"></div>
+    <div class="fld"><label>Nhập kho (THB)</label><input id="cfgKho" inputmode="decimal"></div>
+    <div class="fld"><label>Phí dịch vụ (THB)</label><input id="cfgDV" inputmode="decimal"></div>
+    <div class="fld"><label>Telesale (THB)</label><input id="cfgTele" inputmode="decimal"></div>
+    <div class="sep"></div>
+    <div class="fld"><label>Phí COD (%)</label><input id="cfgCod" inputmode="decimal"></div>
+    <div class="fld"><label>Phí tài khoản (%)</label><input id="cfgAcc" inputmode="decimal"></div>
+  </div>
+  <div class="hintbar">
+    Vận chuyển nội địa theo <b>tổng cân nặng</b>: 0–3kg = 24 THB · 4kg = 70 THB · 5kg+ = 80 THB.
+    Điền <b>SL</b> (số lượng) → giá nhập, cân nặng & vận chuyển tự nhân theo số lượng; các phí nhập kho/dịch vụ/telesale giữ 1 lần/đơn.
+    Mỗi nước có tỷ giá & phí riêng.
+  </div>
+
+  <div class="toolbar">
+    <button class="btn g" id="addRow">+ Thêm sản phẩm</button>
+    <button class="btn ghost" id="saveBtn">💾 Lưu</button>
+    <button class="btn ghost" id="exportBtn">⬇ Xuất CSV</button>
+    <span class="muted" id="saveStatus" style="align-self:center;font-size:12px;"></span>
+  </div>
+
+  <div class="tblwrap">
+    <table>
+      <thead>
+        <tr>
+          <th rowspan="2">Tên sản phẩm</th>
+          <th rowspan="2">SL</th>
+          <th rowspan="2">Giá nhập<br><span class="grp">VNĐ / cái</span></th>
+          <th rowspan="2">Cân nặng<br><span class="grp">kg / cái</span></th>
+          <th colspan="5" style="text-align:center;">Các khoản phí (VNĐ)</th>
+          <th rowspan="2">VC nội địa<br><span class="grp">THB</span></th>
+          <th rowspan="2">Biên lãi<br><span class="grp">VNĐ</span></th>
+          <th rowspan="2">Giá bán<br><span class="grp vnd">VNĐ</span></th>
+          <th rowspan="2">Giá bán<br><span class="grp thb">THB</span></th>
+          <th rowspan="2"></th>
+        </tr>
+        <tr>
+          <th class="grp">Nhập kho</th>
+          <th class="grp">Dịch vụ</th>
+          <th class="grp">COD</th>
+          <th class="grp">Telesale</th>
+          <th class="grp">Tài khoản</th>
+        </tr>
+      </thead>
+      <tbody id="rows"></tbody>
+      <tfoot>
+        <tr>
+          <td style="text-align:left;">Tổng / TB</td>
+          <td colspan="10"></td>
+          <td class="result vnd" id="sumVnd">–</td>
+          <td class="result thb" id="sumThb">–</td>
+          <td></td>
+        </tr>
+      </tfoot>
+    </table>
+  </div>
+</main>
+
+<script>
+const $=id=>document.getElementById(id);
+const esc=s=>String(s==null?'':s).replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+const vnd=n=>Math.round(Number(n)||0).toLocaleString('vi-VN');
+const thb=n=>Math.round(Number(n)||0).toLocaleString('vi-VN');
+const num=v=>{const n=parseFloat(String(v==null?'':v).replace(/[^\d.-]/g,''));return isNaN(n)?0:n;};
+
+// Cấu hình mặc định cho từng nước
+const DEFAULTS={
+  thai:{rate:800, kho:2, dv:45, tele:20, cod:1.6, acc:1.2},
+  lao:{rate:1.15, kho:2, dv:45, tele:20, cod:1.6, acc:1.2},
+  cam:{rate:6.2, kho:2, dv:45, tele:20, cod:1.6, acc:1.2},
+};
+const CUR={thai:'THB', lao:'THB', cam:'THB'}; // đơn vị hiển thị cột giá bán ngoại tệ
+
+// VC nội địa mặc định theo cân nặng (THB)
+function shipByWeight(kg){
+  kg=Number(kg)||0;
+  if(kg<=3) return 24;
+  if(kg<=4) return 70;
+  return 80; // 5kg trở lên
+}
+
+let country='thai';
+let DATA={thai:{cfg:{...DEFAULTS.thai}, rows:[]}, lao:{cfg:{...DEFAULTS.lao}, rows:[]}, cam:{cfg:{...DEFAULTS.cam}, rows:[]}};
+
+// ---- Tính 1 dòng ----
+function calcRow(r, cfg){
+  const rate=num(cfg.rate)||1;
+  const sl=num(r.sl)||1;                 // số lượng (mặc định 1)
+  const giaNhap=num(r.giaNhap)*sl;       // giá nhập × SL
+  const kho=num(cfg.kho)*rate;           // phí THB → VNĐ (1 lần/đơn)
+  const dv=num(cfg.dv)*rate;
+  const tele=num(cfg.tele)*rate;
+  const tongKg=num(r.kg)*sl;             // tổng cân nặng = cân nặng/cái × SL
+  const vcThb=(r.vc===''||r.vc==null)?shipByWeight(tongKg):num(r.vc);
+  const vc=vcThb*rate;                   // VC nội địa THB → VNĐ (theo tổng kg)
+  const bienLai=num(r.bienLai);
+  // Giá bán cơ sở (chưa gồm phí % COD + tài khoản)
+  const base=giaNhap+kho+dv+tele+vc+bienLai;
+  // Phí % tính trên giá bán cơ sở
+  const cod=base*num(cfg.cod)/100;
+  const acc=base*num(cfg.acc)/100;
+  const giaBanVnd=base+cod+acc;
+  const giaBanThb=giaBanVnd/rate;
+  return {sl,giaNhap,tongKg,kho,dv,tele,vc,vcThb,cod,acc,giaBanVnd,giaBanThb};
+}
+
+function loadConfigInputs(){
+  const c=DATA[country].cfg;
+  $('cfgRate').value=c.rate; $('cfgKho').value=c.kho; $('cfgDV').value=c.dv;
+  $('cfgTele').value=c.tele; $('cfgCod').value=c.cod; $('cfgAcc').value=c.acc;
+}
+
+function render(){
+  const {cfg, rows}=DATA[country];
+  const tb=$('rows');
+  if(!rows.length){ tb.innerHTML='<tr><td colspan="15" class="empty">Chưa có sản phẩm. Bấm "+ Thêm sản phẩm".</td></tr>'; $('sumVnd').textContent='–'; $('sumThb').textContent='–'; return; }
+  let html='';
+  let sumVnd=0, sumThb=0;
+  rows.forEach((r,i)=>{
+    const c=calcRow(r,cfg);
+    sumVnd+=c.giaBanVnd; sumThb+=c.giaBanThb;
+    const vcDisplay=(r.vc===''||r.vc==null)?c.vcThb:r.vc;
+    html+='<tr>'
+      +'<td><input class="cell name" data-i="'+i+'" data-f="ten" value="'+esc(r.ten)+'" placeholder="Tên sản phẩm"></td>'
+      +'<td><input class="cell" data-i="'+i+'" data-f="sl" value="'+esc(r.sl)+'" inputmode="numeric" placeholder="1" style="min-width:48px"></td>'
+      +'<td><input class="cell" data-i="'+i+'" data-f="giaNhap" value="'+esc(r.giaNhap)+'" inputmode="numeric" placeholder="0"></td>'
+      +'<td><input class="cell" data-i="'+i+'" data-f="kg" value="'+esc(r.kg)+'" inputmode="decimal" placeholder="0" style="min-width:60px"></td>'
+      +'<td class="calc">'+vnd(c.kho)+'</td>'
+      +'<td class="calc">'+vnd(c.dv)+'</td>'
+      +'<td class="calc">'+vnd(c.cod)+'</td>'
+      +'<td class="calc">'+vnd(c.tele)+'</td>'
+      +'<td class="calc">'+vnd(c.acc)+'</td>'
+      +'<td><input class="cell" data-i="'+i+'" data-f="vc" value="'+esc(vcDisplay)+'" inputmode="decimal" title="Để trống = tự tính theo tổng cân nặng" style="min-width:70px"></td>'
+      +'<td><input class="cell" data-i="'+i+'" data-f="bienLai" value="'+esc(r.bienLai)+'" inputmode="numeric" placeholder="0"></td>'
+      +'<td class="result vnd">'+vnd(c.giaBanVnd)+'</td>'
+      +'<td class="result thb">'+thb(c.giaBanThb)+'</td>'
+      +'<td><span class="del" data-del="'+i+'">✕</span></td>'
+      +'</tr>';
+  });
+  tb.innerHTML=html;
+  $('sumVnd').textContent=vnd(sumVnd);
+  $('sumThb').textContent=thb(sumThb);
+  // Gắn sự kiện ô nhập
+  tb.querySelectorAll('input.cell').forEach(el=>{
+    el.oninput=()=>{
+      const i=+el.dataset.i, f=el.dataset.f;
+      DATA[country].rows[i][f]=el.value;
+      // Chỉ tính lại các ô kết quả, không render lại toàn bảng (giữ con trỏ)
+      recalcRow(el.closest('tr'), i);
+    };
+  });
+  tb.querySelectorAll('.del').forEach(el=>{
+    el.onclick=()=>{ DATA[country].rows.splice(+el.dataset.del,1); render(); };
+  });
+}
+
+// Tính lại 1 dòng tại chỗ (không mất focus)
+function recalcRow(tr, i){
+  const {cfg, rows}=DATA[country];
+  const r=rows[i];
+  const c=calcRow(r, cfg);
+  const cells=tr.querySelectorAll('td');
+  // cột: 0 tên,1 SL,2 giá nhập,3 kg,4 kho,5 dv,6 cod,7 tele,8 acc,9 vc,10 biên lãi,11 gbVnd,12 gbThb
+  cells[4].textContent=vnd(c.kho);
+  cells[5].textContent=vnd(c.dv);
+  cells[6].textContent=vnd(c.cod);
+  cells[7].textContent=vnd(c.tele);
+  cells[8].textContent=vnd(c.acc);
+  cells[11].textContent=vnd(c.giaBanVnd);
+  cells[12].textContent=thb(c.giaBanThb);
+  // Nếu ô VC để trống (tự tính theo cân nặng) → cập nhật hiển thị VC khi SL/kg đổi
+  if(r.vc===''||r.vc==null){
+    const vcInput=cells[9].querySelector('input');
+    if(vcInput && document.activeElement!==vcInput) vcInput.value=c.vcThb;
+  }
+  // Cập nhật tổng
+  let sumVnd=0,sumThb=0;
+  rows.forEach(rr=>{const cc=calcRow(rr,cfg);sumVnd+=cc.giaBanVnd;sumThb+=cc.giaBanThb;});
+  $('sumVnd').textContent=vnd(sumVnd); $('sumThb').textContent=thb(sumThb);
+}
+
+// ---- Chuyển tab quốc gia ----
+$('ctabs').querySelectorAll('.ctab').forEach(t=>{
+  t.onclick=()=>{
+    $('ctabs').querySelectorAll('.ctab').forEach(x=>x.classList.remove('on'));
+    t.classList.add('on');
+    country=t.dataset.c;
+    loadConfigInputs();
+    render();
+  };
+});
+
+// ---- Cấu hình thay đổi → tính lại ----
+['cfgRate','cfgKho','cfgDV','cfgTele','cfgCod','cfgAcc'].forEach(id=>{
+  $(id).oninput=()=>{
+    const c=DATA[country].cfg;
+    c.rate=$('cfgRate').value; c.kho=$('cfgKho').value; c.dv=$('cfgDV').value;
+    c.tele=$('cfgTele').value; c.cod=$('cfgCod').value; c.acc=$('cfgAcc').value;
+    render();
+  };
+});
+
+// ---- Thêm dòng ----
+$('addRow').onclick=()=>{
+  DATA[country].rows.push({ten:'', sl:'', giaNhap:'', kg:'', vc:'', bienLai:''});
+  render();
+  // Focus ô tên dòng mới
+  const inputs=$('rows').querySelectorAll('input.cell.name');
+  if(inputs.length) inputs[inputs.length-1].focus();
+};
+
+// ---- Lưu (localStorage không dùng được trong artifact, nhưng đây là file thật trên server nên OK) ----
+$('saveBtn').onclick=()=>{
+  try{
+    localStorage.setItem('pricingData', JSON.stringify(DATA));
+    $('saveStatus').textContent='✓ Đã lưu '+new Date().toLocaleTimeString('vi-VN');
+    setTimeout(()=>$('saveStatus').textContent='',3000);
+  }catch(e){ $('saveStatus').textContent='Lỗi lưu: '+e.message; }
+};
+
+// ---- Xuất CSV ----
+$('exportBtn').onclick=()=>{
+  const {cfg, rows}=DATA[country];
+  const cname={thai:'ThaiLan',lao:'Lao',cam:'Campuchia'}[country];
+  const head=['Tên SP','SL','Giá nhập (VNĐ/cái)','Cân nặng (kg/cái)','Nhập kho','Dịch vụ','COD','Telesale','Tài khoản','VC nội địa (THB)','Biên lãi','Giá bán (VNĐ)','Giá bán (THB)'];
+  const SEP=';';
+  const esc2=v=>'"'+String(v==null?'':v).replace(/"/g,'""')+'"';
+  let csv='\uFEFF'+head.map(esc2).join(SEP)+'\n';
+  rows.forEach(r=>{
+    const c=calcRow(r,cfg);
+    const vcThb=(r.vc===''||r.vc==null)?c.vcThb:num(r.vc);
+    csv+=[r.ten,num(r.sl)||1,num(r.giaNhap),num(r.kg),Math.round(c.kho),Math.round(c.dv),Math.round(c.cod),Math.round(c.tele),Math.round(c.acc),vcThb,num(r.bienLai),Math.round(c.giaBanVnd),Math.round(c.giaBanThb)].map(esc2).join(SEP)+'\n';
+  });
+  const blob=new Blob([csv],{type:'text/csv;charset=utf-8;'});
+  const a=document.createElement('a');
+  a.href=URL.createObjectURL(blob);
+  a.download='gia-ban-'+cname+'.csv';
+  a.click();
+};
+
+// ---- Khởi tạo: khôi phục dữ liệu đã lưu ----
+try{
+  const saved=localStorage.getItem('pricingData');
+  if(saved){
+    const parsed=JSON.parse(saved);
+    // Merge để giữ cfg mặc định nếu thiếu
+    ['thai','lao','cam'].forEach(k=>{
+      if(parsed[k]){
+        DATA[k].cfg={...DEFAULTS[k], ...(parsed[k].cfg||{})};
+        DATA[k].rows=parsed[k].rows||[];
+      }
+    });
+  }
+}catch(e){}
+
+// Seed 1 dòng trống nếu chưa có gì
+if(!DATA.thai.rows.length) DATA.thai.rows.push({ten:'', sl:'', giaNhap:'', kg:'', vc:'', bienLai:''});
+
+loadConfigInputs();
+render();
+</script>
+</body></html>
