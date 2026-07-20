@@ -629,14 +629,28 @@ export function mountThailand(app, { mysql, requireLogin, express, getCampaigns,
     if (!isAdmin) return res.status(403).json({ ok: false, message: 'Chỉ admin mới được thêm sản phẩm' });
     const { ma_mau, ten_sp } = req.body || {};
     if (!ma_mau || !ma_mau.trim()) return res.json({ ok: false, message: 'Thiếu mã mẫu mã' });
+    const code = ma_mau.trim().toUpperCase();
+    const name = (ten_sp || '').trim();
     const p = await db();
-    try {
-      await p.query('INSERT INTO th_products (ma_mau, ten_sp) VALUES (?, ?)', [ma_mau.trim().toUpperCase(), (ten_sp || '').trim()]);
+    // Nếu mã đã tồn tại (kể cả đã xoá mềm) → kích hoạt lại + cập nhật tên
+    const [existing] = await p.query('SELECT id, active FROM th_products WHERE ma_mau = ?', [code]);
+    if (existing.length) {
+      await p.query('UPDATE th_products SET ten_sp = ?, active = 1 WHERE ma_mau = ?', [name, code]);
+      res.json({ ok: true, reactivated: existing[0].active === 0 });
+    } else {
+      await p.query('INSERT INTO th_products (ma_mau, ten_sp) VALUES (?, ?)', [code, name]);
       res.json({ ok: true });
-    } catch (e) {
-      if (e.code === 'ER_DUP_ENTRY') return res.json({ ok: false, message: 'Mã mẫu mã đã tồn tại' });
-      throw e;
     }
+  }));
+  // Sửa tên sản phẩm (chỉ admin)
+  app.post('/thailand/api/product/update', thaiAuth, express.json(), wrap(async (req, res) => {
+    const { isAdmin } = thaiWho(req);
+    if (!isAdmin) return res.status(403).json({ ok: false, message: 'Chỉ admin' });
+    const { id, ten_sp } = req.body || {};
+    if (!id) return res.json({ ok: false, message: 'Thiếu id' });
+    const p = await db();
+    await p.query('UPDATE th_products SET ten_sp = ? WHERE id = ?', [(ten_sp || '').trim(), id]);
+    res.json({ ok: true });
   }));
   // Xoá sản phẩm (soft delete, chỉ admin)
   app.post('/thailand/api/product/delete', thaiAuth, express.json(), wrap(async (req, res) => {
@@ -2015,12 +2029,17 @@ function renderProducts(){
   if(!REG_PRODUCTS.length){$('prodList').innerHTML='<div class="empty">Chưa có sản phẩm nào. Admin thêm mã mẫu mã ở trên.</div>';return;}
   let h='<table style="min-width:auto;"><thead><tr><th>Mã mẫu mã</th><th>Tên sản phẩm</th>'+(REG_IS_ADMIN?'<th></th>':'')+'</tr></thead><tbody>';
   REG_PRODUCTS.forEach(p=>{
-    h+='<tr><td><b>'+esc(p.ma_mau)+'</b></td><td class="muted">'+esc(p.ten_sp||'—')+'</td>';
+    h+='<tr><td><b>'+esc(p.ma_mau)+'</b></td>'
+      +'<td>'+(REG_IS_ADMIN
+        ?'<input class="ed edprod" data-id="'+p.id+'" value="'+esc(p.ten_sp||'')+'" placeholder="Nhập tên sản phẩm…" style="min-width:180px;">'
+        :'<span class="muted">'+esc(p.ten_sp||'—')+'</span>')+'</td>';
     if(REG_IS_ADMIN) h+='<td><span class="del" style="cursor:pointer" onclick="delProd('+p.id+')">✕</span></td>';
     h+='</tr>';
   });
   h+='</tbody></table>';
   $('prodList').innerHTML=h;
+  // Gắn sự kiện sửa tên sản phẩm
+  document.querySelectorAll('.edprod').forEach(el=>el.onchange=()=>updProd(+el.dataset.id,el.value));
 }
 
 function renderLinks(){
@@ -2052,6 +2071,11 @@ $('pAdd').onclick=async()=>{
     $('fSp').innerHTML='<option value="">Mọi sản phẩm</option>';
   }catch(e){alert('Lỗi kết nối');}
 };
+
+// Sửa tên sản phẩm (inline)
+async function updProd(id,ten_sp){
+  try{await fetch('/thailand/api/product/update',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({id,ten_sp})});}catch(e){}
+}
 
 // Xoá sản phẩm
 async function delProd(id){
