@@ -2137,9 +2137,9 @@ async function buildSalaryReport(since, until) {
     // Hoa hồng leader = ½ × tổng lương 2% của nhân viên trong nhóm
     // (KHÔNG tính lương của chính team lead)
     const TEAM_LEAD = {
-      'Trịnh Đức Phương': ['Đoàn Việt Hà', 'Nguyễn Duy Huân', 'Vũ Thuý An'],
-      'Tạ Quang Trường':  ['Nguyễn Thị Trà My', 'Dương Văn Minh', 'Lê Thị Ánh'],
-    };
+  'Trịnh Đức Phương': ['Đoàn Việt Hà', 'Nguyễn Duy Huân', 'Vũ Thuý An', 'Lê Thị Ánh Tuyết', 'Phạm Quang Tùng'],
+  'Tạ Quang Trường':  ['Nguyễn Thị Trà My', 'Dương Văn Minh', 'Lê Thị Ánh', 'Lưu Xuân Phong', 'Nguyễn Thị Thu Phương'],
+};
 
     // Tính lương 2% từng người trước, lưu vào luongByName
     const luongByName = {};
