@@ -47,33 +47,56 @@ import('./users.js')
   .catch(() => console.log('Chưa tìm thấy users.js — đang dùng tài khoản admin mặc định.'));
 
 /* =========================================================================
-   DANH SÁCH NHÂN VIÊN  ← BẠN ĐIỀN PHẦN NÀY
-   Điền tên tất cả nhân viên chạy quảng cáo. Hệ thống sẽ tìm tên này
-   XUẤT HIỆN trong tên chiến dịch, dù viết kiểu nào:
-     "Phương- Balo..."   "29/3 Phương"   "Huân Máy cho cá ăn"  → đều nhận ra.
-   - Tên có dấu hay không đều khớp (Phương = Phuong).
-   - Nếu hai người tên gần giống nhau, ghi đầy đủ hơn (vd "Việt Hà").
+   DANH SÁCH NHÂN VIÊN — Quản lý qua file employees.json (trang /employees.html)
+   Hệ thống tự tìm tên trong tên chiến dịch Meta Ads để nhận diện nhân viên.
    ========================================================================= */
-const EMPLOYEES = [
-  // { code: mã đứng đầu tên chiến dịch, short: tên ngắn (chiến dịch cũ), full: tên hiển thị (giống Sandbox) }
-  // bhxh: số tiền BHXH mặc định hàng tháng (điền 0 nếu không có)
-  { code: 'TD1',  short: 'Trường',  full: 'Tạ Quang Trường',   bhxh: 598500 },
-  { code: 'TD2',  short: 'Phương',  full: 'Trịnh Đức Phương',  bhxh: 598500 },
-  { code: 'TD3',  short: 'Hiếu',    full: 'Nguyễn Trung Hiếu', bhxh: 577500 },
-  { code: 'TD4',  short: 'My',      full: 'Nguyễn Thị Trà My', bhxh: 577500 },
-  { code: 'TD5',  short: 'Ánh',     full: 'Lê Thị Ánh',        bhxh: 577500 },
-  { code: 'TD6',  short: 'Huân',    full: 'Nguyễn Duy Huân',   bhxh: 0 },
-  { code: 'TD7',  short: 'Minh',    full: 'Dương Văn Minh',    bhxh: 577500 },
-  { code: 'TD8',  short: 'Giang',   full: 'Vũ Hà Giang',       bhxh: 577500 },
-  { code: 'TD9',  short: 'Việt Hà', full: 'Đoàn Việt Hà',      bhxh: 577500 },
-  { code: 'TD11',  short: 'Tuyết', full: 'Lê Thị Ánh Tuyết',      bhxh: 0 },
-  { code: 'TD12',  short: 'Tùng', full: 'Phạm Quang Tùng',      bhxh: 0 },
-  { code: 'TD13',  short: 'Phong', full: 'Lưu Xuân Phong',      bhxh: 0 },
-  { code: 'TD14',  short: 'Thu Phương', full: 'Nguyễn Thị Thu Phương',      bhxh: 0 },
-  { code: 'TD10', short: 'Thuý An', full: 'Vũ Thuý An', aliases: ['Thúy An'], bhxh: 0 },
-  // Nhân viên cũ (chiến dịch cũ chưa có mã) — giữ để vẫn nhận ra, xóa nếu không cần:
-  { code: '',     short: 'Thắng',   full: 'Thắng', bhxh: 0 },
+const EMP_FILE = path.join(DATA_DIR, 'employees.json');
+
+// Dữ liệu mặc định (seed lần đầu nếu chưa có file)
+const EMPLOYEES_DEFAULT = [
+  { code: 'TD1',  short: 'Trường',  full: 'Tạ Quang Trường',   bhxh: 598500, aliases: [], team: '', isLead: true, active: true },
+  { code: 'TD2',  short: 'Phương',  full: 'Trịnh Đức Phương',  bhxh: 598500, aliases: [], team: '', isLead: true, active: true },
+  { code: 'TD3',  short: 'Hiếu',    full: 'Nguyễn Trung Hiếu', bhxh: 577500, aliases: [], team: '', isLead: false, active: true },
+  { code: 'TD4',  short: 'My',      full: 'Nguyễn Thị Trà My', bhxh: 577500, aliases: [], team: 'Tạ Quang Trường', isLead: false, active: true },
+  { code: 'TD5',  short: 'Ánh',     full: 'Lê Thị Ánh',        bhxh: 577500, aliases: [], team: 'Tạ Quang Trường', isLead: false, active: true },
+  { code: 'TD6',  short: 'Huân',    full: 'Nguyễn Duy Huân',   bhxh: 0,      aliases: [], team: 'Trịnh Đức Phương', isLead: false, active: true },
+  { code: 'TD7',  short: 'Minh',    full: 'Dương Văn Minh',    bhxh: 577500, aliases: [], team: 'Tạ Quang Trường', isLead: false, active: true },
+  { code: 'TD8',  short: 'Giang',   full: 'Vũ Hà Giang',       bhxh: 577500, aliases: [], team: '', isLead: false, active: true },
+  { code: 'TD9',  short: 'Việt Hà', full: 'Đoàn Việt Hà',      bhxh: 577500, aliases: [], team: 'Trịnh Đức Phương', isLead: false, active: true },
+  { code: 'TD10', short: 'Thuý An', full: 'Vũ Thuý An',         bhxh: 0,     aliases: ['Thúy An'], team: 'Trịnh Đức Phương', isLead: false, active: true },
+  { code: 'TD11', short: 'Tuyết',   full: 'Lê Thị Ánh Tuyết',  bhxh: 0,      aliases: [], team: 'Trịnh Đức Phương', isLead: false, active: true },
+  { code: 'TD12', short: 'Tùng',    full: 'Phạm Quang Tùng',   bhxh: 0,      aliases: [], team: 'Trịnh Đức Phương', isLead: false, active: true },
+  { code: 'TD13', short: 'Phong',   full: 'Lưu Xuân Phong',    bhxh: 0,      aliases: [], team: 'Tạ Quang Trường', isLead: false, active: true },
+  { code: 'TD14', short: 'Thu Phương', full: 'Nguyễn Thị Thu Phương', bhxh: 0, aliases: [], team: 'Tạ Quang Trường', isLead: false, active: true },
 ];
+
+// Load/Save employees
+let EMPLOYEES = [];
+function loadEmployees() {
+  try {
+    const raw = JSON.parse(fs.readFileSync(EMP_FILE, 'utf8'));
+    EMPLOYEES = Array.isArray(raw) ? raw : (raw.employees || []);
+  } catch {
+    EMPLOYEES = JSON.parse(JSON.stringify(EMPLOYEES_DEFAULT));
+    saveEmployees();
+  }
+}
+function saveEmployees() {
+  try { fs.writeFileSync(EMP_FILE, JSON.stringify(EMPLOYEES, null, 2)); } catch (e) { console.error('[employees] Lỗi ghi file:', e.message); }
+}
+loadEmployees();
+
+// Tự sinh TEAM_LEAD từ danh sách nhân viên
+function getTeamLead() {
+  const map = {};
+  const leads = EMPLOYEES.filter(e => e.isLead && e.active);
+  for (const lead of leads) map[lead.full] = [];
+  for (const e of EMPLOYEES) {
+    if (!e.active || e.isLead || !e.team) continue;
+    if (map[e.team]) map[e.team].push(e.full);
+  }
+  return map;
+}
 
 /* Nhận diện nhân viên: tách tên chiến dịch thành các "chữ" riêng, rồi tìm xem
    tên nhân viên có xuất hiện trọn vẹn như một (hoặc vài) chữ liền nhau không.
@@ -441,6 +464,65 @@ app.get('/api/me', (req, res) => {
   const u = req.session.user || {};
   const displayName = u.salaryName || u.manager || (u.employees && u.employees[0]) || u.user || '';
   res.json({ user: u.user, role: u.role, manager: u.manager || '', employees: u.employees || [], salaryName: u.salaryName || '', displayName });
+});
+
+// ====================== QUẢN LÝ NHÂN VIÊN (admin only) ======================
+// Danh sách nhân viên
+app.get('/api/employees', (req, res) => {
+  const me = req.session.user || {};
+  if (me.role !== 'admin') return res.status(403).json({ ok: false });
+  const leads = EMPLOYEES.filter(e => e.isLead && e.active).map(e => e.full);
+  res.json({ ok: true, employees: EMPLOYEES.filter(e => e.active), leads, teamLead: getTeamLead() });
+});
+// Thêm nhân viên
+app.post('/api/employees/add', express.json(), (req, res) => {
+  const me = req.session.user || {};
+  if (me.role !== 'admin') return res.status(403).json({ ok: false });
+  const { full, short: shortName, code, bhxh, aliases, team, isLead } = req.body || {};
+  if (!full || !full.trim()) return res.json({ ok: false, message: 'Thiếu tên nhân viên' });
+  if (EMPLOYEES.find(e => e.active && e.full === full.trim())) return res.json({ ok: false, message: 'Nhân viên đã tồn tại' });
+  // Tự tạo mã nếu không điền
+  let empCode = (code || '').trim().toUpperCase();
+  if (!empCode) {
+    const maxNum = EMPLOYEES.reduce((m, e) => { const n = parseInt((e.code || '').replace(/\D/g, ''), 10); return n > m ? n : m; }, 0);
+    empCode = 'TD' + (maxNum + 1);
+  }
+  EMPLOYEES.push({
+    code: empCode, short: (shortName || '').trim() || full.trim().split(' ').pop(),
+    full: full.trim(), bhxh: parseInt(bhxh) || 0, aliases: Array.isArray(aliases) ? aliases : [],
+    team: (team || '').trim(), isLead: !!isLead, active: true,
+  });
+  saveEmployees();
+  res.json({ ok: true });
+});
+// Sửa nhân viên
+app.post('/api/employees/update', express.json(), (req, res) => {
+  const me = req.session.user || {};
+  if (me.role !== 'admin') return res.status(403).json({ ok: false });
+  const { full, ...fields } = req.body || {};
+  if (!full) return res.json({ ok: false, message: 'Thiếu tên nhân viên' });
+  const emp = EMPLOYEES.find(e => e.full === full);
+  if (!emp) return res.json({ ok: false, message: 'Không tìm thấy' });
+  // Cập nhật các field được gửi
+  if (fields.short !== undefined) emp.short = fields.short;
+  if (fields.code !== undefined) emp.code = fields.code;
+  if (fields.bhxh !== undefined) emp.bhxh = parseInt(fields.bhxh) || 0;
+  if (fields.team !== undefined) emp.team = fields.team;
+  if (fields.isLead !== undefined) emp.isLead = !!fields.isLead;
+  if (fields.aliases !== undefined) emp.aliases = Array.isArray(fields.aliases) ? fields.aliases : [];
+  saveEmployees();
+  res.json({ ok: true });
+});
+// Xoá nhân viên (soft delete)
+app.post('/api/employees/delete', express.json(), (req, res) => {
+  const me = req.session.user || {};
+  if (me.role !== 'admin') return res.status(403).json({ ok: false });
+  const { full } = req.body || {};
+  const emp = EMPLOYEES.find(e => e.full === full);
+  if (!emp) return res.json({ ok: false, message: 'Không tìm thấy' });
+  emp.active = false;
+  saveEmployees();
+  res.json({ ok: true });
 });
 
 // QUYỀN "product": chỉ được vào trang Sản phẩm + API sản phẩm của mình.
@@ -2136,10 +2218,7 @@ async function buildSalaryReport(since, until) {
     // ── Cấu hình Team Lead ────────────────────────────────────────────
     // Hoa hồng leader = ½ × tổng lương 2% của nhân viên trong nhóm
     // (KHÔNG tính lương của chính team lead)
-    const TEAM_LEAD = {
-  'Trịnh Đức Phương': ['Đoàn Việt Hà', 'Nguyễn Duy Huân', 'Vũ Thuý An', 'Lê Thị Ánh Tuyết', 'Phạm Quang Tùng'],
-  'Tạ Quang Trường':  ['Nguyễn Thị Trà My', 'Dương Văn Minh', 'Lê Thị Ánh', 'Lưu Xuân Phong', 'Nguyễn Thị Thu Phương'],
-};
+    const TEAM_LEAD = getTeamLead();
 
     // Tính lương 2% từng người trước, lưu vào luongByName
     const luongByName = {};
