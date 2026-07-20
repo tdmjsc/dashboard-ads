@@ -76,6 +76,25 @@ function loadEmployees() {
   try {
     const raw = JSON.parse(fs.readFileSync(EMP_FILE, 'utf8'));
     EMPLOYEES = Array.isArray(raw) ? raw : (raw.employees || []);
+    // Migration: nếu file cũ thiếu field team/isLead → bổ sung từ DEFAULT
+    let migrated = false;
+    for (const emp of EMPLOYEES) {
+      if (emp.team === undefined || emp.isLead === undefined) {
+        const def = EMPLOYEES_DEFAULT.find(d => d.full === emp.full);
+        if (emp.team === undefined) { emp.team = def ? def.team : ''; migrated = true; }
+        if (emp.isLead === undefined) { emp.isLead = def ? def.isLead : false; migrated = true; }
+        if (emp.active === undefined) { emp.active = true; migrated = true; }
+        if (emp.aliases === undefined) { emp.aliases = def ? def.aliases : []; migrated = true; }
+      }
+    }
+    // Thêm NV mới từ DEFAULT mà file cũ chưa có
+    for (const def of EMPLOYEES_DEFAULT) {
+      if (!EMPLOYEES.find(e => e.full === def.full)) {
+        EMPLOYEES.push(JSON.parse(JSON.stringify(def)));
+        migrated = true;
+      }
+    }
+    if (migrated) saveEmployees();
   } catch {
     EMPLOYEES = JSON.parse(JSON.stringify(EMPLOYEES_DEFAULT));
     saveEmployees();
