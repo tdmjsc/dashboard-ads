@@ -486,6 +486,17 @@ app.get('/api/me', (req, res) => {
 });
 
 // ====================== QUẢN LÝ NHÂN VIÊN (admin only) ======================
+// Cơ cấu team (chỉ đọc) — cho MỌI user đã đăng nhập dùng để lọc theo team
+app.get('/api/teams', (req, res) => {
+  if (!req.session.user) return res.status(401).json({ ok: false });
+  const teamLead = getTeamLead();
+  // Đưa cả leader vào danh sách thành viên của chính team đó (để lọc bao gồm cả leader)
+  const teams = {};
+  for (const [lead, members] of Object.entries(teamLead)) {
+    teams[lead] = [lead, ...members];
+  }
+  res.json({ ok: true, teams });
+});
 // Danh sách nhân viên
 app.get('/api/employees', (req, res) => {
   const me = req.session.user || {};
