@@ -66,8 +66,6 @@
     <button class="btn" id="refreshBtn">Xem</button>
     <select class="pick" id="teamFilter">
       <option value="all">🏠 Mọi nhân viên</option>
-      <option value="Trịnh Đức Phương">👑 Team Phương</option>
-      <option value="Tạ Quang Trường">👑 Team Trường</option>
     </select>
     <a href="/" class="link">← Dashboard</a>
     <a href="/products.html" class="link" id="navProducts">Sản phẩm</a>
@@ -101,13 +99,32 @@
 
 <script>
 
-// Cấu hình team: key = tên leader (đúng chính tả), value = danh sách tên thành viên trong team (bao gồm cả leader)
-const TEAMS = {
-  'Trịnh Đức Phương': ['Trịnh Đức Phương','Đoàn Việt Hà','Nguyễn Duy Huân','Vũ Thuý An'],
-  'Tạ Quang Trường':  ['Tạ Quang Trường','Nguyễn Thị Trà My','Dương Văn Minh','Lê Thị Ánh'],
-};
+// Cơ cấu team lấy từ API /api/teams (nguồn: trang Quản lý nhân viên) — KHÔNG hardcode
+let TEAMS = {};
 const normName = s => String(s==null?'':s).trim().toLowerCase().replace(/\s+/g,' ');
 let currentTeam = 'all'; // 'all' | tên leader
+
+// Tải cơ cấu team + dựng dropdown lọc
+async function loadTeams(){
+  try{
+    const r = await fetch('/api/teams');
+    if(!r.ok) return;
+    const d = await r.json();
+    if(!d.ok || !d.teams) return;
+    TEAMS = d.teams;
+    // Dựng dropdown: giữ "Mọi nhân viên", thêm từng team lead
+    const sel = $('teamFilter');
+    const keep = currentTeam;
+    sel.innerHTML = '<option value="all">🏠 Mọi nhân viên</option>';
+    Object.keys(TEAMS).forEach(lead=>{
+      // Tên hiển thị ngắn: lấy chữ cuối của tên lead (VD "Trịnh Đức Phương" → "Phương")
+      const shortName = lead.split(' ').slice(-1)[0];
+      sel.insertAdjacentHTML('beforeend', '<option value="'+esc(lead)+'">👑 Team '+esc(shortName)+'</option>');
+    });
+    // Khôi phục lựa chọn nếu vẫn còn hợp lệ
+    if(keep!=='all' && TEAMS[keep]) sel.value = keep;
+  }catch(e){}
+}
 
 const vnd = n => (Number(n)||0).toLocaleString('vi-VN');
 const pctf = n => (n==null||isNaN(n)) ? '–' : (Math.round(Number(n)*10)/10).toLocaleString('vi-VN') + '%';
@@ -218,7 +235,8 @@ $('teamFilter').addEventListener('change', function(){
 fetch('/api/me').then(r=>r.ok?r.json():null).then(me=>{
   if(me && me.role!=='admin'){ const np=document.getElementById('navProducts'); if(np) np.style.display='none'; }
 }).catch(()=>{});
-load();
+// Tải cơ cấu team trước, rồi tải dữ liệu
+loadTeams().finally(load);
 
 // Hiện tên nhân viên cạnh nút đăng xuất
 fetch('/api/me').then(r=>r.ok?r.json():null).then(me=>{
