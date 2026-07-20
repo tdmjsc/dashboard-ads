@@ -103,6 +103,21 @@ async function ensureTable(pool) {
       INDEX idx_active (active)
     ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
   `);
+
+  // ===== Bảng combo sản phẩm (SL + giá theo từng combo) =====
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS th_combos (
+      id INT AUTO_INCREMENT PRIMARY KEY,
+      ma_mau VARCHAR(80) NOT NULL DEFAULT '',
+      ten_combo VARCHAR(255) DEFAULT '',
+      so_luong INT DEFAULT 1,
+      gia_thb INT DEFAULT 0,
+      active TINYINT DEFAULT 1,
+      created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+      INDEX idx_mau (ma_mau),
+      INDEX idx_active (active)
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+  `);
 }
 
 // =====================================================================
@@ -260,8 +275,28 @@ export function mountThailand(app, { mysql, requireLogin, express, getCampaigns,
     const maMau = (matched && matched.ma_mau) || TDFFM_MA_MAU;
     const nhanVien = (matched && matched.nhan_vien) || nhanVienRaw;
 
-    const { soLuong, gia } = parseCombo(message);
+    // ---- MATCH COMBO: tìm SL + giá từ bảng combo theo sản phẩm ----
     const p = await db();
+    let soLuong = 0, gia = 0, comboMatched = false;
+    // Trích tổng tiền THB từ tin nhắn (cộng tất cả số đứng trước "THB")
+    const parsedFallback = parseCombo(message);
+    const parsedGia = parsedFallback.gia;
+    if (maMau && parsedGia > 0) {
+      const [combos] = await p.query('SELECT so_luong, gia_thb, ten_combo FROM th_combos WHERE ma_mau = ? AND active = 1', [maMau]);
+      // Tìm combo có giá khớp chính xác
+      const hit = combos.find(c => c.gia_thb === parsedGia);
+      if (hit) {
+        soLuong = hit.so_luong;
+        gia = hit.gia_thb;
+        comboMatched = true;
+      }
+    }
+    // Fallback: parseCombo cũ nếu không match combo nào
+    if (!comboMatched) {
+      soLuong = parsedFallback.soLuong;
+      gia = parsedFallback.gia;
+    }
+
     const today = todayVN();
     await p.query(
       `INSERT INTO th_orders (ngay_ve, ho_ten, sdt, dia_chi, combo, so_luong, gia_thb, nhan_vien, trang_thai, ghi_chu, ma_mau, nguon_url)
@@ -336,7 +371,9 @@ export function mountThailand(app, { mysql, requireLogin, express, getCampaigns,
     const [prodRows] = await p.query('SELECT ma_mau, ten_sp FROM th_products WHERE active = 1 ORDER BY ma_mau');
     const dsMau = prodRows.map(r => r.ma_mau);
     const dsProducts = prodRows;
-    res.json({ ok: true, orders: rows, nhanViens, trangThais: TRANG_THAI, dsMau, dsProducts, maMauDefault: TDFFM_MA_MAU, isAdmin, myName });
+    // Danh sách combo cho modal thêm đơn
+    const [comboRows] = await p.query('SELECT id, ma_mau, ten_combo, so_luong, gia_thb FROM th_combos WHERE active = 1 ORDER BY ma_mau, gia_thb');
+    res.json({ ok: true, orders: rows, nhanViens, trangThais: TRANG_THAI, dsMau, dsProducts, dsCombos: comboRows, maMauDefault: TDFFM_MA_MAU, isAdmin, myName });
   }));
 
   // Cập nhật 1 đơn (trạng thái, nhân viên, hoặc sửa thông tin)
@@ -704,6 +741,55 @@ export function mountThailand(app, { mysql, requireLogin, express, getCampaigns,
     } else {
       await p.query('UPDATE th_link_registry SET active = 0 WHERE id = ? AND nhan_vien = ?', [id, myName]);
     }
+    res.json({ ok: true });
+  }));
+
+  // ====================== QUẢN LÝ COMBO SẢN PHẨM ======================
+  // Danh sách combo (tất cả hoặc lọc theo sản phẩm)
+  app.get('/thailand/api/combos', thaiAuth, wrap(async (req, res) => {
+    const p = await db();
+    const { ma_mau } = req.query;
+    let rows;
+    if (ma_mau) {
+      [rows] = await p.query('SELECT * FROM th_combos WHERE active = 1 AND ma_mau = ? ORDER BY gia_thb', [ma_mau]);
+    } else {
+      [rows] = await p.query('SELECT * FROM th_combos WHERE active = 1 ORDER BY ma_mau, gia_thb');
+    }
+    res.json({ ok: true, combos: rows });
+  }));
+  // Thêm combo (chỉ admin)
+  app.post('/thailand/api/combo/add', thaiAuth, express.json(), wrap(async (req, res) => {
+    const { isAdmin } = thaiWho(req);
+    if (!isAdmin) return res.status(403).json({ ok: false, message: 'Chỉ admin' });
+    const { ma_mau, ten_combo, so_luong, gia_thb } = req.body || {};
+    if (!ma_mau) return res.json({ ok: false, message: 'Chưa chọn sản phẩm' });
+    if (!gia_thb && gia_thb !== 0) return res.json({ ok: false, message: 'Thiếu giá THB' });
+    const p = await db();
+    await p.query(
+      'INSERT INTO th_combos (ma_mau, ten_combo, so_luong, gia_thb) VALUES (?, ?, ?, ?)',
+      [ma_mau.trim(), (ten_combo || '').trim(), parseInt(so_luong) || 1, parseInt(gia_thb) || 0]
+    );
+    res.json({ ok: true });
+  }));
+  // Sửa combo (chỉ admin)
+  app.post('/thailand/api/combo/update', thaiAuth, express.json(), wrap(async (req, res) => {
+    const { isAdmin } = thaiWho(req);
+    if (!isAdmin) return res.status(403).json({ ok: false, message: 'Chỉ admin' });
+    const { id, ten_combo, so_luong, gia_thb } = req.body || {};
+    if (!id) return res.json({ ok: false, message: 'Thiếu id' });
+    const p = await db();
+    await p.query('UPDATE th_combos SET ten_combo = ?, so_luong = ?, gia_thb = ? WHERE id = ?',
+      [(ten_combo || '').trim(), parseInt(so_luong) || 1, parseInt(gia_thb) || 0, id]);
+    res.json({ ok: true });
+  }));
+  // Xoá combo (chỉ admin)
+  app.post('/thailand/api/combo/delete', thaiAuth, express.json(), wrap(async (req, res) => {
+    const { isAdmin } = thaiWho(req);
+    if (!isAdmin) return res.status(403).json({ ok: false, message: 'Chỉ admin' });
+    const { id } = req.body || {};
+    if (!id) return res.json({ ok: false, message: 'Thiếu id' });
+    const p = await db();
+    await p.query('UPDATE th_combos SET active = 0 WHERE id = ?', [id]);
     res.json({ ok: true });
   }));
 
@@ -1614,15 +1700,17 @@ table{width:100%;border-collapse:collapse;background:#101B2E;min-width:900px;}
       <input id="m_sdt" placeholder="SĐT">
       <label>Địa chỉ</label>
       <textarea id="m_diachi" placeholder="Địa chỉ giao hàng"></textarea>
-      <label>Combo (chuỗi tiếng Thái — tự tách SL + giá)</label>
-      <textarea id="m_combo" placeholder="VD: คอมโบ 2 กล่อง: 549 THB..."></textarea>
-      <div class="hint">Hoặc nhập tay SL + giá bên dưới (nếu để trống sẽ tự tách từ combo)</div>
-      <div class="row">
-        <div><label>Số lượng</label><input id="m_sl" inputmode="numeric" placeholder="tự tách"></div>
-        <div><label>Giá THB</label><input id="m_gia" inputmode="numeric" placeholder="tự tách"></div>
-      </div>
       <label>Sản phẩm</label>
       <select id="m_mau"></select>
+      <label>Combo</label>
+      <select id="m_combo_sel"><option value="">— Chọn combo (hoặc nhập tay) —</option></select>
+      <div class="hint">Chọn combo sẽ tự điền SL + giá. Hoặc nhập tay bên dưới.</div>
+      <div class="row">
+        <div><label>Số lượng</label><input id="m_sl" inputmode="numeric" placeholder="tự điền"></div>
+        <div><label>Giá THB</label><input id="m_gia" inputmode="numeric" placeholder="tự điền"></div>
+      </div>
+      <label>Tin nhắn gốc (tuỳ chọn)</label>
+      <textarea id="m_combo" placeholder="VD: คอมโบ 2 กล่อง: 549 THB..." style="min-height:50px;"></textarea>
       <label>Nhân viên marketing</label>
       <input id="m_nv" placeholder="Tên nhân viên">
       <div class="modal-actions">
@@ -1658,6 +1746,18 @@ table{width:100%;border-collapse:collapse;background:#101B2E;min-width:900px;}
         <div id="linkList"><div class="empty">Đang tải…</div></div>
       </div>
     </div>
+    <!-- Hàng dưới: Quản lý Combo -->
+    <div style="margin-top:24px;">
+      <h3 style="margin:0 0 12px;font-size:15px;">🎁 Combo sản phẩm (SL + giá theo combo)</h3>
+      <div id="comboAdminForm" style="display:flex;gap:8px;margin-bottom:14px;flex-wrap:wrap;align-items:flex-end;">
+        <div><label style="font-size:11px;color:#9FB0C8;">Sản phẩm</label><select id="cMau" style="width:150px;font-size:13px;padding:8px 10px;border-radius:8px;border:1px solid rgba(255,255,255,.12);background:rgba(255,255,255,.06);color:#fff;color-scheme:dark;display:block;margin-top:4px;"></select></div>
+        <div><label style="font-size:11px;color:#9FB0C8;">Tên combo</label><input id="cTen" placeholder="VD: 3 hộp tặng 1" style="width:160px;font-size:13px;padding:8px 10px;border-radius:8px;border:1px solid rgba(255,255,255,.12);background:rgba(255,255,255,.06);color:#fff;display:block;margin-top:4px;"></div>
+        <div><label style="font-size:11px;color:#9FB0C8;">SL thực nhận</label><input id="cSl" inputmode="numeric" placeholder="4" style="width:80px;font-size:13px;padding:8px 10px;border-radius:8px;border:1px solid rgba(255,255,255,.12);background:rgba(255,255,255,.06);color:#fff;display:block;margin-top:4px;"></div>
+        <div><label style="font-size:11px;color:#9FB0C8;">Giá THB</label><input id="cGia" inputmode="numeric" placeholder="849" style="width:80px;font-size:13px;padding:8px 10px;border-radius:8px;border:1px solid rgba(255,255,255,.12);background:rgba(255,255,255,.06);color:#fff;display:block;margin-top:4px;"></div>
+        <button class="btn g" id="cAdd" style="margin-bottom:0;">+ Thêm</button>
+      </div>
+      <div id="comboList"><div class="empty">Đang tải…</div></div>
+    </div>
   </div>
 </main>
 
@@ -1665,7 +1765,7 @@ table{width:100%;border-collapse:collapse;background:#101B2E;min-width:900px;}
 const $=id=>document.getElementById(id);
 const esc=s=>String(s==null?'':s).replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
 const thb=n=>(Number(n)||0).toLocaleString('en-US');
-let TT=[], NV=[], DSMAU=[], PRODUCTS=[], MAU_DEFAULT='', IS_ADMIN=true;
+let TT=[], NV=[], DSMAU=[], PRODUCTS=[], COMBOS=[], MAU_DEFAULT='', IS_ADMIN=true;
 
 function tabSwitch(t){
   $('tabOrders').classList.toggle('on',t==='orders');
@@ -1696,7 +1796,7 @@ async function loadOrders(){
     if(r.status===401){location.href='/thailand/login';return;}
     const d=await r.json();
     if(!d.ok){$('tbl').innerHTML='<div class="empty">'+esc(d.message)+'</div>';return;}
-    TT=d.trangThais; NV=d.nhanViens; DSMAU=d.dsMau||[]; PRODUCTS=d.dsProducts||[]; MAU_DEFAULT=d.maMauDefault||''; IS_ADMIN=d.isAdmin!==false;
+    TT=d.trangThais; NV=d.nhanViens; DSMAU=d.dsMau||[]; PRODUCTS=d.dsProducts||[]; COMBOS=d.dsCombos||[]; MAU_DEFAULT=d.maMauDefault||''; IS_ADMIN=d.isAdmin!==false;
     // Ẩn nút đẩy + bộ lọc nhân viên với nhân viên thường
     if($('pushBtn')) $('pushBtn').style.display = IS_ADMIN ? '' : 'none';
     if($('csvBtn')) $('csvBtn').style.display = IS_ADMIN ? '' : 'none';
@@ -1814,13 +1914,30 @@ async function del(id){
   try{await fetch('/thailand/api/order/delete',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({id})});loadOrders();}catch(e){}
 }
 
+function fillModalCombos(){
+  const mau=$('m_mau').value;
+  const sel=$('m_combo_sel');
+  sel.innerHTML='<option value="">— Chọn combo (hoặc nhập tay) —</option>';
+  COMBOS.filter(c=>c.ma_mau===mau).forEach(c=>{
+    sel.insertAdjacentHTML('beforeend','<option value="'+c.id+'" data-sl="'+c.so_luong+'" data-gia="'+c.gia_thb+'">'+esc(c.ten_combo||c.gia_thb+' THB')+' → SL: '+c.so_luong+' · '+c.gia_thb+' THB</option>');
+  });
+  $('m_sl').value='';$('m_gia').value='';
+}
 function openAddModal(){
   ['m_ten','m_sdt','m_diachi','m_combo','m_sl','m_gia','m_nv'].forEach(id=>$(id).value='');
-  // Fill dropdown sản phẩm từ PRODUCTS
+  // Fill dropdown sản phẩm
   const sel=$('m_mau');
   sel.innerHTML='';
   const list=PRODUCTS.length?PRODUCTS:[...new Set([MAU_DEFAULT,...DSMAU].filter(Boolean))].map(m=>({ma_mau:m,ten_sp:''}));
   list.forEach(p=>sel.insertAdjacentHTML('beforeend','<option value="'+esc(p.ma_mau)+'"'+(p.ma_mau===MAU_DEFAULT?' selected':'')+'>'+esc(p.ma_mau+(p.ten_sp?' — '+p.ten_sp:''))+'</option>'));
+  // Chọn SP → fill combo
+  sel.onchange=fillModalCombos;
+  fillModalCombos();
+  // Chọn combo → tự điền SL + giá
+  $('m_combo_sel').onchange=function(){
+    const opt=this.options[this.selectedIndex];
+    if(opt&&opt.dataset.sl){$('m_sl').value=opt.dataset.sl;$('m_gia').value=opt.dataset.gia;}
+  };
   $('addModal').classList.add('show');
   $('m_ten').focus();
 }
@@ -1996,29 +2113,37 @@ function initDualScroll() {
 setTimeout(initDualScroll, 300);
 
 // ===== REGISTRY TAB: Sản phẩm + Link =====
-let REG_PRODUCTS=[], REG_LINKS=[], REG_IS_ADMIN=true, REG_MY_NAME='';
+let REG_PRODUCTS=[], REG_LINKS=[], REG_COMBOS=[], REG_IS_ADMIN=true, REG_MY_NAME='';
 
 async function loadRegistry(){
   try{
-    const [pRes, lRes]=await Promise.all([
+    const [pRes, lRes, cRes]=await Promise.all([
       fetch('/thailand/api/products').then(r=>r.json()),
-      fetch('/thailand/api/links').then(r=>r.json())
+      fetch('/thailand/api/links').then(r=>r.json()),
+      fetch('/thailand/api/combos').then(r=>r.json())
     ]);
     REG_PRODUCTS=pRes.ok?pRes.products:[];
     REG_LINKS=lRes.ok?lRes.links:[];
+    REG_COMBOS=cRes.ok?cRes.combos:[];
     REG_IS_ADMIN=lRes.isAdmin!==false;
     // Fill dropdown sản phẩm ở form đăng ký link
     const sel=$('lMau');
     sel.innerHTML='<option value="">Chọn sản phẩm…</option>';
     REG_PRODUCTS.forEach(p=>sel.insertAdjacentHTML('beforeend','<option value="'+esc(p.ma_mau)+'">'+esc(p.ma_mau+(p.ten_sp?' — '+p.ten_sp:''))+'</option>'));
-    // Ẩn form thêm SP nếu không phải admin
+    // Fill dropdown sản phẩm ở form thêm combo
+    const csel=$('cMau');
+    csel.innerHTML='<option value="">Chọn SP…</option>';
+    REG_PRODUCTS.forEach(p=>csel.insertAdjacentHTML('beforeend','<option value="'+esc(p.ma_mau)+'">'+esc(p.ma_mau+(p.ten_sp?' — '+p.ten_sp:''))+'</option>'));
+    // Ẩn form thêm SP + combo nếu không phải admin
     if($('prodAdminForm'))$('prodAdminForm').style.display=REG_IS_ADMIN?'flex':'none';
+    if($('comboAdminForm'))$('comboAdminForm').style.display=REG_IS_ADMIN?'flex':'none';
     // NV: ẩn field tên (tự gán)
     const lnvEl=$('lNv');
     if(!REG_IS_ADMIN && lnvEl){lnvEl.style.display='none';lnvEl.value='';}
     else if(lnvEl) lnvEl.style.display='';
     renderProducts();
     renderLinks();
+    renderCombos();
   }catch(e){
     $('prodList').innerHTML='<div class="empty">Lỗi tải dữ liệu</div>';
     $('linkList').innerHTML='<div class="empty">Lỗi tải dữ liệu</div>';
@@ -2111,6 +2236,71 @@ async function delLink(id){
   if(!confirm('Xoá link này?'))return;
   try{
     await fetch('/thailand/api/link/delete',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({id})});
+    loadRegistry();
+  }catch(e){}
+}
+
+// ===== COMBO MANAGEMENT =====
+function renderCombos(){
+  if(!REG_COMBOS.length){$('comboList').innerHTML='<div class="empty">Chưa có combo nào. Admin thêm combo cho từng sản phẩm ở trên.</div>';return;}
+  // Gom theo sản phẩm
+  const grouped={};
+  REG_COMBOS.forEach(c=>{
+    if(!grouped[c.ma_mau]) grouped[c.ma_mau]=[];
+    grouped[c.ma_mau].push(c);
+  });
+  let h='';
+  for(const [mau,combos] of Object.entries(grouped)){
+    const pName=REG_PRODUCTS.find(p=>p.ma_mau===mau);
+    h+='<div style="margin-bottom:16px;"><div style="font-size:13px;font-weight:600;color:#9DB2FF;margin-bottom:6px;">'+esc(mau)+(pName&&pName.ten_sp?' — '+esc(pName.ten_sp):'')+'</div>';
+    h+='<table style="min-width:auto;"><thead><tr><th>Tên combo</th><th class="num">SL thực nhận</th><th class="num">Giá THB</th>'+(REG_IS_ADMIN?'<th></th>':'')+'</tr></thead><tbody>';
+    combos.forEach(c=>{
+      h+='<tr><td>'+(REG_IS_ADMIN?'<input class="ed edcten" data-id="'+c.id+'" value="'+esc(c.ten_combo||'')+'" placeholder="Tên combo" style="min-width:140px;">':esc(c.ten_combo||'—'))+'</td>'
+        +'<td class="num">'+(REG_IS_ADMIN?'<input class="ed edcsl" data-id="'+c.id+'" value="'+c.so_luong+'" style="width:60px;text-align:right;">':c.so_luong)+'</td>'
+        +'<td class="num">'+(REG_IS_ADMIN?'<input class="ed edcgia" data-id="'+c.id+'" value="'+c.gia_thb+'" style="width:70px;text-align:right;">':c.gia_thb+' ฿')+'</td>';
+      if(REG_IS_ADMIN) h+='<td><span class="del" style="cursor:pointer" onclick="delCombo('+c.id+')">✕</span></td>';
+      h+='</tr>';
+    });
+    h+='</tbody></table></div>';
+  }
+  $('comboList').innerHTML=h;
+  // Inline edit events
+  document.querySelectorAll('.edcten').forEach(el=>el.onchange=()=>updCombo(+el.dataset.id,{ten_combo:el.value}));
+  document.querySelectorAll('.edcsl').forEach(el=>el.onchange=()=>updCombo(+el.dataset.id,{so_luong:parseInt(el.value)||1}));
+  document.querySelectorAll('.edcgia').forEach(el=>el.onchange=()=>updCombo(+el.dataset.id,{gia_thb:parseInt(el.value)||0}));
+}
+
+// Thêm combo
+$('cAdd').onclick=async()=>{
+  const mau=$('cMau').value;
+  const gia=parseInt(($('cGia').value||'').replace(/\D/g,''),10);
+  const sl=parseInt(($('cSl').value||'').replace(/\D/g,''),10);
+  if(!mau){alert('Chọn sản phẩm');return;}
+  if(!gia){alert('Nhập giá THB');return;}
+  if(!sl){alert('Nhập số lượng thực nhận');return;}
+  try{
+    const r=await fetch('/thailand/api/combo/add',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({ma_mau:mau,ten_combo:$('cTen').value.trim(),so_luong:sl,gia_thb:gia})});
+    const d=await r.json();
+    if(!d.ok){alert(d.message||'Lỗi');return;}
+    $('cTen').value='';$('cSl').value='';$('cGia').value='';
+    loadRegistry();
+  }catch(e){alert('Lỗi kết nối');}
+};
+
+// Sửa combo inline
+async function updCombo(id,fields){
+  // Lấy giá trị hiện tại của combo rồi merge
+  const c=REG_COMBOS.find(x=>x.id===id);
+  if(!c) return;
+  const body={id, ten_combo:fields.ten_combo!==undefined?fields.ten_combo:c.ten_combo, so_luong:fields.so_luong!==undefined?fields.so_luong:c.so_luong, gia_thb:fields.gia_thb!==undefined?fields.gia_thb:c.gia_thb};
+  try{await fetch('/thailand/api/combo/update',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});}catch(e){}
+}
+
+// Xoá combo
+async function delCombo(id){
+  if(!confirm('Xoá combo này?'))return;
+  try{
+    await fetch('/thailand/api/combo/delete',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({id})});
     loadRegistry();
   }catch(e){}
 }
