@@ -74,9 +74,35 @@ async function ensureTable(pool) {
     "tdffm_uid VARCHAR(120) DEFAULT ''",
     "tdffm_sync_at DATETIME NULL",
     "ma_sp VARCHAR(100) DEFAULT ''",
+    "nguon_url TEXT",
   ]) {
     try { await pool.query(`ALTER TABLE th_orders ADD COLUMN ${col}`); } catch (e) {}
   }
+
+  // ===== Bảng mã mẫu mã (sản phẩm Thái Lan) =====
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS th_products (
+      id INT AUTO_INCREMENT PRIMARY KEY,
+      ma_mau VARCHAR(80) NOT NULL UNIQUE,
+      ten_sp VARCHAR(255) DEFAULT '',
+      active TINYINT DEFAULT 1,
+      created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+  `);
+
+  // ===== Bảng đăng ký link LP → sản phẩm + nhân viên =====
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS th_link_registry (
+      id INT AUTO_INCREMENT PRIMARY KEY,
+      url_pattern TEXT NOT NULL,
+      ma_mau VARCHAR(80) DEFAULT '',
+      nhan_vien VARCHAR(120) DEFAULT '',
+      ghi_chu VARCHAR(255) DEFAULT '',
+      active TINYINT DEFAULT 1,
+      created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+      INDEX idx_active (active)
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+  `);
 }
 
 // =====================================================================
@@ -168,6 +194,30 @@ export function mountThailand(app, { mysql, requireLogin, express, getCampaigns,
     return { isAdmin, myName };
   }
 
+  // ---- Chuẩn hoá URL để so khớp link registry ----
+  function normUrl(u) {
+    let s = String(u || '').trim().toLowerCase();
+    s = s.replace(/^https?:\/\//, '').replace(/^www\./, '');
+    s = s.replace(/[?#].*$/, '').replace(/\/+$/, '');
+    return s;
+  }
+  // Match URL webhook với link đã đăng ký (trả { ma_mau, nhan_vien } hoặc null)
+  async function matchLink(rawUrl) {
+    if (!rawUrl) return null;
+    const p = await db();
+    const [links] = await p.query('SELECT url_pattern, ma_mau, nhan_vien FROM th_link_registry WHERE active = 1');
+    const incoming = normUrl(rawUrl);
+    if (!incoming) return null;
+    for (const lk of links) {
+      const pattern = normUrl(lk.url_pattern);
+      if (!pattern) continue;
+      if (incoming === pattern || incoming.includes(pattern) || pattern.includes(incoming)) {
+        return { ma_mau: lk.ma_mau || '', nhan_vien: lk.nhan_vien || '' };
+      }
+    }
+    return null;
+  }
+
   // ====================== WEBHOOK NHẬN ĐƠN TỪ LADIPAGE ======================
   // POST /thailand/webhook  — KHÔNG cần đăng nhập (Ladipage gọi tự động)
   // Nhận CẢ JSON lẫn form-urlencoded. Ghi log mọi request để chẩn đoán.
@@ -199,21 +249,26 @@ export function mountThailand(app, { mysql, requireLogin, express, getCampaigns,
     const phone = pick(b, ['phone', 'sdt', 'tel', 'mobile', 'Phone', 'phone_number']);
     const address = pick(b, ['address', 'dia_chi', 'diachi', 'Address', 'add']);
     const message = pick(b, ['combo', 'message', 'form_item11', 'note', 'content', 'Message', 'product']);
-    const nhanVien = pick(b, ['user', 'nhan_vien', 'marketing', 'form_item12', 'ref', 'staff', 'sale', 'utm_source']);
-    // Link landing page nguồn (để biết đơn từ trang nào) — lưu vào ghi_chu
-    const nguon = pick(b, ['url_page', 'link', 'page_url']);
+    const nhanVienRaw = pick(b, ['user', 'nhan_vien', 'marketing', 'form_item12', 'ref', 'staff', 'sale', 'utm_source']);
+    // Link landing page nguồn (để biết đơn từ trang nào)
+    const nguonUrl = pick(b, ['url_page', 'link', 'page_url']);
 
     if (!name && !phone) return res.json({ ok: false, message: 'Thiếu tên và SĐT', received: b });
+
+    // ---- MATCH LINK REGISTRY: URL → sản phẩm + nhân viên ----
+    const matched = await matchLink(nguonUrl);
+    const maMau = (matched && matched.ma_mau) || TDFFM_MA_MAU;
+    const nhanVien = (matched && matched.nhan_vien) || nhanVienRaw;
 
     const { soLuong, gia } = parseCombo(message);
     const p = await db();
     const today = todayVN();
     await p.query(
-      `INSERT INTO th_orders (ngay_ve, ho_ten, sdt, dia_chi, combo, so_luong, gia_thb, nhan_vien, trang_thai, ghi_chu, ma_mau)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'Mới về', ?, ?)`,
-      [today, name, phone, address, message, soLuong, gia, nhanVien, nguon, TDFFM_MA_MAU]
+      `INSERT INTO th_orders (ngay_ve, ho_ten, sdt, dia_chi, combo, so_luong, gia_thb, nhan_vien, trang_thai, ghi_chu, ma_mau, nguon_url)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'Mới về', '', ?, ?)`,
+      [today, name, phone, address, message, soLuong, gia, nhanVien, maMau, nguonUrl]
     );
-    res.json({ ok: true, message: 'Đã nhận đơn', parsed: { soLuong, gia } });
+    res.json({ ok: true, message: 'Đã nhận đơn', parsed: { soLuong, gia, ma_mau: maMau, nhan_vien: nhanVien, matched: !!matched } });
   }));
 
   // Xem log webhook (admin) — để chẩn đoán Ladipage gửi gì
@@ -253,7 +308,7 @@ export function mountThailand(app, { mysql, requireLogin, express, getCampaigns,
   app.get('/thailand/api/orders', thaiAuth, wrap(async (req, res) => {
     const p = await db();
     const { isAdmin, myName } = thaiWho(req);
-    const { tu, den, nv, tt, q, day } = req.query;
+    const { tu, den, nv, tt, q, day, sp } = req.query;
     const where = [], args = [];
     if (tu) { where.push('ngay_ve >= ?'); args.push(tu); }
     if (den) { where.push('ngay_ve <= ?'); args.push(den); }
@@ -266,6 +321,8 @@ export function mountThailand(app, { mysql, requireLogin, express, getCampaigns,
     if (tt) { where.push('trang_thai = ?'); args.push(tt); }
     if (day === 'done') { where.push('da_day = 1'); }
     else if (day === 'pending') { where.push('(da_day = 0 OR da_day IS NULL)'); }
+    // Lọc theo sản phẩm (mã mẫu mã)
+    if (sp) { where.push('ma_mau = ?'); args.push(sp); }
     if (q) { where.push('(ho_ten LIKE ? OR sdt LIKE ? OR dia_chi LIKE ?)'); const like = '%' + q + '%'; args.push(like, like, like); }
     const wsql = where.length ? 'WHERE ' + where.join(' AND ') : '';
     const [rows] = await p.query(`SELECT * FROM th_orders ${wsql} ORDER BY id DESC LIMIT 2000`, args);
@@ -275,7 +332,11 @@ export function mountThailand(app, { mysql, requireLogin, express, getCampaigns,
       const [nvRows] = await p.query(`SELECT DISTINCT nhan_vien FROM th_orders WHERE nhan_vien <> '' ORDER BY nhan_vien`);
       nhanViens = nvRows.map(r => r.nhan_vien);
     }
-    res.json({ ok: true, orders: rows, nhanViens, trangThais: TRANG_THAI, dsMau: TDFFM_DS_MAU, maMauDefault: TDFFM_MA_MAU, isAdmin, myName });
+    // Danh sách sản phẩm từ DB
+    const [prodRows] = await p.query('SELECT ma_mau, ten_sp FROM th_products WHERE active = 1 ORDER BY ma_mau');
+    const dsMau = prodRows.map(r => r.ma_mau);
+    const dsProducts = prodRows;
+    res.json({ ok: true, orders: rows, nhanViens, trangThais: TRANG_THAI, dsMau, dsProducts, maMauDefault: TDFFM_MA_MAU, isAdmin, myName });
   }));
 
   // Cập nhật 1 đơn (trạng thái, nhân viên, hoặc sửa thông tin)
@@ -294,12 +355,13 @@ export function mountThailand(app, { mysql, requireLogin, express, getCampaigns,
   app.post('/thailand/api/order/add', thaiAuth, express.json(), wrap(async (req, res) => {
     const b = req.body || {};
     const { soLuong, gia } = parseCombo(b.combo || '');
+    const maMau = b.ma_mau || TDFFM_MA_MAU;
     const p = await db();
     await p.query(
-      `INSERT INTO th_orders (ngay_ve, ho_ten, sdt, dia_chi, combo, so_luong, gia_thb, nhan_vien, trang_thai)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      `INSERT INTO th_orders (ngay_ve, ho_ten, sdt, dia_chi, combo, so_luong, gia_thb, nhan_vien, trang_thai, ma_mau)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       [b.ngay_ve || todayVN(), b.ho_ten || '', b.sdt || '', b.dia_chi || '',
-       b.combo || '', b.so_luong || soLuong, b.gia_thb || gia, b.nhan_vien || '', b.trang_thai || 'Mới về']
+       b.combo || '', b.so_luong || soLuong, b.gia_thb || gia, b.nhan_vien || '', b.trang_thai || 'Mới về', maMau]
     );
     res.json({ ok: true });
   }));
@@ -536,7 +598,7 @@ export function mountThailand(app, { mysql, requireLogin, express, getCampaigns,
     if (!isAdmin) return res.status(403).send('Chỉ quản trị viên mới được xuất CSV');
     const p = await db();
     const [rows] = await p.query(`SELECT * FROM th_orders ORDER BY id DESC LIMIT 10000`);
-    const head = ['ID', 'Ngày về', 'Họ tên', 'SĐT', 'Địa chỉ', 'Combo', 'Số lượng', 'Giá THB', 'Nhân viên', 'Trạng thái', 'Ghi chú'];
+    const head = ['ID', 'Ngày về', 'Họ tên', 'SĐT', 'Địa chỉ', 'Combo', 'Số lượng', 'Giá THB', 'Mã sản phẩm', 'Nhân viên', 'Trạng thái', 'Ghi chú'];
     // Dùng dấu chấm phẩy (;) — Excel tiếng Việt tự tách thành từng cột
     const SEP = ';';
     const esc = v => {
@@ -547,11 +609,88 @@ export function mountThailand(app, { mysql, requireLogin, express, getCampaigns,
     };
     let csv = '\uFEFF' + head.map(esc).join(SEP) + '\n';
     for (const r of rows) {
-      csv += [r.id, (r.ngay_ve||'').toString().slice(0,10), r.ho_ten, r.sdt, r.dia_chi, r.combo, r.so_luong, r.gia_thb, r.nhan_vien, r.trang_thai, r.ghi_chu].map(esc).join(SEP) + '\n';
+      csv += [r.id, (r.ngay_ve||'').toString().slice(0,10), r.ho_ten, r.sdt, r.dia_chi, r.combo, r.so_luong, r.gia_thb, r.ma_mau||'', r.nhan_vien, r.trang_thai, r.ghi_chu].map(esc).join(SEP) + '\n';
     }
     res.setHeader('Content-Type', 'text/csv; charset=utf-8');
     res.setHeader('Content-Disposition', 'attachment; filename="don-thailand.csv"');
     res.send(csv);
+  }));
+
+  // ====================== QUẢN LÝ MÃ MẪU MÃ (SẢN PHẨM) ======================
+  // Danh sách sản phẩm
+  app.get('/thailand/api/products', thaiAuth, wrap(async (req, res) => {
+    const p = await db();
+    const [rows] = await p.query('SELECT * FROM th_products WHERE active = 1 ORDER BY ma_mau');
+    res.json({ ok: true, products: rows });
+  }));
+  // Thêm sản phẩm (chỉ admin)
+  app.post('/thailand/api/product/add', thaiAuth, express.json(), wrap(async (req, res) => {
+    const { isAdmin } = thaiWho(req);
+    if (!isAdmin) return res.status(403).json({ ok: false, message: 'Chỉ admin mới được thêm sản phẩm' });
+    const { ma_mau, ten_sp } = req.body || {};
+    if (!ma_mau || !ma_mau.trim()) return res.json({ ok: false, message: 'Thiếu mã mẫu mã' });
+    const p = await db();
+    try {
+      await p.query('INSERT INTO th_products (ma_mau, ten_sp) VALUES (?, ?)', [ma_mau.trim().toUpperCase(), (ten_sp || '').trim()]);
+      res.json({ ok: true });
+    } catch (e) {
+      if (e.code === 'ER_DUP_ENTRY') return res.json({ ok: false, message: 'Mã mẫu mã đã tồn tại' });
+      throw e;
+    }
+  }));
+  // Xoá sản phẩm (soft delete, chỉ admin)
+  app.post('/thailand/api/product/delete', thaiAuth, express.json(), wrap(async (req, res) => {
+    const { isAdmin } = thaiWho(req);
+    if (!isAdmin) return res.status(403).json({ ok: false, message: 'Chỉ admin' });
+    const { id } = req.body || {};
+    if (!id) return res.json({ ok: false, message: 'Thiếu id' });
+    const p = await db();
+    await p.query('UPDATE th_products SET active = 0 WHERE id = ?', [id]);
+    res.json({ ok: true });
+  }));
+
+  // ====================== QUẢN LÝ LINK REGISTRY ======================
+  // Danh sách link đã đăng ký
+  app.get('/thailand/api/links', thaiAuth, wrap(async (req, res) => {
+    const p = await db();
+    const { isAdmin, myName } = thaiWho(req);
+    let rows;
+    if (isAdmin) {
+      [rows] = await p.query('SELECT * FROM th_link_registry WHERE active = 1 ORDER BY id DESC');
+    } else {
+      [rows] = await p.query('SELECT * FROM th_link_registry WHERE active = 1 AND nhan_vien = ? ORDER BY id DESC', [myName]);
+    }
+    // Kèm danh sách sản phẩm để fill dropdown
+    const [prods] = await p.query('SELECT ma_mau, ten_sp FROM th_products WHERE active = 1 ORDER BY ma_mau');
+    res.json({ ok: true, links: rows, products: prods, isAdmin });
+  }));
+  // Đăng ký link mới (NV tự đăng ký, tên tự gán từ phiên đăng nhập)
+  app.post('/thailand/api/link/add', thaiAuth, express.json(), wrap(async (req, res) => {
+    const { isAdmin, myName } = thaiWho(req);
+    const { url_pattern, ma_mau, ghi_chu, nhan_vien } = req.body || {};
+    if (!url_pattern || !url_pattern.trim()) return res.json({ ok: false, message: 'Thiếu URL link' });
+    if (!ma_mau || !ma_mau.trim()) return res.json({ ok: false, message: 'Chưa chọn sản phẩm' });
+    // Admin có thể chỉ định tên NV, NV thường tự gán tên mình
+    const nv = isAdmin ? (nhan_vien || myName || '') : (myName || '');
+    const p = await db();
+    await p.query(
+      'INSERT INTO th_link_registry (url_pattern, ma_mau, nhan_vien, ghi_chu) VALUES (?, ?, ?, ?)',
+      [url_pattern.trim(), ma_mau.trim(), nv, (ghi_chu || '').trim()]
+    );
+    res.json({ ok: true });
+  }));
+  // Xoá link (admin xoá bất kỳ, NV chỉ xoá link của mình)
+  app.post('/thailand/api/link/delete', thaiAuth, express.json(), wrap(async (req, res) => {
+    const { isAdmin, myName } = thaiWho(req);
+    const { id } = req.body || {};
+    if (!id) return res.json({ ok: false, message: 'Thiếu id' });
+    const p = await db();
+    if (isAdmin) {
+      await p.query('UPDATE th_link_registry SET active = 0 WHERE id = ?', [id]);
+    } else {
+      await p.query('UPDATE th_link_registry SET active = 0 WHERE id = ? AND nhan_vien = ?', [id, myName]);
+    }
+    res.json({ ok: true });
   }));
 
   // ====================== THỐNG KÊ LƯƠNG THÁI LAN ======================
@@ -1426,6 +1565,7 @@ table{width:100%;border-collapse:collapse;background:#101B2E;min-width:900px;}
   <div class="tabs">
     <div class="tab on" data-tab="orders" id="tabOrders">📋 Danh sách đơn</div>
     <div class="tab" data-tab="stats" id="tabStats">📊 Thống kê doanh thu</div>
+    <div class="tab" data-tab="registry" id="tabRegistry">📦 Sản phẩm & Link</div>
   </div>
 
   <div id="ordersView">
@@ -1433,6 +1573,7 @@ table{width:100%;border-collapse:collapse;background:#101B2E;min-width:900px;}
       <input type="date" id="fTu"><span class="muted">→</span><input type="date" id="fDen">
       <select id="fNv"><option value="">Mọi nhân viên</option></select>
       <select id="fTt"><option value="">Mọi trạng thái</option></select>
+      <select id="fSp"><option value="">Mọi sản phẩm</option></select>
       <select id="fDay"><option value="">Đẩy/Chưa đẩy</option><option value="done">Đã đẩy</option><option value="pending">Chưa đẩy</option></select>
       <input id="fQ" placeholder="Tìm tên/SĐT/địa chỉ…">
       <button class="btn" id="fBtn">Lọc</button>
@@ -1466,11 +1607,41 @@ table{width:100%;border-collapse:collapse;background:#101B2E;min-width:900px;}
         <div><label>Số lượng</label><input id="m_sl" inputmode="numeric" placeholder="tự tách"></div>
         <div><label>Giá THB</label><input id="m_gia" inputmode="numeric" placeholder="tự tách"></div>
       </div>
+      <label>Sản phẩm</label>
+      <select id="m_mau"></select>
       <label>Nhân viên marketing</label>
       <input id="m_nv" placeholder="Tên nhân viên">
       <div class="modal-actions">
         <button class="cancel" id="m_cancel">Huỷ</button>
         <button class="save" id="m_save">Lưu đơn</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- ===== Tab Sản phẩm & Link ===== -->
+  <div id="registryView" style="display:none;">
+    <div style="display:flex;gap:24px;flex-wrap:wrap;">
+      <!-- Cột trái: Mã mẫu mã -->
+      <div style="flex:1;min-width:320px;">
+        <h3 style="margin:0 0 12px;font-size:15px;">📦 Mã mẫu mã (Sản phẩm)</h3>
+        <div id="prodAdminForm" style="display:flex;gap:8px;margin-bottom:14px;flex-wrap:wrap;">
+          <input id="pMa" placeholder="Mã mẫu (VD: THA284-GEL)" style="flex:1;min-width:150px;font-size:13px;padding:8px 10px;border-radius:8px;border:1px solid rgba(255,255,255,.12);background:rgba(255,255,255,.06);color:#fff;">
+          <input id="pTen" placeholder="Tên sản phẩm (tuỳ chọn)" style="flex:1;min-width:150px;font-size:13px;padding:8px 10px;border-radius:8px;border:1px solid rgba(255,255,255,.12);background:rgba(255,255,255,.06);color:#fff;">
+          <button class="btn g" id="pAdd">+ Thêm</button>
+        </div>
+        <div id="prodList"><div class="empty">Đang tải…</div></div>
+      </div>
+      <!-- Cột phải: Đăng ký link -->
+      <div style="flex:2;min-width:400px;">
+        <h3 style="margin:0 0 12px;font-size:15px;">🔗 Đăng ký link Landing Page</h3>
+        <div style="display:flex;gap:8px;margin-bottom:14px;flex-wrap:wrap;">
+          <input id="lUrl" placeholder="Dán URL landing page…" style="flex:2;min-width:200px;font-size:13px;padding:8px 10px;border-radius:8px;border:1px solid rgba(255,255,255,.12);background:rgba(255,255,255,.06);color:#fff;">
+          <select id="lMau" style="flex:1;min-width:130px;font-size:13px;padding:8px 10px;border-radius:8px;border:1px solid rgba(255,255,255,.12);background:rgba(255,255,255,.06);color:#fff;color-scheme:dark;"><option value="">Chọn sản phẩm…</option></select>
+          <input id="lNv" placeholder="Nhân viên (tự điền)" style="flex:1;min-width:120px;font-size:13px;padding:8px 10px;border-radius:8px;border:1px solid rgba(255,255,255,.12);background:rgba(255,255,255,.06);color:#fff;" class="lnv-input">
+          <input id="lNote" placeholder="Ghi chú" style="width:120px;font-size:13px;padding:8px 10px;border-radius:8px;border:1px solid rgba(255,255,255,.12);background:rgba(255,255,255,.06);color:#fff;">
+          <button class="btn" id="lAdd">+ Đăng ký</button>
+        </div>
+        <div id="linkList"><div class="empty">Đang tải…</div></div>
       </div>
     </div>
   </div>
@@ -1480,17 +1651,21 @@ table{width:100%;border-collapse:collapse;background:#101B2E;min-width:900px;}
 const $=id=>document.getElementById(id);
 const esc=s=>String(s==null?'':s).replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
 const thb=n=>(Number(n)||0).toLocaleString('en-US');
-let TT=[], NV=[], DSMAU=[], MAU_DEFAULT='', IS_ADMIN=true;
+let TT=[], NV=[], DSMAU=[], PRODUCTS=[], MAU_DEFAULT='', IS_ADMIN=true;
 
 function tabSwitch(t){
   $('tabOrders').classList.toggle('on',t==='orders');
   $('tabStats').classList.toggle('on',t==='stats');
+  $('tabRegistry').classList.toggle('on',t==='registry');
   $('ordersView').style.display=t==='orders'?'':'none';
   $('statsView').style.display=t==='stats'?'':'none';
+  $('registryView').style.display=t==='registry'?'':'none';
   if(t==='stats') loadStats();
+  if(t==='registry') loadRegistry();
 }
 $('tabOrders').onclick=()=>tabSwitch('orders');
 $('tabStats').onclick=()=>tabSwitch('stats');
+$('tabRegistry').onclick=()=>tabSwitch('registry');
 
 async function loadOrders(){
   const qs=new URLSearchParams();
@@ -1498,6 +1673,7 @@ async function loadOrders(){
   if($('fDen').value)qs.set('den',$('fDen').value);
   if($('fNv').value)qs.set('nv',$('fNv').value);
   if($('fTt').value)qs.set('tt',$('fTt').value);
+  if($('fSp').value)qs.set('sp',$('fSp').value);
   if($('fDay').value)qs.set('day',$('fDay').value);
   if($('fQ').value)qs.set('q',$('fQ').value);
   $('tbl').innerHTML='<div class="empty">Đang tải…</div>';
@@ -1506,11 +1682,13 @@ async function loadOrders(){
     if(r.status===401){location.href='/thailand/login';return;}
     const d=await r.json();
     if(!d.ok){$('tbl').innerHTML='<div class="empty">'+esc(d.message)+'</div>';return;}
-    TT=d.trangThais; NV=d.nhanViens; DSMAU=d.dsMau||[]; MAU_DEFAULT=d.maMauDefault||''; IS_ADMIN=d.isAdmin!==false;
+    TT=d.trangThais; NV=d.nhanViens; DSMAU=d.dsMau||[]; PRODUCTS=d.dsProducts||[]; MAU_DEFAULT=d.maMauDefault||''; IS_ADMIN=d.isAdmin!==false;
     // Ẩn nút đẩy + bộ lọc nhân viên với nhân viên thường
     if($('pushBtn')) $('pushBtn').style.display = IS_ADMIN ? '' : 'none';
     if($('csvBtn')) $('csvBtn').style.display = IS_ADMIN ? '' : 'none';
     if($('syncBtn')) $('syncBtn').style.display = IS_ADMIN ? '' : 'none';
+    // Ẩn form thêm sản phẩm với NV (chỉ admin thấy)
+    if($('prodAdminForm')) $('prodAdminForm').style.display = IS_ADMIN ? 'flex' : 'none';
     // Link doanh thu Thái hiện cho tất cả (admin + nhân viên)
     if($('salaryLink')) $('salaryLink').style.display = '';
     if($('fNv')) $('fNv').style.display = IS_ADMIN ? '' : 'none';
@@ -1518,6 +1696,8 @@ async function loadOrders(){
     // fill selects
     if(IS_ADMIN && $('fNv').options.length<=1) NV.forEach(n=>$('fNv').insertAdjacentHTML('beforeend','<option>'+esc(n)+'</option>'));
     if($('fTt').options.length<=1) TT.forEach(t=>$('fTt').insertAdjacentHTML('beforeend','<option>'+esc(t)+'</option>'));
+    // Fill dropdown sản phẩm (chỉ 1 lần)
+    if($('fSp').options.length<=1 && PRODUCTS.length) PRODUCTS.forEach(p=>$('fSp').insertAdjacentHTML('beforeend','<option value="'+esc(p.ma_mau)+'">'+esc(p.ma_mau+(p.ten_sp?' — '+p.ten_sp:''))+'</option>'));
     render(d.orders);
   }catch(e){$('tbl').innerHTML='<div class="empty">Lỗi tải dữ liệu</div>';}
 }
@@ -1542,10 +1722,14 @@ async function loadOrders(){
   return '';
 }
 
+function prodLabel(code){
+  const p=PRODUCTS.find(x=>x.ma_mau===code);
+  return p&&p.ten_sp?code+' — '+p.ten_sp:code;
+}
 function mauSelect(o){
   const cur=o.ma_mau||MAU_DEFAULT;
   const list=[...new Set([cur, ...DSMAU].filter(Boolean))];
-  const opts=list.map(m=>'<option'+(m===cur?' selected':'')+'>'+esc(m)+'</option>').join('');
+  const opts=list.map(m=>'<option value="'+esc(m)+'"'+(m===cur?' selected':'')+'>'+esc(prodLabel(m))+'</option>').join('');
   return '<select class="st mausel" style="min-width:120px" data-id="'+o.id+'">'+opts+'</select>';
 }
 function render(orders){
@@ -1618,6 +1802,11 @@ async function del(id){
 
 function openAddModal(){
   ['m_ten','m_sdt','m_diachi','m_combo','m_sl','m_gia','m_nv'].forEach(id=>$(id).value='');
+  // Fill dropdown sản phẩm từ PRODUCTS
+  const sel=$('m_mau');
+  sel.innerHTML='';
+  const list=PRODUCTS.length?PRODUCTS:[...new Set([MAU_DEFAULT,...DSMAU].filter(Boolean))].map(m=>({ma_mau:m,ten_sp:''}));
+  list.forEach(p=>sel.insertAdjacentHTML('beforeend','<option value="'+esc(p.ma_mau)+'"'+(p.ma_mau===MAU_DEFAULT?' selected':'')+'>'+esc(p.ma_mau+(p.ten_sp?' — '+p.ten_sp:''))+'</option>'));
   $('addModal').classList.add('show');
   $('m_ten').focus();
 }
@@ -1631,7 +1820,8 @@ $('m_save').onclick=async()=>{
   if(!ho_ten && !$('m_sdt').value.trim()){ alert('Cần ít nhất Tên hoặc SĐT'); return; }
   const body={
     ho_ten, sdt:$('m_sdt').value.trim(), dia_chi:$('m_diachi').value.trim(),
-    combo:$('m_combo').value.trim(), nhan_vien:$('m_nv').value.trim()
+    combo:$('m_combo').value.trim(), nhan_vien:$('m_nv').value.trim(),
+    ma_mau:$('m_mau').value||MAU_DEFAULT
   };
   const sl=parseInt(($('m_sl').value||'').replace(/[^\d]/g,''),10);
   const gia=parseInt(($('m_gia').value||'').replace(/[^\d]/g,''),10);
@@ -1739,7 +1929,7 @@ $('syncNowBtn').onclick=async()=>{
 };
 
 $('fBtn').onclick=loadOrders;
-$('fReset').onclick=()=>{['fTu','fDen','fNv','fTt','fDay','fQ'].forEach(id=>$(id).value='');loadOrders();};
+$('fReset').onclick=()=>{['fTu','fDen','fNv','fTt','fSp','fDay','fQ'].forEach(id=>$(id).value='');loadOrders();};
 
 async function loadStats(){
   const qs=new URLSearchParams();
@@ -1790,6 +1980,116 @@ function initDualScroll() {
   }
 }
 setTimeout(initDualScroll, 300);
+
+// ===== REGISTRY TAB: Sản phẩm + Link =====
+let REG_PRODUCTS=[], REG_LINKS=[], REG_IS_ADMIN=true, REG_MY_NAME='';
+
+async function loadRegistry(){
+  try{
+    const [pRes, lRes]=await Promise.all([
+      fetch('/thailand/api/products').then(r=>r.json()),
+      fetch('/thailand/api/links').then(r=>r.json())
+    ]);
+    REG_PRODUCTS=pRes.ok?pRes.products:[];
+    REG_LINKS=lRes.ok?lRes.links:[];
+    REG_IS_ADMIN=lRes.isAdmin!==false;
+    // Fill dropdown sản phẩm ở form đăng ký link
+    const sel=$('lMau');
+    sel.innerHTML='<option value="">Chọn sản phẩm…</option>';
+    REG_PRODUCTS.forEach(p=>sel.insertAdjacentHTML('beforeend','<option value="'+esc(p.ma_mau)+'">'+esc(p.ma_mau+(p.ten_sp?' — '+p.ten_sp:''))+'</option>'));
+    // Ẩn form thêm SP nếu không phải admin
+    if($('prodAdminForm'))$('prodAdminForm').style.display=REG_IS_ADMIN?'flex':'none';
+    // NV: ẩn field tên (tự gán)
+    const lnvEl=$('lNv');
+    if(!REG_IS_ADMIN && lnvEl){lnvEl.style.display='none';lnvEl.value='';}
+    else if(lnvEl) lnvEl.style.display='';
+    renderProducts();
+    renderLinks();
+  }catch(e){
+    $('prodList').innerHTML='<div class="empty">Lỗi tải dữ liệu</div>';
+    $('linkList').innerHTML='<div class="empty">Lỗi tải dữ liệu</div>';
+  }
+}
+
+function renderProducts(){
+  if(!REG_PRODUCTS.length){$('prodList').innerHTML='<div class="empty">Chưa có sản phẩm nào. Admin thêm mã mẫu mã ở trên.</div>';return;}
+  let h='<table style="min-width:auto;"><thead><tr><th>Mã mẫu mã</th><th>Tên sản phẩm</th>'+(REG_IS_ADMIN?'<th></th>':'')+'</tr></thead><tbody>';
+  REG_PRODUCTS.forEach(p=>{
+    h+='<tr><td><b>'+esc(p.ma_mau)+'</b></td><td class="muted">'+esc(p.ten_sp||'—')+'</td>';
+    if(REG_IS_ADMIN) h+='<td><span class="del" style="cursor:pointer" onclick="delProd('+p.id+')">✕</span></td>';
+    h+='</tr>';
+  });
+  h+='</tbody></table>';
+  $('prodList').innerHTML=h;
+}
+
+function renderLinks(){
+  if(!REG_LINKS.length){$('linkList').innerHTML='<div class="empty">Chưa có link nào. Dán URL landing page và chọn sản phẩm để đăng ký.</div>';return;}
+  let h='<table style="min-width:auto;"><thead><tr><th>URL Landing Page</th><th>Sản phẩm</th><th>Nhân viên</th><th>Ghi chú</th><th></th></tr></thead><tbody>';
+  REG_LINKS.forEach(lk=>{
+    const pName=REG_PRODUCTS.find(p=>p.ma_mau===lk.ma_mau);
+    h+='<tr><td style="max-width:320px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;" title="'+esc(lk.url_pattern)+'"><a href="'+esc(lk.url_pattern)+'" target="_blank" style="color:#9DB2FF;">'+esc(lk.url_pattern)+'</a></td>'
+      +'<td><b>'+esc(lk.ma_mau||'—')+'</b>'+(pName&&pName.ten_sp?' <span class="muted">'+esc(pName.ten_sp)+'</span>':'')+'</td>'
+      +'<td>'+esc(lk.nhan_vien||'—')+'</td>'
+      +'<td class="muted">'+esc(lk.ghi_chu||'')+'</td>'
+      +'<td><span class="del" style="cursor:pointer" onclick="delLink('+lk.id+')">✕</span></td></tr>';
+  });
+  h+='</tbody></table>';
+  $('linkList').innerHTML=h;
+}
+
+// Thêm sản phẩm
+$('pAdd').onclick=async()=>{
+  const ma=$('pMa').value.trim();
+  if(!ma){alert('Nhập mã mẫu mã');return;}
+  try{
+    const r=await fetch('/thailand/api/product/add',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({ma_mau:ma,ten_sp:$('pTen').value.trim()})});
+    const d=await r.json();
+    if(!d.ok){alert(d.message||'Lỗi');return;}
+    $('pMa').value='';$('pTen').value='';
+    loadRegistry();
+    // Reset filter SP ở tab đơn để load lại danh sách mới
+    $('fSp').innerHTML='<option value="">Mọi sản phẩm</option>';
+  }catch(e){alert('Lỗi kết nối');}
+};
+
+// Xoá sản phẩm
+async function delProd(id){
+  if(!confirm('Xoá sản phẩm này?'))return;
+  try{
+    await fetch('/thailand/api/product/delete',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({id})});
+    loadRegistry();
+    $('fSp').innerHTML='<option value="">Mọi sản phẩm</option>';
+  }catch(e){}
+}
+
+// Đăng ký link
+$('lAdd').onclick=async()=>{
+  const url=$('lUrl').value.trim();
+  const mau=$('lMau').value;
+  if(!url){alert('Dán URL landing page');return;}
+  if(!mau){alert('Chọn sản phẩm');return;}
+  try{
+    const body={url_pattern:url,ma_mau:mau,ghi_chu:$('lNote').value.trim()};
+    // Admin có thể chỉ định NV
+    const nvVal=$('lNv').value.trim();
+    if(nvVal) body.nhan_vien=nvVal;
+    const r=await fetch('/thailand/api/link/add',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});
+    const d=await r.json();
+    if(!d.ok){alert(d.message||'Lỗi');return;}
+    $('lUrl').value='';$('lNote').value='';
+    loadRegistry();
+  }catch(e){alert('Lỗi kết nối');}
+};
+
+// Xoá link
+async function delLink(id){
+  if(!confirm('Xoá link này?'))return;
+  try{
+    await fetch('/thailand/api/link/delete',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({id})});
+    loadRegistry();
+  }catch(e){}
+}
 
 (function(){
   var fmt=function(d){return new Date(d.getTime()-d.getTimezoneOffset()*60000).toISOString().slice(0,10);};
