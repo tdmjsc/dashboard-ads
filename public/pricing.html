@@ -59,23 +59,18 @@ tfoot td{background:#16233A;font-weight:700;}
 
   <!-- Cấu hình tỷ giá + phí (mỗi nước lưu riêng) -->
   <div class="config" id="config">
-    <div class="fld"><label>Tỷ giá (VNĐ/THB)</label><input class="rate" id="cfgRate" inputmode="decimal"></div>
+    <div class="fld"><label id="lbRate">Tỷ giá (VNĐ/THB)</label><input class="rate" id="cfgRate" inputmode="decimal"></div>
     <div class="sep"></div>
-    <div class="fld"><label>Nhập kho (THB)</label><input id="cfgKho" inputmode="decimal"></div>
-    <div class="fld"><label>Phí dịch vụ (THB)</label><input id="cfgDV" inputmode="decimal"></div>
-    <div class="fld"><label>Telesale (THB)</label><input id="cfgTele" inputmode="decimal"></div>
+    <div class="fld"><label id="lbKho">Nhập kho (THB)</label><input id="cfgKho" inputmode="decimal"></div>
+    <div class="fld"><label id="lbDV">Phí dịch vụ (THB)</label><input id="cfgDV" inputmode="decimal"></div>
+    <div class="fld"><label id="lbTele">Telesale (THB)</label><input id="cfgTele" inputmode="decimal"></div>
     <div class="sep"></div>
-    <div class="fld"><label>VC Việt-Thái (VNĐ/kg)</label><input id="cfgVcVt" inputmode="numeric" style="width:130px"></div>
+    <div class="fld"><label id="lbVcVt">VC Việt-Thái (VNĐ/kg)</label><input id="cfgVcVt" inputmode="numeric" style="width:130px"></div>
     <div class="sep"></div>
     <div class="fld"><label>Phí COD (%)</label><input id="cfgCod" inputmode="decimal"></div>
     <div class="fld"><label>Phí tài khoản (%)</label><input id="cfgAcc" inputmode="decimal"></div>
   </div>
-  <div class="hintbar">
-    Vận chuyển nội địa theo <b>tổng cân nặng</b>: 0–3kg = 24 THB · 4kg = 70 THB · 5kg+ = 80 THB.
-    Điền <b>SL</b> (số lượng) → giá nhập, cân nặng, vận chuyển nội địa & VC Việt-Thái tự nhân theo số lượng; các phí nhập kho/dịch vụ/telesale giữ 1 lần/đơn.
-    <b>VC Việt-Thái</b> = 56.000 VNĐ/kg × tổng cân nặng.
-    Mỗi nước có tỷ giá & phí riêng.
-  </div>
+  <div class="hintbar" id="hintbar"></div>
 
   <div class="toolbar">
     <button class="btn g" id="addRow">+ Thêm sản phẩm</button>
@@ -93,11 +88,11 @@ tfoot td{background:#16233A;font-weight:700;}
           <th rowspan="2">Giá nhập<br><span class="grp">VNĐ / cái</span></th>
           <th rowspan="2">Cân nặng<br><span class="grp">kg / cái</span></th>
           <th colspan="5" style="text-align:center;">Các khoản phí (VNĐ)</th>
-          <th rowspan="2">VC nội địa<br><span class="grp">THB</span></th>
-          <th rowspan="2">VC Việt-Thái<br><span class="grp">VNĐ</span></th>
+          <th rowspan="2">VC nội địa<br><span class="grp" id="thVcLocal">THB</span></th>
+          <th rowspan="2" id="thVcVt">VC Việt-Thái<br><span class="grp">VNĐ</span></th>
           <th rowspan="2">Biên lãi<br><span class="grp">VNĐ</span></th>
           <th rowspan="2">Giá bán<br><span class="grp vnd">VNĐ</span></th>
-          <th rowspan="2">Giá bán<br><span class="grp thb">THB</span></th>
+          <th rowspan="2">Giá bán<br><span class="grp thb" id="thGiaBan">THB</span></th>
           <th rowspan="2"></th>
         </tr>
         <tr>
@@ -132,21 +127,63 @@ const num=v=>{const n=parseFloat(String(v==null?'':v).replace(/[^\d.-]/g,''));re
 // Cấu hình mặc định cho từng nước
 const DEFAULTS={
   thai:{rate:800, kho:2, dv:45, tele:20, cod:1.6, acc:1.2, vcVt:56000},
-  lao:{rate:1.15, kho:2, dv:45, tele:20, cod:1.6, acc:1.2, vcVt:56000},
+  lao:{rate:1.15, kho:500, dv:10000, tele:10000, cod:1.5, acc:1, vcVt:15000},
   cam:{rate:6.2, kho:2, dv:45, tele:20, cod:1.6, acc:1.2, vcVt:56000},
 };
-const CUR={thai:'THB', lao:'THB', cam:'THB'}; // đơn vị hiển thị cột giá bán ngoại tệ
+const CUR={thai:'THB', lao:'KIP', cam:'THB'}; // đơn vị tiền tệ mỗi nước
 
-// VC nội địa mặc định theo cân nặng (THB)
-function shipByWeight(kg){
+// Bậc thang VC nội địa theo từng nước [ngưỡng kg tối đa, phí (đơn vị nội tệ)]
+const SHIP_TABLE={
+  thai:[[3,24],[4,70],[Infinity,80]],
+  lao:[[1,8000],[2,13000],[3,15000],[4,17000],[5,20000],[6,22000],[7,24000],[8,26000],[Infinity,26000]],
+  cam:[[3,24],[4,70],[Infinity,80]], // tạm giống Thái, chỉnh sau
+};
+
+// VC nội địa mặc định theo cân nặng (đơn vị nội tệ của nước hiện tại)
+function shipByWeight(kg, c){
   kg=Number(kg)||0;
-  if(kg<=3) return 24;
-  if(kg<=4) return 70;
-  return 80; // 5kg trở lên
+  const table=SHIP_TABLE[c||country]||SHIP_TABLE.thai;
+  for(const [maxKg, fee] of table){ if(kg<=maxKg) return fee; }
+  return table[table.length-1][1];
 }
 
 let country='thai';
 let DATA={thai:{cfg:{...DEFAULTS.thai}, rows:[]}, lao:{cfg:{...DEFAULTS.lao}, rows:[]}, cam:{cfg:{...DEFAULTS.cam}, rows:[]}};
+
+// Thông tin hiển thị theo nước
+const CINFO={
+  thai:{cur:'THB', vt:'Việt-Thái', vtFee:'56.000'},
+  lao:{cur:'KIP', vt:'Việt-Lào', vtFee:'15.000'},
+  cam:{cur:'THB', vt:'Việt-Cam', vtFee:'56.000'},
+};
+// Mô tả bậc thang VC nội địa (hiển thị ở hint)
+function shipHint(c){
+  const cur=CINFO[c].cur;
+  const t=SHIP_TABLE[c];
+  const parts=[];
+  let prev=0;
+  for(const [maxKg, fee] of t){
+    if(maxKg===Infinity){ parts.push('>'+prev+'kg = '+fee.toLocaleString('vi-VN')+' '+cur); break; }
+    parts.push(prev+'–'+maxKg+'kg = '+fee.toLocaleString('vi-VN')+' '+cur);
+    prev=maxKg;
+  }
+  return parts.join(' · ');
+}
+// Cập nhật nhãn/tiêu đề theo nước
+function updateLabels(){
+  const info=CINFO[country], cur=info.cur;
+  $('lbRate').textContent='Tỷ giá (VNĐ/'+cur+')';
+  $('lbKho').textContent='Nhập kho ('+cur+')';
+  $('lbDV').textContent='Phí dịch vụ ('+cur+')';
+  $('lbTele').textContent='Telesale ('+cur+')';
+  $('lbVcVt').textContent='VC '+info.vt+' (VNĐ/kg)';
+  $('thVcLocal').textContent=cur;
+  $('thVcVt').innerHTML='VC '+info.vt+'<br><span class="grp">VNĐ</span>';
+  $('thGiaBan').textContent=cur;
+  $('hintbar').innerHTML='Vận chuyển nội địa theo <b>tổng cân nặng</b>: '+shipHint(country)+'.'
+    +' Điền <b>SL</b> → giá nhập, cân nặng, VC nội địa & VC '+info.vt+' nhân theo số lượng; phí nhập kho/dịch vụ/telesale giữ 1 lần/đơn.'
+    +' <b>VC '+info.vt+'</b> = '+info.vtFee+' VNĐ/kg × tổng cân nặng. Mỗi nước có tỷ giá & phí riêng.';
+}
 
 // ---- Tính 1 dòng ----
 function calcRow(r, cfg){
@@ -157,9 +194,9 @@ function calcRow(r, cfg){
   const dv=num(cfg.dv)*rate;
   const tele=num(cfg.tele)*rate;
   const tongKg=num(r.kg)*sl;             // tổng cân nặng = cân nặng/cái × SL
-  const vcThb=(r.vc===''||r.vc==null)?shipByWeight(tongKg):num(r.vc);
-  const vc=vcThb*rate;                   // VC nội địa THB → VNĐ (theo tổng kg)
-  const vcVt=num(cfg.vcVt)*tongKg;       // VC Việt-Thái = giá/kg × tổng kg (VNĐ)
+  const vcThb=(r.vc===''||r.vc==null)?shipByWeight(tongKg, country):num(r.vc);
+  const vc=vcThb*rate;                   // VC nội địa (nội tệ) → VNĐ (theo tổng kg)
+  const vcVt=num(cfg.vcVt)*tongKg;       // VC Việt-[nước] = giá/kg × tổng kg (VNĐ)
   const bienLai=num(r.bienLai);
   // Giá bán cơ sở (chưa gồm phí % COD + tài khoản)
   const base=giaNhap+kho+dv+tele+vc+vcVt+bienLai;
@@ -256,6 +293,7 @@ $('ctabs').querySelectorAll('.ctab').forEach(t=>{
     t.classList.add('on');
     country=t.dataset.c;
     loadConfigInputs();
+    updateLabels();
     render();
   };
 });
@@ -283,7 +321,7 @@ $('addRow').onclick=()=>{
 // ---- Lưu (localStorage không dùng được trong artifact, nhưng đây là file thật trên server nên OK) ----
 $('saveBtn').onclick=()=>{
   try{
-    localStorage.setItem('pricingData', JSON.stringify(DATA));
+    localStorage.setItem('pricingData', JSON.stringify({...DATA, _cfgVersion:CFG_VERSION}));
     $('saveStatus').textContent='✓ Đã lưu '+new Date().toLocaleTimeString('vi-VN');
     setTimeout(()=>$('saveStatus').textContent='',3000);
   }catch(e){ $('saveStatus').textContent='Lỗi lưu: '+e.message; }
@@ -310,14 +348,20 @@ $('exportBtn').onclick=()=>{
 };
 
 // ---- Khởi tạo: khôi phục dữ liệu đã lưu ----
+const CFG_VERSION=2; // tăng số này mỗi khi đổi DEFAULTS để reset cfg cũ
 try{
   const saved=localStorage.getItem('pricingData');
   if(saved){
     const parsed=JSON.parse(saved);
-    // Merge để giữ cfg mặc định nếu thiếu
+    const savedVer=parsed._cfgVersion||1;
     ['thai','lao','cam'].forEach(k=>{
-      if(parsed[k]){
-        DATA[k].cfg={...DEFAULTS[k], ...(parsed[k].cfg||{})};
+      if(parsed[k] && typeof parsed[k]==='object'){
+        // Nếu version cũ → chỉ giữ lại danh sách sản phẩm, dùng cfg mặc định mới
+        if(savedVer<CFG_VERSION){
+          DATA[k].cfg={...DEFAULTS[k]};
+        }else{
+          DATA[k].cfg={...DEFAULTS[k], ...(parsed[k].cfg||{})};
+        }
         DATA[k].rows=parsed[k].rows||[];
       }
     });
@@ -328,6 +372,7 @@ try{
 if(!DATA.thai.rows.length) DATA.thai.rows.push({ten:'', sl:'', giaNhap:'', kg:'', vc:'', bienLai:''});
 
 loadConfigInputs();
+updateLabels();
 render();
 </script>
 </body></html>
