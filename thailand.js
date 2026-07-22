@@ -75,22 +75,29 @@ async function ensureTable(pool) {
     "tdffm_sync_at DATETIME NULL",
     "ma_sp VARCHAR(100) DEFAULT ''",
     "nguon_url TEXT",
+    "quoc_gia VARCHAR(10) DEFAULT 'thai'",
   ]) {
     try { await pool.query(`ALTER TABLE th_orders ADD COLUMN ${col}`); } catch (e) {}
   }
+  // Đơn cũ (trống quốc gia) → mặc định Thái
+  try { await pool.query(`UPDATE th_orders SET quoc_gia = 'thai' WHERE quoc_gia IS NULL OR quoc_gia = ''`); } catch {}
 
-  // ===== Bảng mã mẫu mã (sản phẩm Thái Lan) =====
+  // ===== Bảng mã mẫu mã (sản phẩm) =====
   await pool.query(`
     CREATE TABLE IF NOT EXISTS th_products (
       id INT AUTO_INCREMENT PRIMARY KEY,
       ma_mau VARCHAR(80) NOT NULL UNIQUE,
       ten_sp VARCHAR(255) DEFAULT '',
+      quoc_gia VARCHAR(10) DEFAULT 'thai',
       active TINYINT DEFAULT 1,
       created_at DATETIME DEFAULT CURRENT_TIMESTAMP
     ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
   `);
+  // Sản phẩm cũ (trống quốc gia) → mặc định Thái
+  try { await pool.query(`ALTER TABLE th_products ADD COLUMN quoc_gia VARCHAR(10) DEFAULT 'thai'`); } catch {}
+  try { await pool.query(`UPDATE th_products SET quoc_gia = 'thai' WHERE quoc_gia IS NULL OR quoc_gia = ''`); } catch {}
 
-  // ===== Bảng đăng ký link LP → sản phẩm + nhân viên =====
+  // ===== Bảng đăng ký link LP → sản phẩm + nhân viên + quốc gia =====
   await pool.query(`
     CREATE TABLE IF NOT EXISTS th_link_registry (
       id INT AUTO_INCREMENT PRIMARY KEY,
@@ -98,11 +105,14 @@ async function ensureTable(pool) {
       ma_mau VARCHAR(80) DEFAULT '',
       nhan_vien VARCHAR(120) DEFAULT '',
       ghi_chu VARCHAR(255) DEFAULT '',
+      quoc_gia VARCHAR(10) DEFAULT 'thai',
       active TINYINT DEFAULT 1,
       created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
       INDEX idx_active (active)
     ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
   `);
+  try { await pool.query(`ALTER TABLE th_link_registry ADD COLUMN quoc_gia VARCHAR(10) DEFAULT 'thai'`); } catch {}
+  try { await pool.query(`UPDATE th_link_registry SET quoc_gia = 'thai' WHERE quoc_gia IS NULL OR quoc_gia = ''`); } catch {}
 
   // ===== Bảng combo sản phẩm (SL + giá theo từng combo) =====
   await pool.query(`
@@ -151,6 +161,37 @@ export function mountThailand(app, { mysql, requireLogin, express, getCampaigns,
   const TDFFM_SYNC_FROM = process.env.TDFFM_SYNC_FROM || '2026-06-01';
   const TDFFM_MA_MAU = process.env.TDFFM_MA_MAU || 'THA284-GEL';
   const TDFFM_DS_MAU = (process.env.TDFFM_DS_MAU || TDFFM_MA_MAU).split(',').map(s => s.trim()).filter(Boolean);
+
+  // ===== CẤU HÌNH QUỐC GIA =====
+  // Mỗi nước có: mã khách hàng TDFFM + prefix mã mẫu mã + TÀI KHOẢN ĐĂNG NHẬP tdffm.com RIÊNG.
+  // Khai trong env trên server. Ví dụ cho Lào:
+  //   TDFFM_MA_KH_LAO=LAO190           (mã khách hàng, cũng là tên đăng nhập)
+  //   TDFFM_USER_LAO=LAO190            (tên đăng nhập tdffm.com — mặc định = mã KH)
+  //   TDFFM_PASSWORD_LAO=...           (mật khẩu tdffm.com của Lào)
+  //   TDFFM_KEY_LAO=...                (x-public-key để ĐẨY đơn Lào)
+  //   TDFFM_COUNTRY_LAO=LAOS           (tên country TDFFM dùng lọc đơn, sửa nếu khác)
+  const COUNTRIES = {
+    thai: {
+      ten: 'Thái Lan', flag: '🇹🇭', prefix: 'THA284',
+      maKH: process.env.TDFFM_MA_KH || 'THA284',
+      tdffmCountry: process.env.TDFFM_COUNTRY || 'THAILAND',
+      user: process.env.TDFFM_USER || process.env.TDFFM_EMAIL || process.env.TDFFM_MA_KH || 'THA284',
+      password: process.env.TDFFM_PASSWORD || '',
+      pushKey: process.env.TDFFM_KEY || '',
+    },
+    lao: {
+      ten: 'Lào', flag: '🇱🇦', prefix: 'LAO190',
+      maKH: process.env.TDFFM_MA_KH_LAO || 'LAO190',
+      tdffmCountry: process.env.TDFFM_COUNTRY_LAO || 'LAOS',
+      user: process.env.TDFFM_USER_LAO || process.env.TDFFM_MA_KH_LAO || 'LAO190',
+      password: process.env.TDFFM_PASSWORD_LAO || '',
+      pushKey: process.env.TDFFM_KEY_LAO || '',
+    },
+    // cam: { ten: 'Campuchia', flag: '🇰🇭', prefix: '', maKH: process.env.TDFFM_MA_KH_CAM || '', tdffmCountry: process.env.TDFFM_COUNTRY_CAM || 'CAMBODIA', user: process.env.TDFFM_USER_CAM || '', password: process.env.TDFFM_PASSWORD_CAM || '', pushKey: process.env.TDFFM_KEY_CAM || '' },
+  };
+  const DEFAULT_COUNTRY = 'thai';
+  // Lấy cấu hình nước (fallback về Thái nếu mã nước không hợp lệ)
+  const getCountry = c => COUNTRIES[c] || COUNTRIES[DEFAULT_COUNTRY];
 
   // Lazy: chỉ tạo pool khi cần, KHÔNG chạy lúc khởi động
   function getPool() {
@@ -220,14 +261,14 @@ export function mountThailand(app, { mysql, requireLogin, express, getCampaigns,
   async function matchLink(rawUrl) {
     if (!rawUrl) return null;
     const p = await db();
-    const [links] = await p.query('SELECT url_pattern, ma_mau, nhan_vien FROM th_link_registry WHERE active = 1');
+    const [links] = await p.query('SELECT url_pattern, ma_mau, nhan_vien, quoc_gia FROM th_link_registry WHERE active = 1');
     const incoming = normUrl(rawUrl);
     if (!incoming) return null;
     for (const lk of links) {
       const pattern = normUrl(lk.url_pattern);
       if (!pattern) continue;
       if (incoming === pattern || incoming.includes(pattern) || pattern.includes(incoming)) {
-        return { ma_mau: lk.ma_mau || '', nhan_vien: lk.nhan_vien || '' };
+        return { ma_mau: lk.ma_mau || '', nhan_vien: lk.nhan_vien || '', quoc_gia: lk.quoc_gia || 'thai' };
       }
     }
     return null;
@@ -270,8 +311,9 @@ export function mountThailand(app, { mysql, requireLogin, express, getCampaigns,
 
     if (!name && !phone) return res.json({ ok: false, message: 'Thiếu tên và SĐT', received: b });
 
-    // ---- MATCH LINK REGISTRY: URL → sản phẩm + nhân viên ----
+    // ---- MATCH LINK REGISTRY: URL → sản phẩm + nhân viên + quốc gia ----
     const matched = await matchLink(nguonUrl);
+    const quocGia = (matched && matched.quoc_gia) || DEFAULT_COUNTRY;
     const maMau = (matched && matched.ma_mau) || TDFFM_MA_MAU;
     const nhanVien = (matched && matched.nhan_vien) || nhanVienRaw;
 
@@ -299,11 +341,11 @@ export function mountThailand(app, { mysql, requireLogin, express, getCampaigns,
 
     const today = todayVN();
     await p.query(
-      `INSERT INTO th_orders (ngay_ve, ho_ten, sdt, dia_chi, combo, so_luong, gia_thb, nhan_vien, trang_thai, ghi_chu, ma_mau, nguon_url)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'Mới về', '', ?, ?)`,
-      [today, name, phone, address, message, soLuong, gia, nhanVien, maMau, nguonUrl]
+      `INSERT INTO th_orders (ngay_ve, ho_ten, sdt, dia_chi, combo, so_luong, gia_thb, nhan_vien, trang_thai, ghi_chu, ma_mau, nguon_url, quoc_gia)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'Mới về', '', ?, ?, ?)`,
+      [today, name, phone, address, message, soLuong, gia, nhanVien, maMau, nguonUrl, quocGia]
     );
-    res.json({ ok: true, message: 'Đã nhận đơn', parsed: { soLuong, gia, ma_mau: maMau, nhan_vien: nhanVien, matched: !!matched } });
+    res.json({ ok: true, message: 'Đã nhận đơn', parsed: { soLuong, gia, ma_mau: maMau, nhan_vien: nhanVien, quoc_gia: quocGia, matched: !!matched } });
   }));
 
   // Xem log webhook (admin) — để chẩn đoán Ladipage gửi gì
@@ -343,10 +385,12 @@ export function mountThailand(app, { mysql, requireLogin, express, getCampaigns,
   app.get('/thailand/api/orders', thaiAuth, wrap(async (req, res) => {
     const p = await db();
     const { isAdmin, myName } = thaiWho(req);
-    const { tu, den, nv, tt, q, day, sp } = req.query;
+    const { tu, den, nv, tt, q, day, sp, qg } = req.query;
     const where = [], args = [];
     if (tu) { where.push('ngay_ve >= ?'); args.push(tu); }
     if (den) { where.push('ngay_ve <= ?'); args.push(den); }
+    // Lọc theo quốc gia
+    if (qg) { where.push('quoc_gia = ?'); args.push(qg); }
     // Nhân viên: CHỈ xem đơn của chính mình (theo tên). Admin: xem tất cả + lọc tuỳ chọn.
     if (!isAdmin) {
       where.push('nhan_vien = ?'); args.push(myName || '\u0000'); // nếu không có tên → không thấy đơn nào
@@ -367,13 +411,15 @@ export function mountThailand(app, { mysql, requireLogin, express, getCampaigns,
       const [nvRows] = await p.query(`SELECT DISTINCT nhan_vien FROM th_orders WHERE nhan_vien <> '' ORDER BY nhan_vien`);
       nhanViens = nvRows.map(r => r.nhan_vien);
     }
-    // Danh sách sản phẩm từ DB
-    const [prodRows] = await p.query('SELECT ma_mau, ten_sp FROM th_products WHERE active = 1 ORDER BY ma_mau');
+    // Danh sách sản phẩm từ DB (kèm quốc gia để lọc theo nước ở client)
+    const [prodRows] = await p.query('SELECT ma_mau, ten_sp, quoc_gia FROM th_products WHERE active = 1 ORDER BY ma_mau');
     const dsMau = prodRows.map(r => r.ma_mau);
     const dsProducts = prodRows;
     // Danh sách combo cho modal thêm đơn
     const [comboRows] = await p.query('SELECT id, ma_mau, ten_combo, so_luong, gia_thb FROM th_combos WHERE active = 1 ORDER BY ma_mau, gia_thb');
-    res.json({ ok: true, orders: rows, nhanViens, trangThais: TRANG_THAI, dsMau, dsProducts, dsCombos: comboRows, maMauDefault: TDFFM_MA_MAU, isAdmin, myName });
+    // Danh sách quốc gia (để dựng dropdown lọc + tab)
+    const dsCountries = Object.entries(COUNTRIES).map(([code, c]) => ({ code, ten: c.ten, flag: c.flag, prefix: c.prefix }));
+    res.json({ ok: true, orders: rows, nhanViens, trangThais: TRANG_THAI, dsMau, dsProducts, dsCombos: comboRows, dsCountries, defaultCountry: DEFAULT_COUNTRY, maMauDefault: TDFFM_MA_MAU, isAdmin, myName });
   }));
 
   // Cập nhật 1 đơn (trạng thái, nhân viên, hoặc sửa thông tin)
@@ -393,12 +439,13 @@ export function mountThailand(app, { mysql, requireLogin, express, getCampaigns,
     const b = req.body || {};
     const { soLuong, gia } = parseCombo(b.combo || '');
     const maMau = b.ma_mau || TDFFM_MA_MAU;
+    const qg = COUNTRIES[b.quoc_gia] ? b.quoc_gia : DEFAULT_COUNTRY;
     const p = await db();
     await p.query(
-      `INSERT INTO th_orders (ngay_ve, ho_ten, sdt, dia_chi, combo, so_luong, gia_thb, nhan_vien, trang_thai, ma_mau)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      `INSERT INTO th_orders (ngay_ve, ho_ten, sdt, dia_chi, combo, so_luong, gia_thb, nhan_vien, trang_thai, ma_mau, quoc_gia)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       [b.ngay_ve || todayVN(), b.ho_ten || '', b.sdt || '', b.dia_chi || '',
-       b.combo || '', b.so_luong || soLuong, b.gia_thb || gia, b.nhan_vien || '', b.trang_thai || 'Mới về', maMau]
+       b.combo || '', b.so_luong || soLuong, b.gia_thb || gia, b.nhan_vien || '', b.trang_thai || 'Mới về', maMau, qg]
     );
     res.json({ ok: true });
   }));
@@ -430,7 +477,6 @@ export function mountThailand(app, { mysql, requireLogin, express, getCampaigns,
   app.post('/thailand/api/push', thaiAuth, express.json(), wrap(async (req, res) => {
     const { isAdmin } = thaiWho(req);
     if (!isAdmin) return res.json({ ok: false, message: 'Chỉ quản trị viên mới được đẩy đơn sang hậu cần' });
-    if (!TDFFM_KEY) return res.json({ ok: false, message: 'Chưa cấu hình TDFFM_KEY trên máy chủ' });
     const { ids } = req.body || {};
     if (!Array.isArray(ids) || !ids.length) return res.json({ ok: false, message: 'Chưa chọn đơn nào' });
 
@@ -439,62 +485,81 @@ export function mountThailand(app, { mysql, requireLogin, express, getCampaigns,
     const [rows] = await p.query(`SELECT * FROM th_orders WHERE id IN (${placeholders})`, ids);
     if (!rows.length) return res.json({ ok: false, message: 'Không tìm thấy đơn' });
 
-    // Tạo payload đúng định dạng bên hậu cần yêu cầu (key trùng tên cột Google Sheet)
-    const exportData = rows.map(o => ({
-      '*Mã khách hàng': TDFFM_MA_KH,
-      '*Tên khách hàng ': o.ho_ten || '',
-      '*SĐT khách hàng ': o.sdt || '',
-      '*Địa chỉ giao hàng ': o.dia_chi || '',
-      '*Tiền COD': Number(o.gia_thb) || 0,
-      '*Mã mẫu mã': o.ma_mau || TDFFM_MA_MAU,
-      '*Số lượng ': Number(o.so_luong) || 0,
-      '*Cần sale bán hàng': 'NEED_SALE',
-      'Ghi chú': '',
-      'Hình thức thanh toán': 'COD',
-      'Tiền cọc từ khách ': '',
-      'Tỉnh thành': '',
-      'Quận huyện': '',
-      'Phường xã': '',
-      'Mã bưu chính': '',
-      'Sale khách hàng': '',
-      'Nguồn data': '',
-      'Marketing': o.nhan_vien || '',
-      'Sale chốt đơn': '',
-      '': '',
-    }));
+    // Nhóm đơn theo QUỐC GIA — mỗi nước đẩy riêng bằng x-public-key của nước đó
+    const byCountry = {};
+    for (const o of rows) {
+      const cc = COUNTRIES[o.quoc_gia] ? o.quoc_gia : DEFAULT_COUNTRY;
+      (byCountry[cc] = byCountry[cc] || []).push(o);
+    }
 
-    const payloadObj = { createDate: yyyymmdd(), exportData };
-    // Ghi log payload để chẩn đoán (xem qua /thailand/api/push-log)
-    try {
-      const logFile = (process.env.DATA_DIR || '.') + '/thailand-push.log';
-      fs.appendFileSync(logFile, JSON.stringify({ at: new Date().toISOString(), sent: payloadObj }) + '\n');
-    } catch (e) {}
+    const pushedIds = [];
+    const errors = [];
+    for (const [cc, list] of Object.entries(byCountry)) {
+      const cinfo = getCountry(cc);
+      const pushKey = cinfo.pushKey;
+      if (!pushKey) { errors.push('Nước ' + cinfo.ten + ': chưa cấu hình khoá đẩy (TDFFM_KEY' + (cc === 'thai' ? '' : '_' + cc.toUpperCase()) + ')'); continue; }
 
-    let result, rawResp = '';
-    try {
-      const resp = await fetch(TDFFM_URL, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json', 'x-public-key': TDFFM_KEY },
-        body: JSON.stringify(payloadObj),
-      });
-      rawResp = await resp.text();
-      try { result = JSON.parse(rawResp); } catch { result = {}; }
-      // Ghi cả phản hồi
+      const exportData = list.map(o => ({
+        '*Mã khách hàng': cinfo.maKH,
+        '*Tên khách hàng ': o.ho_ten || '',
+        '*SĐT khách hàng ': o.sdt || '',
+        '*Địa chỉ giao hàng ': o.dia_chi || '',
+        '*Tiền COD': Number(o.gia_thb) || 0,
+        '*Mã mẫu mã': o.ma_mau || TDFFM_MA_MAU,
+        '*Số lượng ': Number(o.so_luong) || 0,
+        '*Cần sale bán hàng': 'NEED_SALE',
+        'Ghi chú': '',
+        'Hình thức thanh toán': 'COD',
+        'Tiền cọc từ khách ': '',
+        'Tỉnh thành': '',
+        'Quận huyện': '',
+        'Phường xã': '',
+        'Mã bưu chính': '',
+        'Sale khách hàng': '',
+        'Nguồn data': '',
+        'Marketing': o.nhan_vien || '',
+        'Sale chốt đơn': '',
+        '': '',
+      }));
+      const payloadObj = { createDate: yyyymmdd(), exportData };
       try {
         const logFile = (process.env.DATA_DIR || '.') + '/thailand-push.log';
-        fs.appendFileSync(logFile, JSON.stringify({ at: new Date().toISOString(), response: rawResp }) + '\n');
+        fs.appendFileSync(logFile, JSON.stringify({ at: new Date().toISOString(), country: cc, sent: payloadObj }) + '\n');
       } catch (e) {}
-    } catch (e) {
-      return res.json({ ok: false, message: 'Lỗi gọi API hậu cần: ' + e.message });
+
+      let result, rawResp = '';
+      try {
+        const resp = await fetch(TDFFM_URL, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', 'x-public-key': pushKey },
+          body: JSON.stringify(payloadObj),
+        });
+        rawResp = await resp.text();
+        try { result = JSON.parse(rawResp); } catch { result = {}; }
+        try {
+          const logFile = (process.env.DATA_DIR || '.') + '/thailand-push.log';
+          fs.appendFileSync(logFile, JSON.stringify({ at: new Date().toISOString(), country: cc, response: rawResp }) + '\n');
+        } catch (e) {}
+      } catch (e) {
+        errors.push('Nước ' + cinfo.ten + ': lỗi gọi API — ' + e.message);
+        continue;
+      }
+      if (result && result.errors) {
+        errors.push('Nước ' + cinfo.ten + ': hậu cần báo lỗi — ' + JSON.stringify(result.errors));
+        continue;
+      }
+      // Đẩy nhóm này thành công → đánh dấu
+      const okIds = list.map(o => o.id);
+      const ph = okIds.map(() => '?').join(',');
+      await p.query(`UPDATE th_orders SET da_day = 1, ngay_day = NOW() WHERE id IN (${ph})`, okIds);
+      pushedIds.push(...okIds);
     }
 
-    if (result && result.errors) {
-      return res.json({ ok: false, message: 'Hậu cần báo lỗi: ' + JSON.stringify(result.errors) });
+    if (!pushedIds.length) {
+      return res.json({ ok: false, message: errors.join(' · ') || 'Không đẩy được đơn nào' });
     }
-
-    // Đánh dấu các đơn đã đẩy
-    await p.query(`UPDATE th_orders SET da_day = 1, ngay_day = NOW() WHERE id IN (${placeholders})`, ids);
-    res.json({ ok: true, count: rows.length, message: 'Đã đẩy ' + rows.length + ' đơn sang hậu cần' });
+    const msg = 'Đã đẩy ' + pushedIds.length + ' đơn' + (errors.length ? ' (một số lỗi: ' + errors.join(' · ') + ')' : '');
+    res.json({ ok: true, count: pushedIds.length, message: msg });
   }));
 
   // Xem log đẩy đơn (admin) — chẩn đoán payload gửi đi + phản hồi
@@ -635,7 +700,7 @@ export function mountThailand(app, { mysql, requireLogin, express, getCampaigns,
     if (!isAdmin) return res.status(403).send('Chỉ quản trị viên mới được xuất CSV');
     const p = await db();
     const [rows] = await p.query(`SELECT * FROM th_orders ORDER BY id DESC LIMIT 10000`);
-    const head = ['ID', 'Ngày về', 'Họ tên', 'SĐT', 'Địa chỉ', 'Combo', 'Số lượng', 'Giá THB', 'Mã sản phẩm', 'Nhân viên', 'Trạng thái', 'Ghi chú'];
+    const head = ['ID', 'Quốc gia', 'Ngày về', 'Họ tên', 'SĐT', 'Địa chỉ', 'Combo', 'Số lượng', 'Giá THB', 'Mã sản phẩm', 'Nhân viên', 'Trạng thái', 'Ghi chú'];
     // Dùng dấu chấm phẩy (;) — Excel tiếng Việt tự tách thành từng cột
     const SEP = ';';
     const esc = v => {
@@ -644,9 +709,10 @@ export function mountThailand(app, { mysql, requireLogin, express, getCampaigns,
       s = s.replace(/"/g, '""');
       return '"' + s + '"';
     };
+    const cName = c => (getCountry(c).ten) || c || '';
     let csv = '\uFEFF' + head.map(esc).join(SEP) + '\n';
     for (const r of rows) {
-      csv += [r.id, (r.ngay_ve||'').toString().slice(0,10), r.ho_ten, r.sdt, r.dia_chi, r.combo, r.so_luong, r.gia_thb, r.ma_mau||'', r.nhan_vien, r.trang_thai, r.ghi_chu].map(esc).join(SEP) + '\n';
+      csv += [r.id, cName(r.quoc_gia||'thai'), (r.ngay_ve||'').toString().slice(0,10), r.ho_ten, r.sdt, r.dia_chi, r.combo, r.so_luong, r.gia_thb, r.ma_mau||'', r.nhan_vien, r.trang_thai, r.ghi_chu].map(esc).join(SEP) + '\n';
     }
     res.setHeader('Content-Type', 'text/csv; charset=utf-8');
     res.setHeader('Content-Disposition', 'attachment; filename="don-thailand.csv"');
@@ -658,25 +724,35 @@ export function mountThailand(app, { mysql, requireLogin, express, getCampaigns,
   app.get('/thailand/api/products', thaiAuth, wrap(async (req, res) => {
     const p = await db();
     const [rows] = await p.query('SELECT * FROM th_products WHERE active = 1 ORDER BY ma_mau');
-    res.json({ ok: true, products: rows });
+    const dsCountries = Object.entries(COUNTRIES).map(([code, c]) => ({ code, ten: c.ten, flag: c.flag, prefix: c.prefix }));
+    res.json({ ok: true, products: rows, dsCountries, defaultCountry: DEFAULT_COUNTRY });
   }));
-  // Thêm sản phẩm (chỉ admin)
+  // Thêm sản phẩm (chỉ admin) — nhập ĐUÔI mã + chọn nước → tự ghép prefix nước
   app.post('/thailand/api/product/add', thaiAuth, express.json(), wrap(async (req, res) => {
     const { isAdmin } = thaiWho(req);
     if (!isAdmin) return res.status(403).json({ ok: false, message: 'Chỉ admin mới được thêm sản phẩm' });
-    const { ma_mau, ten_sp } = req.body || {};
-    if (!ma_mau || !ma_mau.trim()) return res.json({ ok: false, message: 'Thiếu mã mẫu mã' });
-    const code = ma_mau.trim().toUpperCase();
+    const { ma_mau, ten_sp, quoc_gia } = req.body || {};
+    const qg = COUNTRIES[quoc_gia] ? quoc_gia : DEFAULT_COUNTRY;
+    const prefix = getCountry(qg).prefix;
+    let duoi = (ma_mau || '').trim().toUpperCase();
+    if (!duoi) return res.json({ ok: false, message: 'Thiếu mã mẫu mã' });
+    // Nếu admin đã gõ sẵn prefix (VD LAO190-GEL) thì giữ nguyên; nếu chỉ gõ đuôi (GEL) thì ghép
+    let code;
+    if (duoi.includes('-') && /^[A-Z]+\d+-/.test(duoi)) {
+      code = duoi; // đã có prefix đầy đủ
+    } else {
+      code = prefix + '-' + duoi.replace(/^-+/, '');
+    }
     const name = (ten_sp || '').trim();
     const p = await db();
     // Nếu mã đã tồn tại (kể cả đã xoá mềm) → kích hoạt lại + cập nhật tên
     const [existing] = await p.query('SELECT id, active FROM th_products WHERE ma_mau = ?', [code]);
     if (existing.length) {
-      await p.query('UPDATE th_products SET ten_sp = ?, active = 1 WHERE ma_mau = ?', [name, code]);
-      res.json({ ok: true, reactivated: existing[0].active === 0 });
+      await p.query('UPDATE th_products SET ten_sp = ?, quoc_gia = ?, active = 1 WHERE ma_mau = ?', [name, qg, code]);
+      res.json({ ok: true, ma_mau: code, reactivated: existing[0].active === 0 });
     } else {
-      await p.query('INSERT INTO th_products (ma_mau, ten_sp) VALUES (?, ?)', [code, name]);
-      res.json({ ok: true });
+      await p.query('INSERT INTO th_products (ma_mau, ten_sp, quoc_gia) VALUES (?, ?, ?)', [code, name, qg]);
+      res.json({ ok: true, ma_mau: code });
     }
   }));
   // Sửa tên sản phẩm (chỉ admin)
@@ -711,22 +787,24 @@ export function mountThailand(app, { mysql, requireLogin, express, getCampaigns,
     } else {
       [rows] = await p.query('SELECT * FROM th_link_registry WHERE active = 1 AND nhan_vien = ? ORDER BY id DESC', [myName]);
     }
-    // Kèm danh sách sản phẩm để fill dropdown
-    const [prods] = await p.query('SELECT ma_mau, ten_sp FROM th_products WHERE active = 1 ORDER BY ma_mau');
-    res.json({ ok: true, links: rows, products: prods, isAdmin });
+    // Kèm danh sách sản phẩm (có quốc gia) + danh sách nước để fill dropdown
+    const [prods] = await p.query('SELECT ma_mau, ten_sp, quoc_gia FROM th_products WHERE active = 1 ORDER BY ma_mau');
+    const dsCountries = Object.entries(COUNTRIES).map(([code, c]) => ({ code, ten: c.ten, flag: c.flag, prefix: c.prefix }));
+    res.json({ ok: true, links: rows, products: prods, dsCountries, defaultCountry: DEFAULT_COUNTRY, isAdmin });
   }));
   // Đăng ký link mới (NV tự đăng ký, tên tự gán từ phiên đăng nhập)
   app.post('/thailand/api/link/add', thaiAuth, express.json(), wrap(async (req, res) => {
     const { isAdmin, myName } = thaiWho(req);
-    const { url_pattern, ma_mau, ghi_chu, nhan_vien } = req.body || {};
+    const { url_pattern, ma_mau, ghi_chu, nhan_vien, quoc_gia } = req.body || {};
     if (!url_pattern || !url_pattern.trim()) return res.json({ ok: false, message: 'Thiếu URL link' });
     if (!ma_mau || !ma_mau.trim()) return res.json({ ok: false, message: 'Chưa chọn sản phẩm' });
+    const qg = COUNTRIES[quoc_gia] ? quoc_gia : DEFAULT_COUNTRY;
     // Admin có thể chỉ định tên NV, NV thường tự gán tên mình
     const nv = isAdmin ? (nhan_vien || myName || '') : (myName || '');
     const p = await db();
     await p.query(
-      'INSERT INTO th_link_registry (url_pattern, ma_mau, nhan_vien, ghi_chu) VALUES (?, ?, ?, ?)',
-      [url_pattern.trim(), ma_mau.trim(), nv, (ghi_chu || '').trim()]
+      'INSERT INTO th_link_registry (url_pattern, ma_mau, nhan_vien, ghi_chu, quoc_gia) VALUES (?, ?, ?, ?, ?)',
+      [url_pattern.trim(), ma_mau.trim(), nv, (ghi_chu || '').trim(), qg]
     );
     res.json({ ok: true });
   }));
@@ -1003,46 +1081,49 @@ export function mountThailand(app, { mysql, requireLogin, express, getCampaigns,
   }
 
   // ===== ĐĂNG NHẬP NỘI BỘ TDFFM (lấy cookie/token để gọi API web) =====
-  // Lưu phiên đăng nhập trong bộ nhớ, tự đăng nhập lại khi hết hạn
-  let tdffmSession = { cookie: '', token: '', at: 0 };
+  // Mỗi NƯỚC có phiên đăng nhập RIÊNG (2 tài khoản tdffm.com khác nhau)
+  const tdffmSessions = {}; // { thai: {cookie,token,at}, lao: {...} }
 
-  async function tdffmLogin() {
+  async function tdffmLogin(ccode) {
+    const c = getCountry(ccode);
     const resp = await fetch(`${TDFFM_INTERNAL_BASE}/auth/login`, {
       method: 'POST',
       headers: { 'content-type': 'application/json', 'accept': 'application/json' },
-      body: JSON.stringify({ email: TDFFM_USER, password: TDFFM_PASSWORD }),
+      body: JSON.stringify({ email: c.user, password: c.password }),
     });
     // Đọc Set-Cookie (Node 18+ fetch: getSetCookie)
     let cookie = '';
     try {
       const sc = typeof resp.headers.getSetCookie === 'function' ? resp.headers.getSetCookie() : [];
-      cookie = sc.map(c => c.split(';')[0]).join('; ');
+      cookie = sc.map(x => x.split(';')[0]).join('; ');
     } catch (e) {}
     let body = {};
     try { body = await resp.json(); } catch (e) {}
-    // Tìm token trong body (phòng trường hợp dùng bearer thay vì cookie)
     const token = (body && (body.accessToken || (body.data && (body.data.accessToken || body.data.token)) || body.token)) || '';
-    tdffmSession = { cookie, token, at: Date.now() };
+    tdffmSessions[ccode] = { cookie, token, at: Date.now() };
     const ok = resp.status >= 200 && resp.status < 400 && (!!cookie || !!token);
-    if (!ok) console.log('[thailand-sync] Login TDFFM thất bại:', resp.status, JSON.stringify(body).slice(0, 200));
+    if (!ok) console.log('[thailand-sync] Login TDFFM (' + ccode + ') thất bại:', resp.status, JSON.stringify(body).slice(0, 200));
     return { ok, status: resp.status };
   }
 
-  // Đảm bảo có phiên đăng nhập hợp lệ (đăng nhập lại nếu quá 30 phút)
-  async function tdffmEnsureAuth() {
-    const expired = Date.now() - tdffmSession.at > 30 * 60 * 1000;
-    if ((!tdffmSession.cookie && !tdffmSession.token) || expired) {
-      await tdffmLogin();
+  // Đảm bảo có phiên đăng nhập hợp lệ cho nước (đăng nhập lại nếu quá 30 phút)
+  async function tdffmEnsureAuth(ccode) {
+    const s = tdffmSessions[ccode];
+    const expired = !s || Date.now() - s.at > 30 * 60 * 1000;
+    if (!s || (!s.cookie && !s.token) || expired) {
+      await tdffmLogin(ccode);
     }
   }
 
-  // Gọi POST orders/list (API nội bộ, xác thực bằng cookie/token)
-  async function tdffmListOrders(page, limit, extraFilters) {
-    await tdffmEnsureAuth();
+  // Gọi POST orders/list cho 1 nước cụ thể (xác thực bằng session của nước đó)
+  async function tdffmListOrders(ccode, page, limit, extraFilters) {
+    await tdffmEnsureAuth(ccode);
+    const c = getCountry(ccode);
+    let s = tdffmSessions[ccode] || {};
     const headers = { 'content-type': 'application/json', 'accept': 'application/json' };
-    if (tdffmSession.cookie) headers['Cookie'] = tdffmSession.cookie;
-    if (tdffmSession.token) headers['Authorization'] = 'Bearer ' + tdffmSession.token;
-    const filters = { customerCode: TDFFM_MA_KH, country: 'THAILAND', ...(extraFilters || {}) };
+    if (s.cookie) headers['Cookie'] = s.cookie;
+    if (s.token) headers['Authorization'] = 'Bearer ' + s.token;
+    const filters = { customerCode: c.maKH, country: c.tdffmCountry, ...(extraFilters || {}) };
     const doFetch = () => fetch(`${TDFFM_INTERNAL_BASE}/orders/list`, {
       method: 'POST', headers,
       body: JSON.stringify({ page, limit, filters }),
@@ -1050,9 +1131,10 @@ export function mountThailand(app, { mysql, requireLogin, express, getCampaigns,
     let resp = await doFetch();
     // Nếu 401/403 (phiên hết hạn) → đăng nhập lại 1 lần rồi thử lại
     if (resp.status === 401 || resp.status === 403) {
-      await tdffmLogin();
-      if (tdffmSession.cookie) headers['Cookie'] = tdffmSession.cookie;
-      if (tdffmSession.token) headers['Authorization'] = 'Bearer ' + tdffmSession.token;
+      await tdffmLogin(ccode);
+      s = tdffmSessions[ccode] || {};
+      if (s.cookie) headers['Cookie'] = s.cookie;
+      if (s.token) headers['Authorization'] = 'Bearer ' + s.token;
       resp = await doFetch();
     }
     return resp.json();
@@ -1111,14 +1193,16 @@ export function mountThailand(app, { mysql, requireLogin, express, getCampaigns,
 
   // Hàm đồng bộ chính: lấy đơn từ TDFFM, match SĐT, cập nhật trang_thai
   async function syncFromTdffm() {
-    if (!TDFFM_USER || !TDFFM_PASSWORD) {
-      const msg = 'Bỏ qua sync: chưa cấu hình TDFFM_USER / TDFFM_PASSWORD';
+    // Cần ít nhất 1 nước có đủ thông tin đăng nhập
+    const readyCountries = Object.entries(COUNTRIES).filter(([, c]) => c.user && c.password);
+    if (!readyCountries.length) {
+      const msg = 'Bỏ qua sync: chưa cấu hình tài khoản đăng nhập TDFFM cho nước nào (TDFFM_USER/PASSWORD, TDFFM_USER_LAO/PASSWORD_LAO...)';
       console.log('[thailand-sync]', msg);
       lastSyncResult = { ok: false, message: msg, at: new Date().toISOString() };
       return;
     }
     const startAt = new Date().toISOString();
-    console.log('[thailand-sync] Bắt đầu đồng bộ trạng thái từ TDFFM...');
+    console.log('[thailand-sync] Bắt đầu đồng bộ trạng thái từ TDFFM cho:', readyCountries.map(([k]) => k).join(', '));
 
     try {
       const p = await db();
@@ -1132,27 +1216,30 @@ export function mountThailand(app, { mysql, requireLogin, express, getCampaigns,
       const fromTime = syncFrom.getTime();
       const fromStr = syncFrom.toISOString().slice(0, 10);
       const allTdffmOrders = [];
-      let page = 1;
-      const LIMIT = 100;
-      let stop = false;
-      while (page <= 50 && !stop) {
-        const data = await tdffmListOrders(page, LIMIT);
-        const inner = data && data.data ? data.data : null;
-        const orders = inner && Array.isArray(inner.data) ? inner.data : [];
-        if (page === 1) {
-          console.log('[thailand-sync] TDFFM orders/list: total =', inner ? inner.total : '?',
-            ', lọc từ', fromStr);
-        }
-        for (const o of orders) {
-          const t = new Date(o.createdAt).getTime();
-          if (isNaN(t) || t >= fromTime) {
-            allTdffmOrders.push(o);
-          } else {
-            stop = true;
+      // Đồng bộ CHO TỪNG NƯỚC có đủ thông tin đăng nhập (mỗi nước tài khoản riêng)
+      for (const [ccode, cinfo] of readyCountries) {
+        let page = 1;
+        const LIMIT = 100;
+        let stop = false;
+        while (page <= 50 && !stop) {
+          const data = await tdffmListOrders(ccode, page, LIMIT);
+          const inner = data && data.data ? data.data : null;
+          const orders = inner && Array.isArray(inner.data) ? inner.data : [];
+          if (page === 1) {
+            console.log('[thailand-sync] TDFFM', ccode, '(' + cinfo.maKH + '): total =', inner ? inner.total : '?', ', lọc từ', fromStr);
           }
+          for (const o of orders) {
+            const t = new Date(o.createdAt).getTime();
+            if (isNaN(t) || t >= fromTime) {
+              o._quocGia = ccode; // gắn nước để cập nhật đúng nếu cần
+              allTdffmOrders.push(o);
+            } else {
+              stop = true;
+            }
+          }
+          if (!inner || !inner.hasNextPage || orders.length === 0) break;
+          page++;
         }
-        if (!inner || !inner.hasNextPage || orders.length === 0) break;
-        page++;
       }
 
       if (!allTdffmOrders.length) {
@@ -1672,6 +1759,7 @@ table{width:100%;border-collapse:collapse;background:#101B2E;min-width:900px;}
   <div id="ordersView">
     <div class="filters">
       <input type="date" id="fTu"><span class="muted">→</span><input type="date" id="fDen">
+      <select id="fQg"><option value="">Mọi quốc gia</option></select>
       <select id="fNv"><option value="">Mọi nhân viên</option></select>
       <select id="fTt"><option value="">Mọi trạng thái</option></select>
       <select id="fSp"><option value="">Mọi sản phẩm</option></select>
@@ -1701,6 +1789,8 @@ table{width:100%;border-collapse:collapse;background:#101B2E;min-width:900px;}
       <input id="m_sdt" placeholder="SĐT">
       <label>Địa chỉ</label>
       <textarea id="m_diachi" placeholder="Địa chỉ giao hàng"></textarea>
+      <label>Quốc gia</label>
+      <select id="m_qg"></select>
       <label>Sản phẩm</label>
       <select id="m_mau"></select>
       <label>Combo</label>
@@ -1728,9 +1818,11 @@ table{width:100%;border-collapse:collapse;background:#101B2E;min-width:900px;}
       <div style="flex:1;min-width:320px;">
         <h3 style="margin:0 0 12px;font-size:15px;">📦 Mã mẫu mã (Sản phẩm)</h3>
         <div id="prodAdminForm" style="display:flex;gap:8px;margin-bottom:14px;flex-wrap:wrap;">
-          <input id="pMa" placeholder="Mã mẫu (VD: THA284-GEL)" style="flex:1;min-width:150px;font-size:13px;padding:8px 10px;border-radius:8px;border:1px solid rgba(255,255,255,.12);background:rgba(255,255,255,.06);color:#fff;">
-          <input id="pTen" placeholder="Tên sản phẩm (tuỳ chọn)" style="flex:1;min-width:150px;font-size:13px;padding:8px 10px;border-radius:8px;border:1px solid rgba(255,255,255,.12);background:rgba(255,255,255,.06);color:#fff;">
+          <select id="pQg" style="width:120px;font-size:13px;padding:8px 10px;border-radius:8px;border:1px solid rgba(255,255,255,.12);background:rgba(255,255,255,.06);color:#fff;color-scheme:dark;"></select>
+          <input id="pMa" placeholder="Đuôi mã (VD: GEL)" style="flex:1;min-width:120px;font-size:13px;padding:8px 10px;border-radius:8px;border:1px solid rgba(255,255,255,.12);background:rgba(255,255,255,.06);color:#fff;">
+          <input id="pTen" placeholder="Tên sản phẩm (tuỳ chọn)" style="flex:1;min-width:130px;font-size:13px;padding:8px 10px;border-radius:8px;border:1px solid rgba(255,255,255,.12);background:rgba(255,255,255,.06);color:#fff;">
           <button class="btn g" id="pAdd">+ Thêm</button>
+          <div style="flex:1 1 100%;font-size:11px;color:#6B7C97;" id="pHint">Chọn nước + gõ đuôi mã → tự thành mã đầy đủ</div>
         </div>
         <div id="prodList"><div class="empty">Đang tải…</div></div>
       </div>
@@ -1738,10 +1830,11 @@ table{width:100%;border-collapse:collapse;background:#101B2E;min-width:900px;}
       <div style="flex:2;min-width:400px;">
         <h3 style="margin:0 0 12px;font-size:15px;">🔗 Đăng ký link Landing Page</h3>
         <div style="display:flex;gap:8px;margin-bottom:14px;flex-wrap:wrap;">
-          <input id="lUrl" placeholder="Dán URL landing page…" style="flex:2;min-width:200px;font-size:13px;padding:8px 10px;border-radius:8px;border:1px solid rgba(255,255,255,.12);background:rgba(255,255,255,.06);color:#fff;">
+          <select id="lQg" style="width:120px;font-size:13px;padding:8px 10px;border-radius:8px;border:1px solid rgba(255,255,255,.12);background:rgba(255,255,255,.06);color:#fff;color-scheme:dark;"></select>
+          <input id="lUrl" placeholder="Dán URL landing page…" style="flex:2;min-width:180px;font-size:13px;padding:8px 10px;border-radius:8px;border:1px solid rgba(255,255,255,.12);background:rgba(255,255,255,.06);color:#fff;">
           <select id="lMau" style="flex:1;min-width:130px;font-size:13px;padding:8px 10px;border-radius:8px;border:1px solid rgba(255,255,255,.12);background:rgba(255,255,255,.06);color:#fff;color-scheme:dark;"><option value="">Chọn sản phẩm…</option></select>
           <input id="lNv" placeholder="Nhân viên (tự điền)" style="flex:1;min-width:120px;font-size:13px;padding:8px 10px;border-radius:8px;border:1px solid rgba(255,255,255,.12);background:rgba(255,255,255,.06);color:#fff;" class="lnv-input">
-          <input id="lNote" placeholder="Ghi chú" style="width:120px;font-size:13px;padding:8px 10px;border-radius:8px;border:1px solid rgba(255,255,255,.12);background:rgba(255,255,255,.06);color:#fff;">
+          <input id="lNote" placeholder="Ghi chú" style="width:110px;font-size:13px;padding:8px 10px;border-radius:8px;border:1px solid rgba(255,255,255,.12);background:rgba(255,255,255,.06);color:#fff;">
           <button class="btn" id="lAdd">+ Đăng ký</button>
         </div>
         <div id="linkList"><div class="empty">Đang tải…</div></div>
@@ -1766,7 +1859,7 @@ table{width:100%;border-collapse:collapse;background:#101B2E;min-width:900px;}
 const $=id=>document.getElementById(id);
 const esc=s=>String(s==null?'':s).replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
 const thb=n=>(Number(n)||0).toLocaleString('en-US');
-let TT=[], NV=[], DSMAU=[], PRODUCTS=[], COMBOS=[], MAU_DEFAULT='', IS_ADMIN=true;
+let TT=[], NV=[], DSMAU=[], PRODUCTS=[], COMBOS=[], COUNTRIES=[], QG_DEFAULT='thai', MAU_DEFAULT='', IS_ADMIN=true;
 
 function tabSwitch(t){
   $('tabOrders').classList.toggle('on',t==='orders');
@@ -1786,6 +1879,7 @@ async function loadOrders(){
   const qs=new URLSearchParams();
   if($('fTu').value)qs.set('tu',$('fTu').value);
   if($('fDen').value)qs.set('den',$('fDen').value);
+  if($('fQg').value)qs.set('qg',$('fQg').value);
   if($('fNv').value)qs.set('nv',$('fNv').value);
   if($('fTt').value)qs.set('tt',$('fTt').value);
   if($('fSp').value)qs.set('sp',$('fSp').value);
@@ -1797,7 +1891,7 @@ async function loadOrders(){
     if(r.status===401){location.href='/thailand/login';return;}
     const d=await r.json();
     if(!d.ok){$('tbl').innerHTML='<div class="empty">'+esc(d.message)+'</div>';return;}
-    TT=d.trangThais; NV=d.nhanViens; DSMAU=d.dsMau||[]; PRODUCTS=d.dsProducts||[]; COMBOS=d.dsCombos||[]; MAU_DEFAULT=d.maMauDefault||''; IS_ADMIN=d.isAdmin!==false;
+    TT=d.trangThais; NV=d.nhanViens; DSMAU=d.dsMau||[]; PRODUCTS=d.dsProducts||[]; COMBOS=d.dsCombos||[]; COUNTRIES=d.dsCountries||[]; QG_DEFAULT=d.defaultCountry||'thai'; MAU_DEFAULT=d.maMauDefault||''; IS_ADMIN=d.isAdmin!==false;
     // Ẩn nút đẩy + bộ lọc nhân viên với nhân viên thường
     if($('pushBtn')) $('pushBtn').style.display = IS_ADMIN ? '' : 'none';
     if($('csvBtn')) $('csvBtn').style.display = IS_ADMIN ? '' : 'none';
@@ -1813,9 +1907,13 @@ async function loadOrders(){
     if($('fTt').options.length<=1) TT.forEach(t=>$('fTt').insertAdjacentHTML('beforeend','<option>'+esc(t)+'</option>'));
     // Fill dropdown sản phẩm (chỉ 1 lần)
     if($('fSp').options.length<=1 && PRODUCTS.length) PRODUCTS.forEach(p=>$('fSp').insertAdjacentHTML('beforeend','<option value="'+esc(p.ma_mau)+'">'+esc(p.ma_mau+(p.ten_sp?' — '+p.ten_sp:''))+'</option>'));
+    // Fill dropdown quốc gia (chỉ 1 lần)
+    if($('fQg').options.length<=1 && COUNTRIES.length) COUNTRIES.forEach(c=>$('fQg').insertAdjacentHTML('beforeend','<option value="'+esc(c.code)+'">'+esc(c.flag+' '+c.ten)+'</option>'));
     render(d.orders);
   }catch(e){$('tbl').innerHTML='<div class="empty">Lỗi tải dữ liệu</div>';}
 }
+// Tên nước từ code
+function countryName(code){const c=COUNTRIES.find(x=>x.code===code);return c?c.flag+' '+c.ten:(code||'');}
 
 
   function fmtNgayVe(o) {
@@ -1843,7 +1941,10 @@ function prodLabel(code){
 }
 function mauSelect(o){
   const cur=o.ma_mau||MAU_DEFAULT;
-  const list=[...new Set([cur, ...DSMAU].filter(Boolean))];
+  const qg=o.quoc_gia||'thai';
+  // Chỉ hiện sản phẩm cùng quốc gia với đơn (fallback: tất cả nếu chưa gắn quốc gia)
+  const prodCodes=PRODUCTS.filter(p=>!p.quoc_gia||p.quoc_gia===qg).map(p=>p.ma_mau);
+  const list=[...new Set([cur, ...prodCodes].filter(Boolean))];
   const opts=list.map(m=>'<option value="'+esc(m)+'"'+(m===cur?' selected':'')+'>'+esc(prodLabel(m))+'</option>').join('');
   return '<select class="st mausel" style="min-width:120px" data-id="'+o.id+'">'+opts+'</select>';
 }
@@ -1853,6 +1954,7 @@ function render(orders){
   h+='<table><thead><tr>'
     +(IS_ADMIN?'<th><input type="checkbox" id="chkAll"></th>':'')
     +'<th class="num">STT</th>'
+    +'<th>Quốc gia</th>'
     +'<th>Ngày về</th><th>Họ tên</th><th>SĐT</th><th>Địa chỉ</th><th>Combo</th>'
     +'<th class="num">SL</th><th class="num">Giá THB</th><th>Mã mẫu mã</th>'
     +'<th>Nhân viên</th><th>Trạng thái</th>'
@@ -1866,6 +1968,7 @@ function render(orders){
     h+='<tr>'
       +(IS_ADMIN?'<td><input type="checkbox" class="chk" data-id="'+o.id+'"'+(o.da_day==1?' disabled':'')+'></td>':'')
       +'<td class="num" style="color:#6B7C97">'+(idx+1)+'</td>'
+      +'<td style="white-space:nowrap;font-size:12px;">'+esc(countryName(o.quoc_gia||'thai'))+'</td>'
       +'<td>'+esc(fmtNgayVe(o))+'</td>'
       +'<td>'+esc(o.ho_ten)+'</td>'
       +'<td>'+esc(o.sdt)+'</td>'
@@ -1924,16 +2027,27 @@ function fillModalCombos(){
   });
   $('m_sl').value='';$('m_gia').value='';
 }
-function openAddModal(){
-  ['m_ten','m_sdt','m_diachi','m_combo','m_sl','m_gia','m_nv'].forEach(id=>$(id).value='');
-  // Fill dropdown sản phẩm
+function fillModalProducts(){
+  const qg=$('m_qg').value;
   const sel=$('m_mau');
   sel.innerHTML='';
-  const list=PRODUCTS.length?PRODUCTS:[...new Set([MAU_DEFAULT,...DSMAU].filter(Boolean))].map(m=>({ma_mau:m,ten_sp:''}));
-  list.forEach(p=>sel.insertAdjacentHTML('beforeend','<option value="'+esc(p.ma_mau)+'"'+(p.ma_mau===MAU_DEFAULT?' selected':'')+'>'+esc(p.ma_mau+(p.ten_sp?' — '+p.ten_sp:''))+'</option>'));
-  // Chọn SP → fill combo
-  sel.onchange=fillModalCombos;
+  // Chỉ hiện sản phẩm cùng nước đang chọn
+  const list=PRODUCTS.filter(p=>!p.quoc_gia||p.quoc_gia===qg);
+  if(!list.length){ sel.innerHTML='<option value="">(chưa có SP nước này)</option>'; }
+  list.forEach(p=>sel.insertAdjacentHTML('beforeend','<option value="'+esc(p.ma_mau)+'">'+esc(p.ma_mau+(p.ten_sp?' — '+p.ten_sp:''))+'</option>'));
   fillModalCombos();
+}
+function openAddModal(){
+  ['m_ten','m_sdt','m_diachi','m_combo','m_sl','m_gia','m_nv'].forEach(id=>$(id).value='');
+  // Fill dropdown quốc gia
+  const qsel=$('m_qg');
+  qsel.innerHTML='';
+  (COUNTRIES.length?COUNTRIES:[{code:'thai',flag:'🇹🇭',ten:'Thái Lan'}]).forEach(c=>qsel.insertAdjacentHTML('beforeend','<option value="'+esc(c.code)+'"'+(c.code===QG_DEFAULT?' selected':'')+'>'+esc(c.flag+' '+c.ten)+'</option>'));
+  qsel.onchange=fillModalProducts;
+  // Fill sản phẩm theo nước đang chọn
+  fillModalProducts();
+  // Chọn SP → fill combo
+  $('m_mau').onchange=fillModalCombos;
   // Chọn combo → tự điền SL + giá
   $('m_combo_sel').onchange=function(){
     const opt=this.options[this.selectedIndex];
@@ -1953,7 +2067,7 @@ $('m_save').onclick=async()=>{
   const body={
     ho_ten, sdt:$('m_sdt').value.trim(), dia_chi:$('m_diachi').value.trim(),
     combo:$('m_combo').value.trim(), nhan_vien:$('m_nv').value.trim(),
-    ma_mau:$('m_mau').value||MAU_DEFAULT
+    ma_mau:$('m_mau').value||MAU_DEFAULT, quoc_gia:$('m_qg').value||QG_DEFAULT
   };
   const sl=parseInt(($('m_sl').value||'').replace(/[^\d]/g,''),10);
   const gia=parseInt(($('m_gia').value||'').replace(/[^\d]/g,''),10);
@@ -2061,7 +2175,7 @@ $('syncNowBtn').onclick=async()=>{
 };
 
 $('fBtn').onclick=loadOrders;
-$('fReset').onclick=()=>{['fTu','fDen','fNv','fTt','fSp','fDay','fQ'].forEach(id=>$(id).value='');loadOrders();};
+$('fReset').onclick=()=>{['fTu','fDen','fQg','fNv','fTt','fSp','fDay','fQ'].forEach(id=>$(id).value='');loadOrders();};
 
 async function loadStats(){
   const qs=new URLSearchParams();
@@ -2114,7 +2228,7 @@ function initDualScroll() {
 setTimeout(initDualScroll, 300);
 
 // ===== REGISTRY TAB: Sản phẩm + Link =====
-let REG_PRODUCTS=[], REG_LINKS=[], REG_COMBOS=[], REG_IS_ADMIN=true, REG_MY_NAME='';
+let REG_PRODUCTS=[], REG_LINKS=[], REG_COMBOS=[], REG_COUNTRIES=[], REG_QG_DEFAULT='thai', REG_IS_ADMIN=true, REG_MY_NAME='';
 
 async function loadRegistry(){
   try{
@@ -2126,11 +2240,19 @@ async function loadRegistry(){
     REG_PRODUCTS=pRes.ok?pRes.products:[];
     REG_LINKS=lRes.ok?lRes.links:[];
     REG_COMBOS=cRes.ok?cRes.combos:[];
+    REG_COUNTRIES=pRes.dsCountries||lRes.dsCountries||[];
+    REG_QG_DEFAULT=pRes.defaultCountry||'thai';
     REG_IS_ADMIN=lRes.isAdmin!==false;
-    // Fill dropdown sản phẩm ở form đăng ký link
-    const sel=$('lMau');
-    sel.innerHTML='<option value="">Chọn sản phẩm…</option>';
-    REG_PRODUCTS.forEach(p=>sel.insertAdjacentHTML('beforeend','<option value="'+esc(p.ma_mau)+'">'+esc(p.ma_mau+(p.ten_sp?' — '+p.ten_sp:''))+'</option>'));
+    // Fill dropdown quốc gia ở form thêm sản phẩm + form đăng ký link (chỉ 1 lần)
+    if($('pQg') && $('pQg').options.length===0){
+      REG_COUNTRIES.forEach(c=>$('pQg').insertAdjacentHTML('beforeend','<option value="'+esc(c.code)+'"'+(c.code===REG_QG_DEFAULT?' selected':'')+'>'+esc(c.flag+' '+c.ten)+'</option>'));
+      $('pQg').onchange=updateProdHint; updateProdHint();
+    }
+    if($('lQg') && $('lQg').options.length===0){
+      REG_COUNTRIES.forEach(c=>$('lQg').insertAdjacentHTML('beforeend','<option value="'+esc(c.code)+'"'+(c.code===REG_QG_DEFAULT?' selected':'')+'>'+esc(c.flag+' '+c.ten)+'</option>'));
+      $('lQg').onchange=fillLinkProducts;
+    }
+    fillLinkProducts();
     // Fill dropdown sản phẩm ở form thêm combo
     const csel=$('cMau');
     csel.innerHTML='<option value="">Chọn SP…</option>';
@@ -2151,13 +2273,32 @@ async function loadRegistry(){
   }
 }
 
+// Cập nhật gợi ý prefix khi chọn nước ở form thêm sản phẩm
+function updateProdHint(){
+  const qg=$('pQg').value;
+  const c=REG_COUNTRIES.find(x=>x.code===qg);
+  const duoi=($('pMa').value.trim().toUpperCase())||'GEL';
+  if(c && $('pHint')) $('pHint').textContent='Mã đầy đủ sẽ là: '+c.prefix+'-'+duoi;
+}
+// Fill dropdown sản phẩm trong form link — chỉ hiện SP cùng nước đang chọn
+function fillLinkProducts(){
+  const sel=$('lMau'); if(!sel) return;
+  const qg=$('lQg')?$('lQg').value:'';
+  sel.innerHTML='<option value="">Chọn sản phẩm…</option>';
+  REG_PRODUCTS.filter(p=>!qg||!p.quoc_gia||p.quoc_gia===qg).forEach(p=>
+    sel.insertAdjacentHTML('beforeend','<option value="'+esc(p.ma_mau)+'">'+esc(p.ma_mau+(p.ten_sp?' — '+p.ten_sp:''))+'</option>'));
+}
+
+function cName(code){const c=REG_COUNTRIES.find(x=>x.code===code);return c?c.flag+' '+c.ten:(code||'');}
+
 function renderProducts(){
   if(!REG_PRODUCTS.length){$('prodList').innerHTML='<div class="empty">Chưa có sản phẩm nào. Admin thêm mã mẫu mã ở trên.</div>';return;}
-  let h='<table style="min-width:auto;"><thead><tr><th>Mã mẫu mã</th><th>Tên sản phẩm</th>'+(REG_IS_ADMIN?'<th></th>':'')+'</tr></thead><tbody>';
+  let h='<table style="min-width:auto;"><thead><tr><th>Quốc gia</th><th>Mã mẫu mã</th><th>Tên sản phẩm</th>'+(REG_IS_ADMIN?'<th></th>':'')+'</tr></thead><tbody>';
   REG_PRODUCTS.forEach(p=>{
-    h+='<tr><td><b>'+esc(p.ma_mau)+'</b></td>'
+    h+='<tr><td style="font-size:12px;white-space:nowrap;">'+esc(cName(p.quoc_gia||'thai'))+'</td>'
+      +'<td><b>'+esc(p.ma_mau)+'</b></td>'
       +'<td>'+(REG_IS_ADMIN
-        ?'<input class="ed edprod" data-id="'+p.id+'" value="'+esc(p.ten_sp||'')+'" placeholder="Nhập tên sản phẩm…" style="min-width:180px;">'
+        ?'<input class="ed edprod" data-id="'+p.id+'" value="'+esc(p.ten_sp||'')+'" placeholder="Nhập tên sản phẩm…" style="min-width:160px;">'
         :'<span class="muted">'+esc(p.ten_sp||'—')+'</span>')+'</td>';
     if(REG_IS_ADMIN) h+='<td><span class="del" style="cursor:pointer" onclick="delProd('+p.id+')">✕</span></td>';
     h+='</tr>';
@@ -2169,11 +2310,12 @@ function renderProducts(){
 }
 
 function renderLinks(){
-  if(!REG_LINKS.length){$('linkList').innerHTML='<div class="empty">Chưa có link nào. Dán URL landing page và chọn sản phẩm để đăng ký.</div>';return;}
-  let h='<table style="min-width:auto;"><thead><tr><th>URL Landing Page</th><th>Sản phẩm</th><th>Nhân viên</th><th>Ghi chú</th><th></th></tr></thead><tbody>';
+  if(!REG_LINKS.length){$('linkList').innerHTML='<div class="empty">Chưa có link nào. Chọn nước, dán URL và chọn sản phẩm để đăng ký.</div>';return;}
+  let h='<table style="min-width:auto;"><thead><tr><th>Quốc gia</th><th>URL Landing Page</th><th>Sản phẩm</th><th>Nhân viên</th><th>Ghi chú</th><th></th></tr></thead><tbody>';
   REG_LINKS.forEach(lk=>{
     const pName=REG_PRODUCTS.find(p=>p.ma_mau===lk.ma_mau);
-    h+='<tr><td style="max-width:320px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;" title="'+esc(lk.url_pattern)+'"><a href="'+esc(lk.url_pattern)+'" target="_blank" style="color:#9DB2FF;">'+esc(lk.url_pattern)+'</a></td>'
+    h+='<tr><td style="font-size:12px;white-space:nowrap;">'+esc(cName(lk.quoc_gia||'thai'))+'</td>'
+      +'<td style="max-width:280px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;" title="'+esc(lk.url_pattern)+'"><a href="'+esc(lk.url_pattern)+'" target="_blank" style="color:#9DB2FF;">'+esc(lk.url_pattern)+'</a></td>'
       +'<td><b>'+esc(lk.ma_mau||'—')+'</b>'+(pName&&pName.ten_sp?' <span class="muted">'+esc(pName.ten_sp)+'</span>':'')+'</td>'
       +'<td>'+esc(lk.nhan_vien||'—')+'</td>'
       +'<td class="muted">'+esc(lk.ghi_chu||'')+'</td>'
@@ -2186,12 +2328,12 @@ function renderLinks(){
 // Thêm sản phẩm
 $('pAdd').onclick=async()=>{
   const ma=$('pMa').value.trim();
-  if(!ma){alert('Nhập mã mẫu mã');return;}
+  if(!ma){alert('Nhập đuôi mã (VD: GEL)');return;}
   try{
-    const r=await fetch('/thailand/api/product/add',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({ma_mau:ma,ten_sp:$('pTen').value.trim()})});
+    const r=await fetch('/thailand/api/product/add',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({ma_mau:ma,ten_sp:$('pTen').value.trim(),quoc_gia:$('pQg').value})});
     const d=await r.json();
     if(!d.ok){alert(d.message||'Lỗi');return;}
-    $('pMa').value='';$('pTen').value='';
+    $('pMa').value='';$('pTen').value='';updateProdHint();
     loadRegistry();
     // Reset filter SP ở tab đơn để load lại danh sách mới
     $('fSp').innerHTML='<option value="">Mọi sản phẩm</option>';
@@ -2220,7 +2362,7 @@ $('lAdd').onclick=async()=>{
   if(!url){alert('Dán URL landing page');return;}
   if(!mau){alert('Chọn sản phẩm');return;}
   try{
-    const body={url_pattern:url,ma_mau:mau,ghi_chu:$('lNote').value.trim()};
+    const body={url_pattern:url,ma_mau:mau,ghi_chu:$('lNote').value.trim(),quoc_gia:$('lQg')?$('lQg').value:''};
     // Admin có thể chỉ định NV
     const nvVal=$('lNv').value.trim();
     if(nvVal) body.nhan_vien=nvVal;
