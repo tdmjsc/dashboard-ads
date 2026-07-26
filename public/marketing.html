@@ -57,6 +57,7 @@
       <button data-range="today">Hôm nay</button>
       <button data-range="yesterday">Hôm qua</button>
       <button data-range="month">Tháng này</button>
+      <button data-range="lastmonth">Tháng trước</button>
     </div>
     <div class="daterange">
       <label>Từ</label><input type="date" id="from">
@@ -138,9 +139,14 @@ function setRange(kind){
   const t = new Date();
   if(kind==='today'){ $('from').value=fmt(t); $('to').value=fmt(t); }
   else if(kind==='yesterday'){ const y=new Date(t); y.setDate(t.getDate()-1); $('from').value=fmt(y); $('to').value=fmt(y); }
+  else if(kind==='lastmonth'){
+    const first=new Date(t.getFullYear(), t.getMonth()-1, 1);   // ngày đầu tháng trước
+    const last =new Date(t.getFullYear(), t.getMonth(), 0);     // ngày cuối tháng trước (ngày 0 của tháng này)
+    $('from').value=fmt(first); $('to').value=fmt(last);
+  }
   else { $('from').value=fmt(new Date(t.getFullYear(),t.getMonth(),1)); $('to').value=fmt(t); }
 }
-setRange('month');
+setRange('today');
 
 function esc(s){ return String(s==null?'':s).replace(/[&<>"]/g, c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c])); }
 
