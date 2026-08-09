@@ -499,28 +499,34 @@ export function mountThailand(app, { mysql, requireLogin, express, getCampaigns,
       const pushKey = cinfo.pushKey;
       if (!pushKey) { errors.push('Nước ' + cinfo.ten + ': chưa cấu hình khoá đẩy (TDFFM_KEY' + (cc === 'thai' ? '' : '_' + cc.toUpperCase()) + ')'); continue; }
 
-      const exportData = list.map(o => ({
-        '*Mã khách hàng': cinfo.maKH,
-        '*Tên khách hàng ': o.ho_ten || '',
-        '*SĐT khách hàng ': o.sdt || '',
-        '*Địa chỉ giao hàng ': o.dia_chi || '',
-        '*Tiền COD': Number(o.gia_thb) || 0,
-        '*Mã mẫu mã': o.ma_mau || TDFFM_MA_MAU,
-        '*Số lượng ': Number(o.so_luong) || 0,
-        '*Cần sale bán hàng': 'NEED_SALE',
-        'Ghi chú': '',
-        'Hình thức thanh toán': 'COD',
-        'Tiền cọc từ khách ': '',
-        'Tỉnh thành': '',
-        'Quận huyện': '',
-        'Phường xã': '',
-        'Mã bưu chính': '',
-        'Sale khách hàng': '',
-        'Nguồn data': '',
-        'Marketing': o.nhan_vien || '',
-        'Sale chốt đơn': '',
-        '': '',
-      }));
+      const exportData = list.map(o => {
+        const sl = Number(o.so_luong) || 0;
+        return {
+          '*Mã khách hàng': cinfo.maKH,
+          '*Tên khách hàng ': o.ho_ten || '',
+          '*SĐT khách hàng ': o.sdt || '',
+          '*Địa chỉ giao hàng ': o.dia_chi || '',
+          'Ghi chú': '',
+          '*Tiền COD': Number(o.gia_thb) || 0,
+          'Hình thức thanh toán': 'COD',
+          '*Tiền cọc từ khách ': 0,
+          '*Mã mẫu mã': o.ma_mau || TDFFM_MA_MAU,
+          'Loại hình sản phẩm': '',
+          '*Số lượng ': sl,
+          '*Mua bảo hiểm': 'Không',
+          '*Cần sale bán hàng': 'NEED_SALE',
+          'Tỉnh thành': '',
+          'Quận huyện': '',
+          'Phường xã': '',
+          'Mã bưu chính': '',
+          'Sale khách hàng': '',
+          'Nguồn data': '',
+          'Marketing': o.nhan_vien || '',
+          'Sale chốt đơn': '',
+          'Mã vận đơn khách hàng': '',
+          'Link nhãn vận đơn': '',
+        };
+      });
       const payloadObj = { createDate: yyyymmdd(), exportData };
       try {
         const logFile = (process.env.DATA_DIR || '.') + '/thailand-push.log';
