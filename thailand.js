@@ -2013,14 +2013,14 @@ function mauSelect(o){
   return '<select class="st mausel" style="min-width:120px" data-id="'+o.id+'">'+opts+'</select>';
 }
 // Chuẩn hoá SĐT (bỏ ký tự không phải số) để so khớp
-function normPhone(s){return String(s==null?'':s).replace(/\D/g,'');}
+function normPhone(s){return String(s==null?'':s).replace(/[^0-9]/g,'');}
 // Lấy ngày (yyyy-mm-dd) từ đơn để so sánh khoảng cách ngày
 function orderDateStr(o){
   // Ưu tiên ngay_ve_str (đã format chuẩn từ DB, không lệch múi giờ)
-  if(o.ngay_ve_str && /^\d{4}-\d{2}-\d{2}$/.test(o.ngay_ve_str)) return o.ngay_ve_str;
+  if(o.ngay_ve_str && /^[0-9]{4}-[0-9]{2}-[0-9]{2}$/.test(o.ngay_ve_str)) return o.ngay_ve_str;
   const raw=o.ngay_ve||o.created_at||'';
   const s=String(raw).slice(0,10);
-  return /^\d{4}-\d{2}-\d{2}$/.test(s)?s:'';
+  return /^[0-9]{4}-[0-9]{2}-[0-9]{2}$/.test(s)?s:'';
 }
 function dayDiff(d1,d2){
   if(!d1||!d2)return 999;
