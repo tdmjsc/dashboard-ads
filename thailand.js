@@ -404,7 +404,7 @@ export function mountThailand(app, { mysql, requireLogin, express, getCampaigns,
     if (sp) { where.push('ma_mau = ?'); args.push(sp); }
     if (q) { where.push('(ho_ten LIKE ? OR sdt LIKE ? OR dia_chi LIKE ?)'); const like = '%' + q + '%'; args.push(like, like, like); }
     const wsql = where.length ? 'WHERE ' + where.join(' AND ') : '';
-    const [rows] = await p.query(`SELECT * FROM th_orders ${wsql} ORDER BY id DESC LIMIT 2000`, args);
+    const [rows] = await p.query(`SELECT *, DATE_FORMAT(ngay_ve, '%Y-%m-%d') AS ngay_ve_str FROM th_orders ${wsql} ORDER BY id DESC LIMIT 2000`, args);
     // Danh sách nhân viên (chỉ admin cần, để lọc)
     let nhanViens = [];
     if (isAdmin) {
@@ -580,6 +580,37 @@ export function mountThailand(app, { mysql, requireLogin, express, getCampaigns,
     }
   });
 
+  // CHẨN ĐOÁN đơn trùng — xem hệ thống "nhìn" thấy gì để so trùng
+  // Mở: /thailand/api/dup-debug?sdt=0862669202  (hoặc để trống xem 30 đơn mới nhất chưa đẩy)
+  app.get('/thailand/api/dup-debug', thaiAuth, wrap(async (req, res) => {
+    const p = await db();
+    const { sdt } = req.query;
+    let sql = `SELECT id, ho_ten, sdt, nhan_vien, da_day,
+      DATE_FORMAT(ngay_ve, '%Y-%m-%d') AS ngay_ve,
+      DATE_FORMAT(created_at, '%Y-%m-%d %H:%i') AS created_at,
+      trang_thai
+      FROM th_orders`;
+    const args = [];
+    if (sdt) { sql += ` WHERE REPLACE(REPLACE(sdt,' ',''),'-','') LIKE ?`; args.push('%' + String(sdt).replace(/\D/g, '') + '%'); }
+    sql += ` ORDER BY id DESC LIMIT 30`;
+    const [rows] = await p.query(sql, args);
+    // Chuẩn hoá + đánh dấu trùng (chỉ trong đơn chưa đẩy) để bạn thấy rõ
+    const normP = s => String(s == null ? '' : s).replace(/\D/g, '');
+    const dstr = v => String(v || '').slice(0, 10);
+    const dd = (a, b) => (!a || !b) ? 999 : Math.abs((new Date(a + 'T00:00:00') - new Date(b + 'T00:00:00')) / 86400000);
+    const pending = rows.filter(o => Number(o.da_day) !== 1);
+    const dupPairs = [];
+    for (let i = 0; i < pending.length; i++)
+      for (let j = i + 1; j < pending.length; j++) {
+        const a = pending[i], b = pending[j];
+        const samePhone = normP(a.sdt) && normP(a.sdt) === normP(b.sdt);
+        const sameNv = (a.nhan_vien || '').trim() === (b.nhan_vien || '').trim();
+        const diff = dd(dstr(a.ngay_ve), dstr(b.ngay_ve));
+        if (samePhone) dupPairs.push({ id_a: a.id, id_b: b.id, samePhone, sameNv, nv_a: a.nhan_vien, nv_b: b.nhan_vien, ngay_a: a.ngay_ve, ngay_b: b.ngay_ve, cachNgay: diff, LA_TRUNG: samePhone && sameNv && diff <= 1 });
+      }
+    res.json({ ok: true, tongDon: rows.length, donChuaDay: pending.length, orders: rows, capTrungSDT: dupPairs });
+  }));
+
   // Thống kê doanh thu theo nhân viên
   app.get('/thailand/api/stats', thaiAuth, wrap(async (req, res) => {
     const p = await db();
@@ -656,7 +687,7 @@ export function mountThailand(app, { mysql, requireLogin, express, getCampaigns,
     // Lấy TỪNG đơn (không GROUP BY) để loại đơn trùng SĐT trong 2 ngày trước khi cộng
     const p = await db();
     const [rawOrders] = await p.query(`
-      SELECT id, nhan_vien, sdt, ngay_ve, so_luong, gia_thb, created_at, da_day
+      SELECT id, nhan_vien, sdt, DATE_FORMAT(ngay_ve, '%Y-%m-%d') AS ngay_ve, so_luong, gia_thb, created_at, da_day
       FROM th_orders
       WHERE ngay_ve >= ? AND ngay_ve <= ?
         AND trang_thai NOT IN ('Huỷ','CANCEL')
@@ -1985,6 +2016,8 @@ function mauSelect(o){
 function normPhone(s){return String(s==null?'':s).replace(/\D/g,'');}
 // Lấy ngày (yyyy-mm-dd) từ đơn để so sánh khoảng cách ngày
 function orderDateStr(o){
+  // Ưu tiên ngay_ve_str (đã format chuẩn từ DB, không lệch múi giờ)
+  if(o.ngay_ve_str && /^\d{4}-\d{2}-\d{2}$/.test(o.ngay_ve_str)) return o.ngay_ve_str;
   const raw=o.ngay_ve||o.created_at||'';
   const s=String(raw).slice(0,10);
   return /^\d{4}-\d{2}-\d{2}$/.test(s)?s:'';
