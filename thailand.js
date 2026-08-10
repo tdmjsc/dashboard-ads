@@ -656,25 +656,28 @@ export function mountThailand(app, { mysql, requireLogin, express, getCampaigns,
     // Lấy TỪNG đơn (không GROUP BY) để loại đơn trùng SĐT trong 2 ngày trước khi cộng
     const p = await db();
     const [rawOrders] = await p.query(`
-      SELECT id, nhan_vien, sdt, ngay_ve, so_luong, gia_thb, created_at
+      SELECT id, nhan_vien, sdt, ngay_ve, so_luong, gia_thb, created_at, da_day
       FROM th_orders
       WHERE ngay_ve >= ? AND ngay_ve <= ?
         AND trang_thai NOT IN ('Huỷ','CANCEL')
       ORDER BY ngay_ve ASC, id ASC`, [since, until]);
 
     // ---- Loại đơn trùng: cùng SĐT + cùng nhân viên + ngày về cùng ngày hoặc liền kề (≤1 ngày) ----
-    // Giữ đơn PHÁT SINH TRƯỚC (id/ngày nhỏ hơn — đã sort ASC nên đơn đầu là đơn trước)
+    // Giữ đơn PHÁT SINH TRƯỚC. Đơn ĐÃ ĐẨY hậu cần (da_day=1) LUÔN được tính, không loại trùng.
     const normPhoneS = s => String(s == null ? '' : s).replace(/\D/g, '');
     const dateStr = v => { const s = String(v || '').slice(0, 10); return /^\d{4}-\d{2}-\d{2}$/.test(s) ? s : ''; };
     const dDiff = (d1, d2) => (!d1 || !d2) ? 999 : Math.abs((new Date(d1 + 'T00:00:00') - new Date(d2 + 'T00:00:00')) / 86400000);
-    const kept = []; // đơn được giữ (đơn phát sinh trước)
+    const kept = []; // đơn được giữ
+    const keptPending = []; // chỉ các đơn CHƯA đẩy đã giữ (dùng để so trùng)
     for (const o of rawOrders) {
+      // Đơn đã đẩy → luôn giữ, không xét trùng
+      if (Number(o.da_day) === 1) { kept.push(o); continue; }
       const ph = normPhoneS(o.sdt);
       const nv = (o.nhan_vien || '').trim();
       const dt = dateStr(o.ngay_ve);
-      // Nếu đã có đơn giữ trước đó trùng SĐT + cùng NV + ngày chênh ≤1 → bỏ đơn này (đơn sau)
-      const isDup = ph && kept.some(k => normPhoneS(k.sdt) === ph && (k.nhan_vien || '').trim() === nv && dDiff(dateStr(k.ngay_ve), dt) <= 1);
-      if (!isDup) kept.push(o);
+      // So trùng chỉ với các đơn CHƯA đẩy đã giữ trước đó
+      const isDup = ph && keptPending.some(k => normPhoneS(k.sdt) === ph && (k.nhan_vien || '').trim() === nv && dDiff(dateStr(k.ngay_ve), dt) <= 1);
+      if (!isDup) { kept.push(o); keptPending.push(o); }
     }
 
     // Gom theo nhân viên từ danh sách đơn đã loại trùng
@@ -1991,11 +1994,13 @@ function dayDiff(d1,d2){
   return Math.abs((new Date(d1+'T00:00:00')-new Date(d2+'T00:00:00'))/86400000);
 }
 // Đánh dấu các đơn trùng: cùng SĐT + cùng nhân viên + ngày về cùng ngày hoặc liền kề (chênh ≤ 1 ngày)
+// Bỏ qua đơn ĐÃ ĐẨY sang hậu cần (da_day=1) — không tô đỏ, không dùng để so trùng
 function markDuplicates(orders){
   const dup=new Set();
-  for(let i=0;i<orders.length;i++){
-    for(let j=i+1;j<orders.length;j++){
-      const a=orders[i], b=orders[j];
+  const pending=orders.filter(o=>o.da_day!=1); // chỉ xét đơn chưa đẩy
+  for(let i=0;i<pending.length;i++){
+    for(let j=i+1;j<pending.length;j++){
+      const a=pending[i], b=pending[j];
       const pa=normPhone(a.sdt), pb=normPhone(b.sdt);
       if(!pa||pa!==pb)continue;
       const na=(a.nhan_vien||'').trim(), nb=(b.nhan_vien||'').trim();
