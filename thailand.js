@@ -653,16 +653,40 @@ export function mountThailand(app, { mysql, requireLogin, express, getCampaigns,
     const TAX = 1 + (typeof QC_TAX === 'number' ? QC_TAX : 0.11);
 
     // (B) Số đơn + doanh thu từ th_orders, gom theo nhân viên (trong khoảng ngày)
+    // Lấy TỪNG đơn (không GROUP BY) để loại đơn trùng SĐT trong 2 ngày trước khi cộng
     const p = await db();
-    const [orderRows] = await p.query(`
-      SELECT nhan_vien,
-        COUNT(*) AS so_don,
-        SUM(so_luong) AS tong_sl,
-        SUM(gia_thb) AS doanh_thu
+    const [rawOrders] = await p.query(`
+      SELECT id, nhan_vien, sdt, ngay_ve, so_luong, gia_thb, created_at
       FROM th_orders
       WHERE ngay_ve >= ? AND ngay_ve <= ?
         AND trang_thai NOT IN ('Huỷ','CANCEL')
-      GROUP BY nhan_vien`, [since, until]);
+      ORDER BY ngay_ve ASC, id ASC`, [since, until]);
+
+    // ---- Loại đơn trùng: cùng SĐT + cùng nhân viên + ngày về cùng ngày hoặc liền kề (≤1 ngày) ----
+    // Giữ đơn PHÁT SINH TRƯỚC (id/ngày nhỏ hơn — đã sort ASC nên đơn đầu là đơn trước)
+    const normPhoneS = s => String(s == null ? '' : s).replace(/\D/g, '');
+    const dateStr = v => { const s = String(v || '').slice(0, 10); return /^\d{4}-\d{2}-\d{2}$/.test(s) ? s : ''; };
+    const dDiff = (d1, d2) => (!d1 || !d2) ? 999 : Math.abs((new Date(d1 + 'T00:00:00') - new Date(d2 + 'T00:00:00')) / 86400000);
+    const kept = []; // đơn được giữ (đơn phát sinh trước)
+    for (const o of rawOrders) {
+      const ph = normPhoneS(o.sdt);
+      const nv = (o.nhan_vien || '').trim();
+      const dt = dateStr(o.ngay_ve);
+      // Nếu đã có đơn giữ trước đó trùng SĐT + cùng NV + ngày chênh ≤1 → bỏ đơn này (đơn sau)
+      const isDup = ph && kept.some(k => normPhoneS(k.sdt) === ph && (k.nhan_vien || '').trim() === nv && dDiff(dateStr(k.ngay_ve), dt) <= 1);
+      if (!isDup) kept.push(o);
+    }
+
+    // Gom theo nhân viên từ danh sách đơn đã loại trùng
+    const orderAgg = {}; // tênNV -> { so_don, tong_sl, doanh_thu }
+    for (const o of kept) {
+      const nv = o.nhan_vien || '';
+      if (!orderAgg[nv]) orderAgg[nv] = { so_don: 0, tong_sl: 0, doanh_thu: 0 };
+      orderAgg[nv].so_don += 1;
+      orderAgg[nv].tong_sl += Number(o.so_luong) || 0;
+      orderAgg[nv].doanh_thu += Number(o.gia_thb) || 0;
+    }
+    const orderRows = Object.entries(orderAgg).map(([nhan_vien, v]) => ({ nhan_vien, ...v }));
 
     // Gộp 2 nguồn theo tên nhân viên
     const map = {}; // tênNV -> dòng
@@ -1954,9 +1978,42 @@ function mauSelect(o){
   const opts=list.map(m=>'<option value="'+esc(m)+'"'+(m===cur?' selected':'')+'>'+esc(prodLabel(m))+'</option>').join('');
   return '<select class="st mausel" style="min-width:120px" data-id="'+o.id+'">'+opts+'</select>';
 }
+// Chuẩn hoá SĐT (bỏ ký tự không phải số) để so khớp
+function normPhone(s){return String(s==null?'':s).replace(/\D/g,'');}
+// Lấy ngày (yyyy-mm-dd) từ đơn để so sánh khoảng cách ngày
+function orderDateStr(o){
+  const raw=o.ngay_ve||o.created_at||'';
+  const s=String(raw).slice(0,10);
+  return /^\d{4}-\d{2}-\d{2}$/.test(s)?s:'';
+}
+function dayDiff(d1,d2){
+  if(!d1||!d2)return 999;
+  return Math.abs((new Date(d1+'T00:00:00')-new Date(d2+'T00:00:00'))/86400000);
+}
+// Đánh dấu các đơn trùng: cùng SĐT + cùng nhân viên + ngày về cùng ngày hoặc liền kề (chênh ≤ 1 ngày)
+function markDuplicates(orders){
+  const dup=new Set();
+  for(let i=0;i<orders.length;i++){
+    for(let j=i+1;j<orders.length;j++){
+      const a=orders[i], b=orders[j];
+      const pa=normPhone(a.sdt), pb=normPhone(b.sdt);
+      if(!pa||pa!==pb)continue;
+      const na=(a.nhan_vien||'').trim(), nb=(b.nhan_vien||'').trim();
+      if(na!==nb)continue;
+      if(dayDiff(orderDateStr(a),orderDateStr(b))<=1){
+        dup.add(a.id); dup.add(b.id);
+      }
+    }
+  }
+  return dup;
+}
+
 function render(orders){
   if(!orders.length){$('tbl').innerHTML='<div class="empty">Chưa có đơn nào.</div>';return;}
-  let h='<div style="margin:0 0 10px;color:#9FB0C8;font-size:13px;">Tổng: <b style="color:#7BE3B5">'+orders.length+'</b> đơn</div>';
+  const dupIds=markDuplicates(orders);
+  const dupCount=dupIds.size;
+  let h='<div style="margin:0 0 10px;color:#9FB0C8;font-size:13px;">Tổng: <b style="color:#7BE3B5">'+orders.length+'</b> đơn'
+    +(dupCount?' · <b style="color:#ff6b5a">'+dupCount+'</b> đơn nghi trùng SĐT (tô đỏ)':'')+'</div>';
   h+='<table><thead><tr>'
     +(IS_ADMIN?'<th><input type="checkbox" id="chkAll"></th>':'')
     +'<th class="num">STT</th>'
@@ -1971,14 +2028,17 @@ function render(orders){
     const dayBadge = o.da_day==1
       ? '<span style="color:#7BE3B5;font-size:12px;">✓ Đã đẩy</span>'
       : '<span style="color:#6B7C97;font-size:12px;">—</span>';
-    h+='<tr>'
+    const isDup=dupIds.has(o.id);
+    const dupStyle=isDup?'color:#ff5a4d;font-weight:600;':'';         // tô đỏ tên
+    const dupStyleAddr=isDup?'color:#ff5a4d;font-weight:600;':'';     // địa chỉ (ghi đè màu muted)
+    h+='<tr'+(isDup?' title="Nghi trùng SĐT trong 2 ngày (cùng nhân viên)"':'')+'>'
       +(IS_ADMIN?'<td><input type="checkbox" class="chk" data-id="'+o.id+'"'+(o.da_day==1?' disabled':'')+'></td>':'')
       +'<td class="num" style="color:#6B7C97">'+(idx+1)+'</td>'
       +'<td style="white-space:nowrap;font-size:12px;">'+esc(countryName(o.quoc_gia||'thai'))+'</td>'
       +'<td>'+esc(fmtNgayVe(o))+'</td>'
-      +'<td>'+esc(o.ho_ten)+'</td>'
-      +'<td>'+esc(o.sdt)+'</td>'
-      +'<td class="muted">'+esc(o.dia_chi)+'</td>'
+      +'<td style="'+dupStyle+'">'+esc(o.ho_ten)+'</td>'
+      +'<td style="'+dupStyle+'">'+esc(o.sdt)+'</td>'
+      +'<td class="muted" style="'+dupStyleAddr+'">'+esc(o.dia_chi)+'</td>'
       +'<td class="muted" style="max-width:180px;white-space:normal;font-size:11px;">'+esc(o.combo)+'</td>'
       +'<td class="num"><input class="ed ednum edsl" data-id="'+o.id+'" value="'+esc(o.so_luong||0)+'" style="width:55px;text-align:right"></td>'
       +'<td class="num"><input class="ed ednum edgia" data-id="'+o.id+'" value="'+esc(o.gia_thb||0)+'" style="width:75px;text-align:right"></td>'
