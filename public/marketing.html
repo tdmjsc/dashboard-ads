@@ -213,6 +213,11 @@ async function load(){
   try{
     const res = await fetch('/api/marketing/report?since='+since+'&until='+until);
     if(res.status===401){ location.href='/login'; return; }
+    const ct = res.headers.get('content-type')||'';
+    if(!res.ok || ct.indexOf('application/json')<0){
+      $('status').innerHTML = '<span class="err">Máy chủ phản hồi quá lâu khi lấy khoảng ngày này (thường do kéo cả tháng). Thử lại sau ít phút hoặc chọn khoảng ngắn hơn.</span>';
+      $('rows').innerHTML=''; return;
+    }
     const d = await res.json();
     if(!d.ok){
       $('status').innerHTML = '<span class="err">Lỗi: '+esc(d.message||'không lấy được báo cáo')+'</span>';

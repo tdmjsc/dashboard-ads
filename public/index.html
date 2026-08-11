@@ -380,6 +380,7 @@ async function loadMarketing(since,until){
 })();
 
 /* ---------- tải dữ liệu thật ---------- */
+let _warmTries = 0;
 async function loadData(opts){
   const since=document.getElementById('from').value, until=document.getElementById('to').value;
   if(!since||!until)return;
@@ -388,8 +389,33 @@ async function loadData(opts){
   try{
     const res=await fetch(`/api/data?since=${since}&until=${until}`+(force?'&refresh=1':''));
     if(res.status===401){ location.href='/login'; return; }
+    // Máy chủ có thể trả TRANG HTML (vd nginx 504 khi kéo cả tháng) thay vì JSON.
+    const ct = res.headers.get('content-type')||'';
+    if(!res.ok || ct.indexOf('application/json')<0){
+      if(_warmTries < 12){
+        _warmTries++;
+        msg.textContent='Máy chủ đang nạp dữ liệu (khoảng ngày lớn). Tự thử lại… ('+_warmTries+')';
+        setTimeout(()=>loadData(opts), 8000);
+        return;
+      }
+      msg.textContent='Máy chủ phản hồi quá lâu khi kéo khoảng ngày này. Vui lòng thử lại sau ít phút, hoặc chọn khoảng ngắn hơn.';
+      _warmTries=0; return;
+    }
     const data=await res.json();
-    if(data.error){ msg.textContent='Lỗi: '+data.error; return; }
+    if(data.error){ msg.textContent='Lỗi: '+data.error; _warmTries=0; return; }
+    // Đang nạp ngầm → chờ rồi tự thử lại (dữ liệu đang được dựng cache ở nền)
+    if(data.warming){
+      if(_warmTries < 12){
+        _warmTries++;
+        msg.textContent=(data.message||'Đang nạp dữ liệu…')+' (tự thử lại '+_warmTries+')';
+        setTimeout(()=>loadData(opts), 8000);
+      } else {
+        msg.textContent='Vẫn đang nạp dữ liệu. Thử lại sau ít phút nhé.';
+        _warmTries=0;
+      }
+      return;
+    }
+    _warmTries=0;
     if(data.me){
       const a=document.getElementById('avatar'); a.textContent=data.me.user.slice(0,2).toUpperCase(); a.title=data.me.user+(data.me.role==='admin'?' (admin)':'');
       const ub=document.getElementById('userBadge'); if(ub&&data.me.displayName) ub.textContent='👤 '+data.me.displayName;
