@@ -753,33 +753,27 @@ async function fetchAccountRetry(acc, token, days, since, until, tries = 3) {
   }
   throw lastErr;
 }
-// Nạp toàn bộ campaign (mọi tài khoản). CHỈ lưu đệm khi nạp ĐỦ tất cả tài khoản,
-// để tránh lưu nhầm dữ liệu thiếu (gây dashboard/lương về 0).
-async function getCampaigns(since, until, opts = {}) {
-  const days = listDays(since, until);
+// ── Chống gọi trùng: nếu 1 khoảng ĐANG được nạp, mọi yêu cầu khác dùng chung
+//    cùng một promise thay vì gọi Facebook lần nữa (tránh "bão gọi" khi bấm lại
+//    nhiều lần — chính là thứ dễ làm dính rate limit và nghẽn khi kéo cả tháng). ──
+const INFLIGHT = new Map();
+const WARMING = Symbol('warming'); // tín hiệu "đang nạp ngầm" cho các endpoint
+
+// Đọc NHANH cache có sẵn (đồng bộ), KHÔNG gọi Facebook — để endpoint quyết định
+// phục vụ ngay hay nạp ngầm. Trả về mảng campaigns nếu có cache, ngược lại null.
+function cachedCampaigns(since, until) {
   const key = since + '|' + until;
-  const past = isPastRange(until);
-  const force = !!opts.force;   // ép nạp lại từ Facebook, bỏ qua cache thường
+  const rec = META_CACHE[key];
+  if (rec && rec.pinned && Array.isArray(rec.campaigns)) return rec.campaigns;         // đã ghim
+  if (isPastRange(until) && rec && Array.isArray(rec.campaigns)) return rec.campaigns;  // khoảng đã qua
+  const c = DATA_CACHE.get(key);
+  if (c && c.complete && Date.now() - c.at < CACHE_MS) return c.campaigns;              // RAM 3 phút
+  return null;
+}
 
-  // (0) CACHE ĐÃ GHIM: số liệu do người dùng XÁC NHẬN ĐÚNG → luôn dùng, kể cả khi force.
-  //     Chỉ khi bỏ ghim (unpin) mới nạp lại được. Đây là lớp bảo vệ số liệu đã chốt.
-  const pinnedRec = META_CACHE[key];
-  if (pinnedRec && pinnedRec.pinned && Array.isArray(pinnedRec.campaigns)) {
-    return pinnedRec.campaigns;
-  }
-
-  // (1) Khoảng đã qua: nếu có trong cache file → trả luôn, KHÔNG gọi API Facebook
-  if (!force && past && META_CACHE[key] && Array.isArray(META_CACHE[key].campaigns)) {
-    return META_CACHE[key].campaigns;
-  }
-
-  // (2) Cache RAM ngắn hạn (3 phút) cho khoảng có hôm nay
-  if (!force) {
-    const cached = DATA_CACHE.get(key);
-    if (cached && cached.complete && Date.now() - cached.at < CACHE_MS) return cached.campaigns;
-  }
-
-  // (3) Gọi API Facebook — theo dõi TỪNG tài khoản
+// Nạp toàn bộ campaign (mọi tài khoản) từ Facebook + lưu cache. CHỈ lưu đệm khi
+// nạp ĐỦ tất cả tài khoản, để tránh lưu nhầm dữ liệu thiếu (gây dashboard về 0).
+async function fetchAllAccounts(since, until, days, key, past) {
   const accList = [];
   for (const src of SOURCES)
     for (const acc of src.accounts)
@@ -821,9 +815,6 @@ async function getCampaigns(since, until, opts = {}) {
   global.__lastFetchIssues = { at: new Date().toISOString(), key, issues };
 
   // "Đủ dữ liệu" = không tài khoản nào LỖI và có ít nhất 1 campaign.
-  // (Tài khoản rỗng là BÌNH THƯỜNG — nhiều tài khoản không chạy QC trong khoảng ngày này.
-  //  Trước đây chặn cache khi có bất kỳ tài khoản rỗng nào → cache gần như KHÔNG BAO GIỜ lưu,
-  //  khiến mỗi lần vào phải gọi lại Facebook và thỉnh thoảng bị thiếu ngân sách.)
   const complete = (failed === 0);
   const fullData = (failed === 0 && campaigns.length > 0);
 
@@ -840,6 +831,31 @@ async function getCampaigns(since, until, opts = {}) {
     console.warn(`[getCampaigns] KHÔNG lưu cache vĩnh viễn cho ${key}: failed=${failed}, tổng campaign=${campaigns.length}`);
   }
   return campaigns;
+}
+
+async function getCampaigns(since, until, opts = {}) {
+  const days = listDays(since, until);
+  const key = since + '|' + until;
+  const past = isPastRange(until);
+  const force = !!opts.force;   // ép nạp lại từ Facebook, bỏ qua cache thường
+
+  // (0) CACHE ĐÃ GHIM: số liệu đã xác nhận đúng → luôn dùng, kể cả khi force.
+  const rec = META_CACHE[key];
+  if (rec && rec.pinned && Array.isArray(rec.campaigns)) return rec.campaigns;
+  // (1) Khoảng đã qua có cache file → trả luôn, không gọi Facebook.
+  if (!force && past && rec && Array.isArray(rec.campaigns)) return rec.campaigns;
+  // (2) Cache RAM ngắn hạn (3 phút) cho khoảng có hôm nay.
+  if (!force) {
+    const cached = DATA_CACHE.get(key);
+    if (cached && cached.complete && Date.now() - cached.at < CACHE_MS) return cached.campaigns;
+  }
+
+  // (3) Chống gọi trùng: nếu đang nạp key này thì dùng chung, không gọi Facebook lần nữa.
+  //     Job vẫn chạy tới khi xong (kể cả client đã rời đi) nên cache vẫn được lưu.
+  if (INFLIGHT.has(key)) return INFLIGHT.get(key);
+  const job = fetchAllAccounts(since, until, days, key, past).finally(() => INFLIGHT.delete(key));
+  INFLIGHT.set(key, job);
+  return job;
 }
 
 // Xoá cache RAM (dùng chung cho các endpoint xoá cache)
@@ -1018,10 +1034,27 @@ app.get('/api/data', async (req, res) => {
     const days = listDays(since, until);
     // ?refresh=1 → bỏ qua cache, nạp lại từ Facebook (nút "Tải lại" ở dashboard)
     const force = req.query.refresh === '1' || req.query.force === '1';
-    const campaigns = await getCampaigns(since, until, { force });
+    const me = req.session.user;
+
+    // Có cache sẵn → trả NGAY (nhanh). Nếu chưa có, nạp NGẦM và báo client thử lại,
+    // để không bị nginx cắt (504) khi kéo cả tháng cho tài khoản nhiều chiến dịch.
+    let campaigns = force ? null : cachedCampaigns(since, until);
+    if (!campaigns) {
+      const job = getCampaigns(since, until, { force });
+      job.catch(() => {}); // job vẫn chạy nền dù client rời đi → kịp lưu cache cho lần sau
+      const SOFT_MS = Number(process.env.RESP_SOFT_MS || 25000); // trả lời trước khi proxy timeout
+      const winner = await Promise.race([job, sleep(SOFT_MS).then(() => WARMING)]);
+      if (winner === WARMING) {
+        return res.json({
+          warming: true, since, until,
+          message: 'Đang nạp dữ liệu từ Facebook (khoảng ngày lớn có thể mất ~1 phút). Sẽ tự thử lại…',
+          me: { user: me.user, role: me.role, khongBoGhim: !!me.khongBoGhim, displayName: me.salaryName || me.manager || (me.employees && me.employees[0]) || me.user || '' },
+        });
+      }
+      campaigns = winner;
+    }
 
     // Lọc theo quyền: viewer chỉ thấy nhân viên được phép
-    const me = req.session.user;
     let visible = campaigns;
     if (me.role !== 'admin') {
       const allow = new Set(me.employees || []);
