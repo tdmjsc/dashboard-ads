@@ -19,7 +19,7 @@ export const USERS = [
 
   // ----- Chủ hệ thống (xem tất cả) -----
   { user: 'tdmjsc', pass: 'Tdmjsc@0611', role: 'admin' },
-  { user: 'ketoan', pass: 'Tdmjsc@1234', role: 'admin' },
+  { user: 'ketoan', pass: 'Tdmjsc@1234', role: 'admin', khongBoGhim: true },
 
   // ----- TEAM LEAD MARKETING -----
   //  employees = danh sách người xem được KẾT QUẢ Marketing (cả team)
