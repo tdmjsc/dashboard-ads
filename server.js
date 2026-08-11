@@ -315,6 +315,30 @@ async function fbByIds(ids, fields, token, chunk = 50) {
 // Chia 1 mảng thành các lô nhỏ n phần tử.
 function chunkArr(arr, n) { const r = []; for (let i = 0; i < arr.length; i += n) r.push(arr.slice(i, i + n)); return r; }
 
+// Lấy insights theo TỪNG CỬA SỔ ngày nhỏ (mặc định 7 ngày) rồi gộp lại.
+// Với tài khoản nhiều chiến dịch + khoảng ngày dài (vd cả tháng), gọi 1 lần cho
+// toàn khoảng hay bị Meta trả lỗi "Please reduce the amount of data…" hoặc timeout
+// → cả tài khoản bị rớt. Chia nhỏ theo tuần giúp mỗi lời gọi luôn trong giới hạn.
+// Hạ META_INSIGHTS_WINDOW xuống 3 hoặc 1 nếu tài khoản quá nặng vẫn lỗi.
+async function fbInsightsWindows(acc, baseParams, since, until, token, windowDays) {
+  const W = Math.max(1, Number(windowDays || process.env.META_INSIGHTS_WINDOW || 7));
+  const out = [];
+  let s = new Date(since + 'T00:00:00Z');
+  const end = new Date(until + 'T00:00:00Z');
+  while (s <= end) {
+    const wEnd = new Date(s);
+    wEnd.setUTCDate(wEnd.getUTCDate() + W - 1);
+    if (wEnd > end) wEnd.setTime(end.getTime());
+    const ws = s.toISOString().slice(0, 10);
+    const we = wEnd.toISOString().slice(0, 10);
+    const rows = await fbAll(`act_${acc}/insights`, { ...baseParams, time_range: { since: ws, until: we } }, token);
+    out.push(...rows);
+    s = new Date(wEnd);
+    s.setUTCDate(s.getUTCDate() + 1);
+  }
+  return out;
+}
+
 async function fetchAccount(acc, token, days, since, until) {
   const accName = ACCOUNT_NAMES[acc] || `TK ${acc}`;
   // Bỏ qua chiến dịch chi tiêu < ngưỡng (đ) trong khoảng ngày → khỏi kéo dữ liệu.
@@ -324,13 +348,13 @@ async function fetchAccount(acc, token, days, since, until) {
   // (A) LẤY INSIGHTS TRƯỚC. Facebook chỉ trả về chiến dịch CÓ chi tiêu/phân phối
   //     trong khoảng ngày → đây là cách rẻ nhất để biết chiến dịch nào đáng lấy,
   //     không phải kéo toàn bộ hàng trăm chiến dịch của tài khoản.
-  const insights = await fbAll(`act_${acc}/insights`, {
+  //     Chia theo cửa sổ tuần để tài khoản nặng + cả tháng không bị Meta chặn/timeout.
+  const insights = await fbInsightsWindows(acc, {
     level: 'campaign',
     fields: 'campaign_id,spend,actions,date_start',
-    time_range: { since, until },
     time_increment: 1,
     limit: 1000,
-  }, token);
+  }, since, until, token);
 
   // Tổng chi tiêu mỗi chiến dịch → chỉ giữ chiến dịch chi >= ngưỡng.
   const spendById = {};
@@ -1060,7 +1084,13 @@ app.get('/api/data', async (req, res) => {
       const allow = new Set(me.employees || []);
       visible = campaigns.filter(c => allow.has(c.employee));
     }
-    res.json({ days, campaigns: visible, me: { user: me.user, role: me.role, khongBoGhim: !!me.khongBoGhim, displayName: me.salaryName || me.manager || (me.employees && me.employees[0]) || me.user || '' } });
+    // Cảnh báo tài khoản QC lấy KHÔNG được ở lần nạp gần nhất (chỉ admin cần thấy).
+    let warnings = [];
+    const lf = global.__lastFetchIssues;
+    if (me.role === 'admin' && lf && lf.key === (since + '|' + until) && Array.isArray(lf.issues)) {
+      warnings = lf.issues.map(it => ({ acc: it.acc, accName: it.accName, rateLimit: !!it.rateLimit, message: it.message }));
+    }
+    res.json({ days, campaigns: visible, warnings, me: { user: me.user, role: me.role, khongBoGhim: !!me.khongBoGhim, displayName: me.salaryName || me.manager || (me.employees && me.employees[0]) || me.user || '' } });
   } catch (e) {
     res.status(500).json({ error: e.message });
   }
