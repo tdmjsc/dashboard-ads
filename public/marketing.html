@@ -222,7 +222,17 @@ async function load(){
       render(d);
       const t = new Date(d.lastUpdated||Date.now());
       const same = since===until;
-      $('status').textContent = 'Cập nhật lúc ' + t.toLocaleString('vi-VN') + '  ·  ' + (same ? ('ngày '+since) : (since+' → '+until));
+      let statusHtml = 'Cập nhật lúc ' + t.toLocaleString('vi-VN') + '  ·  ' + (same ? ('ngày '+since) : (since+' → '+until));
+      // Cảnh báo tài khoản QC bị lỗi/giới hạn tần suất (Meta rate limit)
+      if(Array.isArray(d.warnings) && d.warnings.length){
+        const rl = d.warnings.filter(w=>w.rateLimit).map(w=>esc(w.accName));
+        const other = d.warnings.filter(w=>!w.rateLimit).map(w=>esc(w.accName));
+        let parts = [];
+        if(rl.length)   parts.push('⏳ Đang bị giới hạn tần suất (chờ vài phút, ĐỪNG bấm Xem liên tục): '+rl.join(', '));
+        if(other.length)parts.push('⚠️ Chưa lấy được: '+other.join(', '));
+        statusHtml += '<br><span class="warn">'+parts.join(' · ')+'</span>';
+      }
+      $('status').innerHTML = statusHtml;
     }
   }catch(e){ $('status').innerHTML = '<span class="err">Không kết nối được máy chủ: '+esc(e.message)+'</span>'; }
   finally{ $('refreshBtn').disabled = false; }

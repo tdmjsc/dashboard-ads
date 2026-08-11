@@ -370,12 +370,13 @@ async function loadMarketing(since,until){
   if(state.view==='emp') renderEmp();      // vẽ lại thẻ nhân viên với contact thật
 }
 
-/* mặc định: 7 ngày gần nhất */
+/* mặc định: HÔM NAY (dùng giờ máy = giờ VN) */
 (function(){
-  const fmt=d=>d.toISOString().slice(0,10);
-  const to=new Date(); const from=new Date(); from.setDate(to.getDate()-6);
-  document.getElementById('to').value=fmt(to);
-  document.getElementById('from').value=fmt(from);
+  const p=n=>String(n).padStart(2,'0');
+  const t=new Date();
+  const today=`${t.getFullYear()}-${p(t.getMonth()+1)}-${p(t.getDate())}`;
+  document.getElementById('from').value=today;
+  document.getElementById('to').value=today;
 })();
 
 /* ---------- tải dữ liệu thật ---------- */
@@ -455,13 +456,26 @@ async function refreshPinState(){
     if(!r.ok) return;
     const d=await r.json();
     if(d.daGhim){
-      _pinBtn.textContent='🔓 Bỏ ghim';
-      _pinBtn.dataset.pinned='1';
-      _pinBtn.title='Khoảng này đã ghim ('+(d.soChienDich||0)+' chiến dịch) — số liệu được khoá. Bấm để bỏ ghim.';
+      if(window.NO_UNPIN){
+        // Kế toán: chỉ hiện trạng thái đã khoá, KHÔNG cho bấm bỏ ghim
+        _pinBtn.textContent='🔒 Đã ghim';
+        _pinBtn.dataset.pinned='1';
+        _pinBtn.disabled=true;
+        _pinBtn.style.opacity='.55';
+        _pinBtn.style.cursor='not-allowed';
+        _pinBtn.title='Khoảng này đã chốt số liệu ('+(d.soChienDich||0)+' chiến dịch). Bạn không có quyền bỏ ghim.';
+      } else {
+        _pinBtn.textContent='🔓 Bỏ ghim';
+        _pinBtn.dataset.pinned='1';
+        _pinBtn.title='Khoảng này đã ghim ('+(d.soChienDich||0)+' chiến dịch) — số liệu được khoá. Bấm để bỏ ghim.';
+      }
       if(_rcBtn){ _rcBtn.disabled=true; _rcBtn.style.opacity='.4'; _rcBtn.title='Khoảng này đã ghim — bỏ ghim trước nếu muốn tải lại'; }
     } else {
       _pinBtn.textContent='🔒 Ghim cache';
       _pinBtn.dataset.pinned='';
+      _pinBtn.disabled=false;
+      _pinBtn.style.opacity='1';
+      _pinBtn.style.cursor='pointer';
       _pinBtn.title='Xác nhận số liệu đang hiển thị là đúng và khoá lại — sẽ không bị tải lại hay xoá';
       if(_rcBtn){ _rcBtn.disabled=false; _rcBtn.style.opacity='1'; _rcBtn.title='Xóa dữ liệu ngân sách đã lưu của khoảng ngày này rồi tải lại từ Facebook'; }
     }
@@ -495,6 +509,7 @@ if(_pinBtn) _pinBtn.addEventListener('click', async ()=>{
   const old=_pinBtn.textContent;
 
   if(isPinned){
+    if(window.NO_UNPIN){ alert('🔒 Bạn không có quyền bỏ ghim các khoảng đã chốt số liệu.'); return; }
     if(!confirm('BỎ GHIM khoảng '+since+' → '+until+'?\n\nSau khi bỏ ghim, số liệu có thể bị tải lại từ Facebook và thay đổi.')) return;
     _pinBtn.disabled=true; _pinBtn.textContent='⏳…';
     try{
@@ -687,6 +702,7 @@ async function setupMenu(){
     const me = await (await fetch('/api/me')).json();
     if(!me) return;
     const isAdmin = me.role==='admin';
+    window.NO_UNPIN = !!me.khongBoGhim;   // kế toán: được ghim nhưng KHÔNG được bỏ ghim
     ['navProducts','navSalary','navSalaryProduct','navKQKD','navEmployees'].forEach(id=>{
       const el=document.getElementById(id); if(el) el.style.display = isAdmin ? 'inline-block' : 'none';
     });
