@@ -210,23 +210,85 @@ function countResults(actions = [], objective = '') {
   return { value: 0, label: rule.label };
 }
 
+/* ─────────────────────────────────────────────────────────────────────────
+   XỬ LÝ GIỚI HẠN TẦN SUẤT (RATE LIMIT) CỦA META  — mã 80004/subcode 2446079…
+   Khi một tài khoản bị Meta chặn vì gọi quá nhiều, việc BẤM XEM LẠI LIÊN TỤC
+   chỉ làm nó bị chặn lâu hơn. Nên ở đây ta:
+     • nhận diện lỗi rate limit,
+     • đặt "hạ nhiệt" (cooldown) theo TỪNG tài khoản → trong thời gian đó KHÔNG
+       gọi Meta cho tài khoản ấy nữa, để hạn mức tự hồi,
+     • đọc header usage của Meta để biết đã dùng bao nhiêu % hạn mức.
+   ───────────────────────────────────────────────────────────────────────── */
+const RATE_LIMIT_CODES = new Set([4, 17, 32, 613, 80000, 80003, 80004, 80005, 80006, 80014]);
+function isRateLimitError(e) {
+  return !!(e && (e.isRateLimit || RATE_LIMIT_CODES.has(Number(e.code)) || Number(e.subcode) === 2446079));
+}
+// Hạ nhiệt theo từng tài khoản quảng cáo: acc -> { until: timestamp, reason, at }
+const ACCT_COOLDOWN = new Map();
+const COOLDOWN_MS = Number(process.env.RL_COOLDOWN_MS || 15 * 60 * 1000); // mặc định 15 phút
+function inCooldown(acc) {
+  const c = ACCT_COOLDOWN.get(acc);
+  if (c && c.until > Date.now()) return c;
+  if (c) ACCT_COOLDOWN.delete(acc);
+  return null;
+}
+function setCooldown(acc, reason, ms = COOLDOWN_MS) {
+  // Nếu đã có cooldown dài hơn thì giữ cái dài hơn
+  const cur = ACCT_COOLDOWN.get(acc);
+  const until = Date.now() + ms;
+  if (cur && cur.until > until) return;
+  ACCT_COOLDOWN.set(acc, { until, reason: reason || 'giới hạn tần suất API', at: Date.now() });
+  console.warn(`[rate-limit] act_${acc} hạ nhiệt ~${Math.ceil(ms / 60000)} phút — ${reason || ''}`);
+}
+// Đọc header usage của Meta (x-business-use-case-usage / x-ad-account-usage)
+function readUsage(res, acc) {
+  try {
+    const raw = res.headers.get('x-business-use-case-usage') || res.headers.get('x-ad-account-usage');
+    if (!raw) return;
+    const obj = JSON.parse(raw);
+    let arr = Array.isArray(obj) ? obj : (obj[acc] || obj[Object.keys(obj)[0]]);
+    if (!Array.isArray(arr)) return;
+    for (const u of arr) {
+      const pct = Math.max(Number(u.call_count) || 0, Number(u.total_cputime) || 0, Number(u.total_time) || 0);
+      const regain = Number(u.estimated_time_to_regain_access) || 0; // phút Meta ước tính
+      if (regain > 0) setCooldown(acc, `Meta ước tính còn ~${regain} phút mới mở lại`, regain * 60 * 1000);
+      else if (pct >= 95) setCooldown(acc, `đã dùng ${pct}% hạn mức API`, 5 * 60 * 1000);
+    }
+  } catch {}
+}
+// Tạo Error có gắn mã lỗi Meta để phía trên nhận diện được rate limit
+function metaError(errObj, acc) {
+  const err = new Error(`Meta API: ${errObj.message}`);
+  err.code = errObj.code;
+  err.subcode = errObj.error_subcode;
+  err.isRateLimit = RATE_LIMIT_CODES.has(Number(errObj.code)) || Number(errObj.error_subcode) === 2446079;
+  if (acc && err.isRateLimit) setCooldown(acc, errObj.message);
+  return err;
+}
+
 async function fb(endpoint, params, token) {
   const url = new URL(`${BASE}/${endpoint}`);
   url.searchParams.set('access_token', token);
   for (const [k, v] of Object.entries(params || {}))
     url.searchParams.set(k, typeof v === 'string' ? v : JSON.stringify(v));
-  const res = await fetch(url);
+  const res = await fetchWithTimeout(url);
+  const accMatch = /act_(\d+)/.exec(endpoint);
+  const acc = accMatch ? accMatch[1] : null;
+  if (acc) readUsage(res, acc);
   const json = await res.json();
-  if (json.error) throw new Error(`Meta API: ${json.error.message}`);
+  if (json.error) throw metaError(json.error, acc);
   return json;
 }
 async function fbAll(endpoint, params, token) {
+  const accMatch = /act_(\d+)/.exec(endpoint);
+  const acc = accMatch ? accMatch[1] : null;
   let data = await fb(endpoint, params, token);
   let out = data.data || [];
   while (data.paging && data.paging.next) {
-    const res = await fetch(data.paging.next);
+    const res = await fetchWithTimeout(data.paging.next);
+    if (acc) readUsage(res, acc);
     data = await res.json();
-    if (data.error) throw new Error(`Meta API: ${data.error.message}`);
+    if (data.error) throw metaError(data.error, acc);
     out = out.concat(data.data || []);
   }
   return out;
@@ -285,7 +347,7 @@ async function fetchAccount(acc, token, days, since, until) {
           camp.daily[idx] = { spent: Number(row.spend || 0), results: r.value };
           camp.obj = r.label;
         }
-      } catch (e) { /* bỏ qua, các số liệu khác vẫn hiển thị */ }
+      } catch (e) { if (isRateLimitError(e)) throw e; /* lỗi khác: bỏ qua, số liệu khác vẫn hiển thị */ }
     })(),
 
     // (2) Link bài quảng cáo (cấp ad), ưu tiên ad đang chạy
@@ -308,7 +370,7 @@ async function fetchAccount(acc, token, days, since, until) {
           if (!chosen[cid] || (active && !chosen[cid].active)) chosen[cid] = { link, active };
         }
         for (const cid in chosen) byId[cid].link = chosen[cid].link;
-      } catch (e) { /* bỏ qua link nếu lỗi */ }
+      } catch (e) { if (isRateLimitError(e)) throw e; /* lỗi khác: bỏ qua link */ }
     })(),
 
     // (3) Nhóm quảng cáo (ad set): ngân sách + chi tiêu từng nhóm
@@ -355,7 +417,7 @@ async function fetchAccount(acc, token, days, since, until) {
         for (const cid in budgetSum) {
           if (byId[cid] && !byId[cid].budget) byId[cid].budget = budgetSum[cid];
         }
-      } catch (e) { /* bỏ qua nhóm nếu lỗi */ }
+      } catch (e) { if (isRateLimitError(e)) throw e; /* lỗi khác: bỏ qua nhóm */ }
     })(),
 
   ]);
@@ -419,7 +481,7 @@ app.post('/login', (req, res) => {
   const { user, pass } = req.body;
   const u = USERS.find(x => x.user === user && x.pass === pass);
   if (!u) return res.redirect('/login?error=1');
-  req.session.user = { user: u.user, role: u.role, employees: u.employees || [], manager: u.manager || '', salaryName: u.salaryName || '' };
+  req.session.user = { user: u.user, role: u.role, employees: u.employees || [], manager: u.manager || '', salaryName: u.salaryName || '', khongBoGhim: !!u.khongBoGhim };
   res.redirect(u.role === 'product' ? '/products.html' : (u.role === 'staff' ? '/my-salary.html' : '/'));
 });
 app.get('/logout', (req, res) => req.session.destroy(() => res.redirect('/login')));
@@ -482,7 +544,7 @@ app.use((req, res, next) => {
 app.get('/api/me', (req, res) => {
   const u = req.session.user || {};
   const displayName = u.salaryName || u.manager || (u.employees && u.employees[0]) || u.user || '';
-  res.json({ user: u.user, role: u.role, manager: u.manager || '', employees: u.employees || [], salaryName: u.salaryName || '', displayName });
+  res.json({ user: u.user, role: u.role, manager: u.manager || '', employees: u.employees || [], salaryName: u.salaryName || '', khongBoGhim: !!u.khongBoGhim, displayName });
 });
 
 // ====================== QUẢN LÝ NHÂN VIÊN (admin only) ======================
@@ -635,11 +697,27 @@ function isPastRange(until) {
 }
 
 // Nạp 1 tài khoản, tự thử lại nếu lỗi (token nặng/timeout thỉnh thoảng rớt)
+// QUAN TRỌNG: nếu dính RATE LIMIT thì KHÔNG thử lại dồn dập — đặt hạ nhiệt và
+// thoát ngay, vì thử lại chỉ khiến Meta chặn lâu hơn.
 async function fetchAccountRetry(acc, token, days, since, until, tries = 3) {
+  // Đang trong thời gian hạ nhiệt → không gọi Meta, để hạn mức tự hồi.
+  const cd = inCooldown(acc);
+  if (cd) {
+    const mins = Math.ceil((cd.until - Date.now()) / 60000);
+    const e = new Error(`Đang tạm dừng vì giới hạn tần suất: ${cd.reason}. Thử lại sau ~${mins} phút.`);
+    e.isRateLimit = true; e.cooldown = true;
+    throw e;
+  }
   let lastErr;
   for (let i = 0; i < tries; i++) {
     try { return await fetchAccount(acc, token, days, since, until); }
-    catch (e) { lastErr = e; await sleep(800); }
+    catch (e) {
+      lastErr = e;
+      // Rate limit: đặt hạ nhiệt rồi DỪNG hẳn — không thử lại.
+      if (isRateLimitError(e)) { setCooldown(acc, e.message); throw e; }
+      // Lỗi tạm thời khác (timeout/mạng): lùi theo cấp số nhân có nhiễu (2s → 4s → 8s).
+      if (i < tries - 1) await sleep(Math.min(8000, 2000 * 2 ** i) + Math.floor(Math.random() * 500));
+    }
   }
   throw lastErr;
 }
@@ -675,20 +753,40 @@ async function getCampaigns(since, until, opts = {}) {
     for (const acc of src.accounts)
       accList.push({ acc, token: src.token });
 
-  const tasks = accList.map(a => fetchAccountRetry(a.acc, a.token, days, since, until));
-  const results = await Promise.allSettled(tasks);
+  // Chạy theo LÔ nhỏ (mặc định 2 tài khoản/lô), nghỉ giữa các lô để không dội
+  // quá nhiều lời gọi cùng lúc lên Meta → giảm mạnh nguy cơ dính rate limit.
+  const BATCH = Math.max(1, Number(process.env.META_BATCH || 2));
+  const BATCH_GAP_MS = Number(process.env.META_BATCH_GAP_MS || 1200);
   const campaigns = [];
   let failed = 0;
   const emptyAccts = [];   // tài khoản trả về THÀNH CÔNG nhưng RỖNG
-  results.forEach((r, i) => {
-    if (r.status === 'fulfilled') {
-      const arr = r.value || [];
-      campaigns.push(...arr);
-      if (arr.length === 0) emptyAccts.push(accList[i].acc);
-    } else {
-      failed++;
-    }
-  });
+  const issues = [];       // tài khoản LỖI + lý do (để hiển thị & chẩn đoán)
+  for (let b = 0; b < accList.length; b += BATCH) {
+    const slice = accList.slice(b, b + BATCH);
+    const results = await Promise.allSettled(
+      slice.map(a => fetchAccountRetry(a.acc, a.token, days, since, until))
+    );
+    results.forEach((r, j) => {
+      const acc = slice[j].acc;
+      if (r.status === 'fulfilled') {
+        const arr = r.value || [];
+        campaigns.push(...arr);
+        if (arr.length === 0) emptyAccts.push(acc);
+      } else {
+        failed++;
+        const e = r.reason || {};
+        issues.push({
+          acc,
+          accName: ACCOUNT_NAMES[acc] || `TK ${acc}`,
+          rateLimit: isRateLimitError(e),
+          message: (e && e.message) || 'lỗi không rõ',
+        });
+      }
+    });
+    if (b + BATCH < accList.length) await sleep(BATCH_GAP_MS);
+  }
+  // Lưu lại lần nạp gần nhất để endpoint chẩn đoán / báo cáo marketing đọc được
+  global.__lastFetchIssues = { at: new Date().toISOString(), key, issues };
 
   // "Đủ dữ liệu" = không tài khoản nào LỖI và có ít nhất 1 campaign.
   // (Tài khoản rỗng là BÌNH THƯỜNG — nhiều tài khoản không chạy QC trong khoảng ngày này.
@@ -718,6 +816,38 @@ function clearRamCache(keys) {
   for (const k of keys) DATA_CACHE.delete(k);
 }
 
+/* CHẨN ĐOÁN SỨC KHOẺ TÀI KHOẢN QUẢNG CÁO (admin)
+   GET /api/admin/account-health
+   → Xem tài khoản nào đang bị hạ nhiệt vì rate limit + lỗi của lần nạp gần nhất.
+     KHÔNG gọi lại Meta (tránh làm nặng thêm). */
+app.get('/api/admin/account-health', (req, res) => {
+  const me = req.session && req.session.user;
+  if (!me || me.role !== 'admin') return res.status(403).json({ ok: false, message: 'Chỉ admin' });
+  const now = Date.now();
+  const cooldowns = [];
+  for (const [acc, c] of ACCT_COOLDOWN.entries()) {
+    if (c.until <= now) continue;
+    cooldowns.push({
+      acc,
+      accName: ACCOUNT_NAMES[acc] || `TK ${acc}`,
+      conLaiPhut: Math.ceil((c.until - now) / 60000),
+      lyDo: c.reason,
+    });
+  }
+  res.json({ ok: true, now: new Date().toISOString(), cooldowns, lastFetch: global.__lastFetchIssues || null });
+});
+
+/* Xoá hạ nhiệt thủ công khi bạn chắc Meta đã hồi:
+   GET /api/admin/reset-cooldown        → xoá tất cả
+   GET /api/admin/reset-cooldown?acc=ID → xoá 1 tài khoản */
+app.get('/api/admin/reset-cooldown', (req, res) => {
+  const me = req.session && req.session.user;
+  if (!me || me.role !== 'admin') return res.status(403).json({ ok: false, message: 'Chỉ admin' });
+  if (req.query.acc) ACCT_COOLDOWN.delete(String(req.query.acc));
+  else ACCT_COOLDOWN.clear();
+  res.json({ ok: true, cleared: req.query.acc || 'all' });
+});
+
 // XÓA CACHE ngân sách Meta đã lưu (dùng khi cache bị lưu nhầm dữ liệu thiếu)
 //  - Xóa 1 khoảng:  /api/admin/clear-cache?since=2026-06-11&until=2026-06-24
 //  - Xóa KHOẢNG GIAO nhau: /api/admin/clear-cache?overlaps=2026-06-11..2026-06-24  (xóa mọi key có ngày nằm trong vùng này)
@@ -731,7 +861,8 @@ app.get('/api/admin/clear-cache', (req, res) => {
   const kept = [];   // các khoảng ĐÃ GHIM → không xoá
   const isPinned = k => !!(META_CACHE[k] && META_CACHE[k].pinned);
   // ?includePinned=1 → xoá cả những khoảng đã ghim (dùng khi thật sự muốn làm lại từ đầu)
-  const includePinned = req.query.includePinned === '1';
+  //  Tài khoản bị chặn bỏ ghim (kế toán) KHÔNG được dùng cờ này → khoảng đã ghim luôn được giữ.
+  const includePinned = req.query.includePinned === '1' && !me.khongBoGhim;
 
   if (req.query.all === '1') {
     for (const k of Object.keys(META_CACHE)) {
@@ -829,6 +960,7 @@ app.post('/api/meta-cache/pin', express.json(), async (req, res) => {
 app.post('/api/meta-cache/unpin', express.json(), (req, res) => {
   const me = req.session.user || {};
   if (me.role !== 'admin') return res.status(403).json({ ok: false, message: 'Chỉ admin' });
+  if (me.khongBoGhim) return res.status(403).json({ ok: false, message: 'Tài khoản của bạn không có quyền bỏ ghim các khoảng đã chốt số liệu. Liên hệ quản trị viên.' });
   const { since, until, xoaLuon } = req.body || {};
   if (!since || !until) return res.json({ ok: false, message: 'Cần since và until' });
   const key = since + '|' + until;
@@ -863,7 +995,7 @@ app.get('/api/data', async (req, res) => {
       const allow = new Set(me.employees || []);
       visible = campaigns.filter(c => allow.has(c.employee));
     }
-    res.json({ days, campaigns: visible, me: { user: me.user, role: me.role, displayName: me.salaryName || me.manager || (me.employees && me.employees[0]) || me.user || '' } });
+    res.json({ days, campaigns: visible, me: { user: me.user, role: me.role, khongBoGhim: !!me.khongBoGhim, displayName: me.salaryName || me.manager || (me.employees && me.employees[0]) || me.user || '' } });
   } catch (e) {
     res.status(500).json({ error: e.message });
   }
@@ -1232,7 +1364,18 @@ app.get('/api/marketing/report', async (req, res) => {
     };
 
     rows.sort((a, b) => (b.doanhthu || 0) - (a.doanhthu || 0));
-    res.json({ ok: true, ver: 'mkt-2026-06-23-v13', since, until, rows, total, lastUpdated: new Date().toISOString() });
+    // Cảnh báo nếu có tài khoản QC bị lỗi/rate limit ở lần nạp Meta gần nhất
+    // (chỉ admin mới cần thấy chi tiết; nhân viên vẫn xem báo cáo bình thường).
+    let warnings = [];
+    const lf = global.__lastFetchIssues;
+    if ((req.session.user || {}).role === 'admin' && lf && Array.isArray(lf.issues) && lf.issues.length) {
+      warnings = lf.issues.map(it => ({
+        accName: it.accName,
+        rateLimit: !!it.rateLimit,
+        message: it.message,
+      }));
+    }
+    res.json({ ok: true, ver: 'mkt-2026-06-23-v13', since, until, rows, total, warnings, lastUpdated: new Date().toISOString() });
   } catch (e) {
     res.json({ ok: false, since, until, message: e.message });
   }
