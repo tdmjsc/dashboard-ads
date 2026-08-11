@@ -2535,15 +2535,21 @@ async function buildSalaryReport(since, until) {
       return 0;
     }
 
+    // Admin là CHỦ doanh nghiệp → KHÔNG được tính vào bất kỳ thi đua nào
+    // với nhân viên (Top 1, thưởng DTT…). Vẫn hiển thị doanh thu/lương của
+    // admin, chỉ không trao thưởng thi đua.
+    const laAdmin = nm => normProd(nm) === normProd('Admin');
+
     for (const row of rows) {
       const dtt = row.doanhthu - row.giaVon - row.phiShip;
       row.dtt = Math.round(dtt);
-      row.thuongDTT = tinhThuongDTT(dtt);
+      row.thuongDTT = laAdmin(row.name) ? 0 : tinhThuongDTT(dtt);
     }
 
     // ── Thưởng Top 1 (tự động — người có lương 2% cao nhất) ──────────
     // Chỉ 1 người, thưởng = ½ × lương 2% của chính họ (chỉ khi lương > 0)
-    const posRows = rows.filter(r => r.luong > 0);
+    // Loại admin khỏi bảng xếp hạng: chủ không thi đua với nhân viên.
+    const posRows = rows.filter(r => r.luong > 0 && !laAdmin(r.name));
     if (posRows.length > 0) {
       posRows.sort((a, b) => b.luong - a.luong);
       const top1 = posRows[0];
