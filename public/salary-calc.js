@@ -63,6 +63,7 @@
     opts = opts || {};
     const tyLe = opts.tyLe != null ? opts.tyLe : 0.02;
     const teamLead = opts.teamLead || {};
+    const ADMIN_KEY = normKey('Admin');   // Admin là CHỦ → KHÔNG tính vào bất kỳ thi đua nào (Top 1, DTT)
     const autoByKey = {};
     (rows || []).forEach(r => { autoByKey[normKey(r.name)] = r; });
 
@@ -87,7 +88,7 @@
         autoGV: +a[AUTOFIELD.gv] || 0, autoSHIP: +a[AUTOFIELD.ship] || 0,
         manDT: chSum(m, 'dt'), manQC: chSum(m, 'qc'), manGV: chSum(m, 'gv'), manSHIP: chSum(m, 'ship'),
         DT, QC, GV, SHIP, l2,
-        thuongDTT: tinhThuongDTT(DT - GV - SHIP),
+        thuongDTT: key === ADMIN_KEY ? 0 : tinhThuongDTT(DT - GV - SHIP),
         thuongTop1: 0, hl: 0,
       };
     });
@@ -108,7 +109,7 @@
     });
 
     // ── Thưởng Top 1: lương 2% cao nhất, phải DUY NHẤT và > 0 → ½ lương 2% ──
-    const eligible = list.filter(x => x.l2 > 0).sort((a, b) => b.l2 - a.l2);
+    const eligible = list.filter(x => x.l2 > 0 && x.key !== ADMIN_KEY).sort((a, b) => b.l2 - a.l2);
     if (eligible.length && (eligible.length === 1 || eligible[0].l2 !== eligible[1].l2))
       eligible[0].thuongTop1 = Math.round(eligible[0].l2 / 2);
 
@@ -116,7 +117,7 @@
     list.forEach(x => {
       x.thuong = x.thuongDTT + x.thuongTop1 + x.m.thuongNgayTuan;
       x.tn = roundK(x.l2 + x.m.luongCung + x.thuong - x.m.phat - x.m.bhxh + x.hl);
-      x.laAdmin = x.key === normKey('Admin');
+      x.laAdmin = x.key === ADMIN_KEY;
     });
 
     // ── Tổng: doanh thu/chi phí GỒM Admin (là số công ty), lương TÁCH RIÊNG Admin ──
