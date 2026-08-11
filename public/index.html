@@ -433,6 +433,17 @@ async function loadData(opts){
     CAMPAIGNS.forEach(c=>{ if(!seen[c.acc]){ seen[c.acc]=1; ACCOUNTS.push({id:c.acc,name:c.accName||("TK "+c.acc),color:ACC_COLORS[(ACCOUNTS.length-1)%ACC_COLORS.length]}); }});
     buildAccountTabs(); buildEmpFilter();
     msg.style.display='none';
+    // Cảnh báo nếu có tài khoản QC chưa lấy được (vd BM 2.11 bị giới hạn tần suất)
+    if(Array.isArray(data.warnings) && data.warnings.length){
+      const rl = data.warnings.filter(w=>w.rateLimit).map(w=>w.accName);
+      const other = data.warnings.filter(w=>!w.rateLimit);
+      let parts=[];
+      if(rl.length) parts.push('⏳ Bị giới hạn tần suất, đợi vài phút rồi thử lại (ĐỪNG bấm liên tục): '+rl.join(', '));
+      if(other.length) parts.push('⚠️ Chưa lấy được: '+other.map(w=>w.accName+(w.message?(' — '+w.message):'')).join(' | '));
+      msg.style.display='block';
+      msg.style.color='#ffc56b';
+      msg.textContent = parts.join('   ·   ');
+    } else { msg.style.color=''; }
     render();
     loadMarketing(since, until);   // tải số contact thật để tính CPA theo nhân viên (chạy song song)
   }catch(e){ msg.style.display='block'; msg.textContent='Không kết nối được backend. Kiểm tra server đang chạy. ('+e.message+')'; }
