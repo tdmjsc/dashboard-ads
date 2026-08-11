@@ -301,20 +301,54 @@ function listDays(since, until) {
   return days;
 }
 
+// Lấy metadata NHIỀU object theo ID trong 1 lời gọi (?ids=a,b,c) — chia lô để URL không quá dài.
+async function fbByIds(ids, fields, token, chunk = 50) {
+  const out = {};
+  for (let i = 0; i < ids.length; i += chunk) {
+    const slice = ids.slice(i, i + chunk);
+    if (!slice.length) continue;
+    const data = await fb('', { ids: slice.join(','), fields }, token);
+    Object.assign(out, data);
+  }
+  return out;
+}
+// Chia 1 mảng thành các lô nhỏ n phần tử.
+function chunkArr(arr, n) { const r = []; for (let i = 0; i < arr.length; i += n) r.push(arr.slice(i, i + n)); return r; }
+
 async function fetchAccount(acc, token, days, since, until) {
   const accName = ACCOUNT_NAMES[acc] || `TK ${acc}`;
-  const camps = await fbAll(`act_${acc}/campaigns`, {
-    fields: 'id,name,status,effective_status,daily_budget,lifetime_budget,objective',
-    limit: 500,
+  // Bỏ qua chiến dịch chi tiêu < ngưỡng (đ) trong khoảng ngày → khỏi kéo dữ liệu.
+  // Chỉnh qua .env: MIN_CAMP_SPEND=0 nếu muốn lấy mọi chiến dịch CÓ phát sinh.
+  const MIN_SPEND = Number(process.env.MIN_CAMP_SPEND ?? 100);
+
+  // (A) LẤY INSIGHTS TRƯỚC. Facebook chỉ trả về chiến dịch CÓ chi tiêu/phân phối
+  //     trong khoảng ngày → đây là cách rẻ nhất để biết chiến dịch nào đáng lấy,
+  //     không phải kéo toàn bộ hàng trăm chiến dịch của tài khoản.
+  const insights = await fbAll(`act_${acc}/insights`, {
+    level: 'campaign',
+    fields: 'campaign_id,spend,actions,date_start',
+    time_range: { since, until },
+    time_increment: 1,
+    limit: 1000,
   }, token);
 
+  // Tổng chi tiêu mỗi chiến dịch → chỉ giữ chiến dịch chi >= ngưỡng.
+  const spendById = {};
+  for (const row of insights)
+    spendById[row.campaign_id] = (spendById[row.campaign_id] || 0) + Number(row.spend || 0);
+  const keepIds = Object.keys(spendById).filter(id => spendById[id] >= MIN_SPEND);
+  if (keepIds.length === 0) return []; // không có chiến dịch nào chi đáng kể → dừng, khỏi gọi thêm
+
+  // (B) Metadata CHỈ cho các chiến dịch cần lấy (1 lời gọi / mỗi 50 chiến dịch).
+  const meta = await fbByIds(keepIds, 'id,name,status,effective_status,daily_budget,lifetime_budget,objective', token);
   const byId = {};
-  for (const c of camps) {
-    byId[c.id] = {
+  for (const id of keepIds) {
+    const c = meta[id] || {};
+    byId[id] = {
       acc, accName,
-      id: c.id,
-      name: c.name,
-      employee: detectEmployee(c.name),
+      id,
+      name: c.name || `(camp ${id})`,
+      employee: detectEmployee(c.name || ''),
       on: c.effective_status === 'ACTIVE',
       objective: c.objective || '',
       budget: Number(c.daily_budget || c.lifetime_budget || 0),
@@ -324,87 +358,85 @@ async function fetchAccount(acc, token, days, since, until) {
       adsets: [],
     };
   }
+  // Đổ chi tiêu + kết quả theo từng ngày (chỉ cho chiến dịch đã giữ).
+  for (const row of insights) {
+    const camp = byId[row.campaign_id];
+    if (!camp) continue;
+    const idx = days.indexOf(row.date_start);
+    if (idx < 0) continue;
+    const r = countResults(row.actions, camp.objective);
+    camp.daily[idx] = { spent: Number(row.spend || 0), results: r.value };
+    camp.obj = r.label;
+  }
 
-  // Ba nhóm truy vấn dưới đây độc lập nhau -> chạy SONG SONG cho nhanh.
+  // Các lời gọi ad/adset dưới đây đều LỌC theo đúng chiến dịch đã giữ (campaign.id IN …)
+  // nên chỉ kéo phần cần thiết, giảm mạnh số lời gọi so với kéo cả tài khoản.
+  const idChunks = chunkArr(keepIds, 50);
+
   await Promise.all([
 
-    // (1) Chi tiêu + kết quả theo từng ngày (cấp chiến dịch)
+    // (C) Link bài quảng cáo (cấp ad), ưu tiên ad đang chạy — chỉ cho chiến dịch đã giữ.
     (async () => {
       try {
-        const insights = await fbAll(`act_${acc}/insights`, {
-          level: 'campaign',
-          fields: 'campaign_id,spend,actions,date_start',
-          time_range: { since, until },
-          time_increment: 1,
-          limit: 1000,
-        }, token);
-        for (const row of insights) {
-          const camp = byId[row.campaign_id];
-          if (!camp) continue;
-          const idx = days.indexOf(row.date_start);
-          if (idx < 0) continue;
-          const r = countResults(row.actions, camp.objective);
-          camp.daily[idx] = { spent: Number(row.spend || 0), results: r.value };
-          camp.obj = r.label;
-        }
-      } catch (e) { if (isRateLimitError(e)) throw e; /* lỗi khác: bỏ qua, số liệu khác vẫn hiển thị */ }
-    })(),
-
-    // (2) Link bài quảng cáo (cấp ad), ưu tiên ad đang chạy
-    (async () => {
-      try {
-        const ads = await fbAll(`act_${acc}/ads`, {
-          fields: 'campaign_id,effective_status,preview_shareable_link,creative{effective_object_story_id}',
-          limit: 500,
-        }, token);
         const chosen = {};
-        for (const ad of ads) {
-          const cid = ad.campaign_id;
-          if (!cid || !byId[cid]) continue;
-          const link = (ad.creative && ad.creative.effective_object_story_id
-                  ? `https://www.facebook.com/${ad.creative.effective_object_story_id}` : null)
-            || ad.preview_shareable_link
-            || null;
-          if (!link) continue;
-          const active = ad.effective_status === 'ACTIVE';
-          if (!chosen[cid] || (active && !chosen[cid].active)) chosen[cid] = { link, active };
+        for (const ids of idChunks) {
+          const ads = await fbAll(`act_${acc}/ads`, {
+            fields: 'campaign_id,effective_status,preview_shareable_link,creative{effective_object_story_id}',
+            filtering: [{ field: 'campaign.id', operator: 'IN', value: ids }],
+            limit: 500,
+          }, token);
+          for (const ad of ads) {
+            const cid = ad.campaign_id;
+            if (!cid || !byId[cid]) continue;
+            const link = (ad.creative && ad.creative.effective_object_story_id
+                    ? `https://www.facebook.com/${ad.creative.effective_object_story_id}` : null)
+              || ad.preview_shareable_link
+              || null;
+            if (!link) continue;
+            const active = ad.effective_status === 'ACTIVE';
+            if (!chosen[cid] || (active && !chosen[cid].active)) chosen[cid] = { link, active };
+          }
         }
         for (const cid in chosen) byId[cid].link = chosen[cid].link;
       } catch (e) { if (isRateLimitError(e)) throw e; /* lỗi khác: bỏ qua link */ }
     })(),
 
-    // (3) Nhóm quảng cáo (ad set): ngân sách + chi tiêu từng nhóm
+    // (D) Nhóm quảng cáo (ad set): ngân sách + chi tiêu — chỉ cho chiến dịch đã giữ.
     (async () => {
       try {
-        const [adsets, asInsights] = await Promise.all([
-          fbAll(`act_${acc}/adsets`, {
-            fields: 'id,name,campaign_id,daily_budget,lifetime_budget,effective_status',
-            limit: 500,
-          }, token),
-          fbAll(`act_${acc}/insights`, {
-            level: 'adset',
-            fields: 'adset_id,spend,actions',
-            time_range: { since, until },
-            limit: 1000,
-          }, token),
-        ]);
         const asById = {};
-        for (const a of adsets) {
-          if (!byId[a.campaign_id]) continue;
-          asById[a.id] = {
-            campaign_id: a.campaign_id,
-            name: a.name,
-            budget: Number(a.daily_budget || a.lifetime_budget || 0),
-            on: a.effective_status === 'ACTIVE',
-            spent: 0, results: 0,
-          };
-        }
-        for (const row of asInsights) {
-          const as = asById[row.adset_id];
-          if (!as) continue;
-          const objective = byId[as.campaign_id] ? byId[as.campaign_id].objective : '';
-          as.spent = Number(row.spend || 0);
-          as.results = countResults(row.actions, objective).value;
+        for (const ids of idChunks) {
+          const [adsets, asInsights] = await Promise.all([
+            fbAll(`act_${acc}/adsets`, {
+              fields: 'id,name,campaign_id,daily_budget,lifetime_budget,effective_status',
+              filtering: [{ field: 'campaign.id', operator: 'IN', value: ids }],
+              limit: 500,
+            }, token),
+            fbAll(`act_${acc}/insights`, {
+              level: 'adset',
+              fields: 'adset_id,spend,actions',
+              time_range: { since, until },
+              filtering: [{ field: 'campaign.id', operator: 'IN', value: ids }],
+              limit: 1000,
+            }, token),
+          ]);
+          for (const a of adsets) {
+            if (!byId[a.campaign_id]) continue;
+            asById[a.id] = {
+              campaign_id: a.campaign_id,
+              name: a.name,
+              budget: Number(a.daily_budget || a.lifetime_budget || 0),
+              on: a.effective_status === 'ACTIVE',
+              spent: 0, results: 0,
+            };
+          }
+          for (const row of asInsights) {
+            const as = asById[row.adset_id];
+            if (!as) continue;
+            const objective = byId[as.campaign_id] ? byId[as.campaign_id].objective : '';
+            as.spent = Number(row.spend || 0);
+            as.results = countResults(row.actions, objective).value;
+          }
         }
         const budgetSum = {};
         for (const id in asById) {
