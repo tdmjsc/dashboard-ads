@@ -1,8 +1,13 @@
 // Service Worker cho TDMJSC Ads Dashboard PWA
-// Chiến lược: network-first cho API/HTML (luôn lấy dữ liệu mới nhất),
-// cache-first cho tài nguyên tĩnh (icon, css, js) để load nhanh + hỗ trợ offline nhẹ.
+// Chiến lược:
+//   • network-first cho API, trang HTML, và MÃ NGUỒN JS/CSS
+//     → luôn lấy bản mới nhất (công thức lương nằm trong salary-calc.js,
+//       nên bắt buộc phải cập nhật ngay khi deploy, không được kẹt bản cũ).
+//   • cache-first cho tài nguyên tĩnh thật sự (icon, ảnh, font, manifest)
+//     → load nhanh + hỗ trợ offline nhẹ.
 
-const CACHE_NAME = 'tdmjsc-ads-v1';
+// ⚠ Mỗi lần đổi chiến lược cache, TĂNG số version để xoá sạch cache cũ.
+const CACHE_NAME = 'tdmjsc-ads-v2';
 const PRECACHE_URLS = [
   '/manifest.json',
   '/icons/icon-192.png',
@@ -30,24 +35,35 @@ self.addEventListener('fetch', (event) => {
   if (request.method !== 'GET') return; // không can thiệp POST/PUT (login, lưu dữ liệu...)
 
   const url = new URL(request.url);
+  const isCode = url.pathname.endsWith('.js') || url.pathname.endsWith('.css');
 
-  // Luôn lấy mới với API và trang HTML (dữ liệu quảng cáo/đơn hàng phải luôn mới nhất)
-  const isApiOrPage =
+  // Network-first: API, trang HTML, và mã nguồn JS/CSS phải luôn mới nhất.
+  const networkFirst =
     url.pathname.startsWith('/api/') ||
     url.pathname.startsWith('/thailand') ||
     url.pathname.endsWith('.html') ||
-    url.pathname === '/';
+    url.pathname === '/' ||
+    isCode;
 
-  if (isApiOrPage) {
+  if (networkFirst) {
     event.respondWith(
-      fetch(request).catch(() =>
-        caches.match(request).then((cached) => cached || new Response('Mất kết nối mạng', { status: 503 }))
-      )
+      fetch(request)
+        .then((resp) => {
+          // Lưu lại bản JS/CSS mới để còn dùng khi offline
+          if (resp.ok && isCode) {
+            const clone = resp.clone();
+            caches.open(CACHE_NAME).then((cache) => cache.put(request, clone));
+          }
+          return resp;
+        })
+        .catch(() =>
+          caches.match(request).then((cached) => cached || new Response('Mất kết nối mạng', { status: 503 }))
+        )
     );
     return;
   }
 
-  // Tài nguyên tĩnh: cache-first
+  // Tài nguyên tĩnh khác (icon, ảnh, font, manifest): cache-first
   event.respondWith(
     caches.match(request).then((cached) => {
       if (cached) return cached;
