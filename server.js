@@ -60,7 +60,6 @@ const EMPLOYEES_DEFAULT = [
   { code: 'TD4',  short: 'My',      full: 'Nguyễn Thị Trà My', bhxh: 577500, aliases: [], team: 'Tạ Quang Trường', isLead: false, active: true },
   { code: 'TD5',  short: 'Ánh',     full: 'Lê Thị Ánh',        bhxh: 577500, aliases: [], team: 'Tạ Quang Trường', isLead: false, active: true },
   { code: 'TD6',  short: 'Huân',    full: 'Nguyễn Duy Huân',   bhxh: 0,      aliases: [], team: 'Trịnh Đức Phương', isLead: false, active: true },
-  { code: 'TD7',  short: 'Minh',    full: 'Dương Văn Minh',    bhxh: 577500, aliases: [], team: 'Tạ Quang Trường', isLead: false, active: true },
   { code: 'TD8',  short: 'Giang',   full: 'Vũ Hà Giang',       bhxh: 577500, aliases: [], team: '', isLead: false, active: true },
   { code: 'TD9',  short: 'Việt Hà', full: 'Đoàn Việt Hà',      bhxh: 577500, aliases: [], team: 'Trịnh Đức Phương', isLead: false, active: true },
   { code: 'TD10', short: 'Thuý An', full: 'Vũ Thuý An',         bhxh: 0,     aliases: ['Thúy An'], team: 'Trịnh Đức Phương', isLead: false, active: true },
