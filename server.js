@@ -2496,7 +2496,7 @@ async function buildSalaryReport(since, until) {
       for (const pr of lists[i * 2 + 1]) giaVon += pr.soLuong * priceOf(pr.ten);
       giaVon = Math.round(giaVon);
       const chiPhiQC = Math.round((meta[normProd(e.name)] || 0) * (1 + QC_TAX));
-      const phiShip = e.soDon * PHI_SHIP_DON;
+      const phiShip = (normProd(e.name) === normProd('Admin')) ? 0 : e.soDon * PHI_SHIP_DON;
       const luong = Math.round((e.doanhthu - chiPhiQC - giaVon - phiShip) * LUONG_TY_LE);
       luongByName[e.name] = luong;
       return { name: e.name, doanhthu: e.doanhthu, chiPhiQC, giaVon, phiShip, soDon: e.soDon, soSP: e.soSP, luong, hoaHongLeader: 0 };
