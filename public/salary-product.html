@@ -213,7 +213,7 @@ function render(){
     if(isOpen){
       const chans = DATA.channels || ['thailan','pushsale','tmdt','dt85'];
       const chLabels = {thailan:'Thái Lan', pushsale:'Pushsale', tmdt:'TMĐT', dt85:'DT85%', shopee:'TMĐT'};
-      const prods = (DATA.products||[]).filter(p => p.manager === m.manager)
+      const prods = (DATA.products||[]).filter(p => (p.manager || "(chưa gán)") === m.manager)
         .sort((a,b)=>b.hoaHong-a.hoaHong);
 
       // Form nhập doanh thu kênh khác theo sản phẩm
@@ -494,7 +494,7 @@ async function _saveProdChannelData(mgr, prod, ch, dt, gv, ship){
   if(!MANUAL[mk].prodChannels[pk]) MANUAL[mk].prodChannels[pk] = {};
   MANUAL[mk].prodChannels[pk][ch] = { dt, gv, ship };
   // Cập nhật DATA.products
-  const p = (DATA.products||[]).find(x=>x.product===prod && x.manager===mgr);
+  const p = (DATA.products||[]).find(x=>x.product===prod && (x.manager||"(chưa gán)")===mgr);
   if(p) _recalcProduct(p, mk, pk);
   recalcManager(mgr);
   // Lưu server
@@ -532,7 +532,7 @@ async function delProdChannel(mgr, prod, ch){
     delete MANUAL[mk].prodChannels[pk][ch];
     if(!Object.keys(MANUAL[mk].prodChannels[pk]).length) delete MANUAL[mk].prodChannels[pk];
   }
-  const p = (DATA.products||[]).find(x=>x.product===prod && x.manager===mgr);
+  const p = (DATA.products||[]).find(x=>x.product===prod && (x.manager||"(chưa gán)")===mgr);
   if(p) _recalcProduct(p, mk, pk);
   recalcManager(mgr);
   try {
@@ -550,7 +550,7 @@ async function delProdChannel(mgr, prod, ch){
 function recalcManager(mgr){
   const m = (DATA.managers||[]).find(x=>x.manager===mgr);
   if(!m) return;
-  const mProds = (DATA.products||[]).filter(x=>x.manager===mgr);
+  const mProds = (DATA.products||[]).filter(x=>(x.manager||"(chưa gán)")===mgr);
   m.doanhThu = mProds.reduce((s,x)=>s+x.doanhThu,0);
   m.giaVon = mProds.reduce((s,x)=>s+x.giaVon,0);
   m.phiShip = mProds.reduce((s,x)=>s+x.phiShip,0);
@@ -702,7 +702,7 @@ $('publishBtn').addEventListener('click', async ()=>{
     const thuongThang = +man.thuongThang || 0;
     const thuong = thuongSP + thuongThang;
     // Danh sách SP của người này (để nhân viên bấm + xem chi tiết)
-    const products=(DATA.products||[]).filter(p=>p.manager===m.manager)
+    const products=(DATA.products||[]).filter(p=>(p.manager||"(chưa gán)")===m.manager)
       .map(p=>({product:p.product,ngayDang:p.ngayDang,loai:p.loai,soDon:p.soDon,soLuongSP:p.soLuongSP,
         giaNhap:p.giaNhap,doanhThu:p.doanhThu,giaVon:p.giaVon,phiShip:p.phiShip,hoaHong:p.hoaHong,
         autoDoanhThu:p.autoDoanhThu,autoGiaVon:p.autoGiaVon,autoPhiShip:p.autoPhiShip,
