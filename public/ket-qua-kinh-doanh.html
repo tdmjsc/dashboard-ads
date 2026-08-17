@@ -120,6 +120,13 @@
   .lg i{width:11px;height:11px;border-radius:3px;display:inline-block;}
   .chart-scroll{overflow-x:auto;-webkit-overflow-scrolling:touch;}
   .chart-scroll svg{display:block;}
+  .chart-tip{position:fixed;z-index:60;pointer-events:none;background:#0B1322;border:1px solid rgba(255,255,255,.18);
+    border-radius:9px;padding:8px 11px;font-size:12.5px;color:#E7EEF8;box-shadow:0 8px 24px rgba(0,0,0,.55);
+    transform:translate(-50%,calc(-100% - 12px));white-space:nowrap;display:none;}
+  .chart-tip .m{color:#9FB0C8;font-size:11px;margin-bottom:3px;}
+  .chart-tip .v{font-family:'Space Grotesk';font-weight:600;}
+  .chart-tip .dot{display:inline-block;width:9px;height:9px;border-radius:2px;margin-right:6px;vertical-align:middle;}
+  .chart-tip .pk{color:#8C9BB4;font-weight:500;}
   .gl{stroke:rgba(255,255,255,.06);stroke-width:1;}
   .axl{fill:#6B7C97;font-size:10px;font-family:Inter,sans-serif;}
   .mxl{fill:#9FB0C8;font-size:11px;font-weight:600;font-family:Inter,sans-serif;}
@@ -745,8 +752,11 @@ function chartLines(rows, series, opts){
     if(n>1){ const pts=rows.map((r,i)=>X(i).toFixed(1)+','+Y(+r[s.k]||0).toFixed(1)).join(' ');
       g+='<polyline points="'+pts+'" fill="none" stroke="'+s.c+'" stroke-width="2.2" stroke-linejoin="round" stroke-linecap="round"/>'; }
     rows.forEach((r,i)=>{ const v=+r[s.k]||0, x=X(i), y=Y(v);
-      g+='<circle cx="'+x.toFixed(1)+'" cy="'+y.toFixed(1)+'" r="3.3" fill="#0F1829" stroke="'+s.c+'" stroke-width="2">'
-        +'<title>'+monthLabel(r.month)+' · '+s.lb+': '+(pct?v.toFixed(1)+'%':vnd(v)+' ₫')+'</title></circle>';
+      const val=pct?v.toFixed(1)+'%':vnd(v)+' ₫';
+      g+='<circle cx="'+x.toFixed(1)+'" cy="'+y.toFixed(1)+'" r="3.6" fill="#0F1829" stroke="'+s.c+'" stroke-width="2"/>'
+        +'<circle class="pt" cx="'+x.toFixed(1)+'" cy="'+y.toFixed(1)+'" r="11" fill="transparent" style="cursor:pointer"'
+        +' data-m="'+monthLabel(r.month)+'" data-lb="'+esc(s.lb)+'" data-v="'+esc(val)+'" data-c="'+s.c+'">'
+        +'<title>'+monthLabel(r.month)+' · '+s.lb+': '+val+'</title></circle>';
       if(labelPts){ const ly=v<0?y+16:y-9;
         g+='<text class="axl" x="'+x.toFixed(1)+'" y="'+ly.toFixed(1)+'" text-anchor="middle" style="fill:'+s.c+';font-weight:600;">'+(pct?v.toFixed(1)+'%':fmtShort(v))+'</text>'; }
     });
@@ -788,6 +798,29 @@ function compareTable(out){
 (function(){ $('cmpFrom').value=DATA_START; $('cmpTo').value=CAL_NOW>=DATA_START?CAL_NOW:DATA_START; })();
 $('cmpLoad').addEventListener('click',function(){ loadCompare(false); });
 $('cmpRefresh').addEventListener('click',function(){ loadCompare(true); });
+
+/* ── Bấm/chạm vào điểm trên biểu đồ → hiện số liệu ── */
+let TIP=null;
+function tipEl(){ if(!TIP){ TIP=document.createElement('div'); TIP.className='chart-tip'; document.body.appendChild(TIP); } return TIP; }
+function showTip(c){
+  const t=tipEl();
+  const m=c.getAttribute('data-m'), lb=c.getAttribute('data-lb'), v=c.getAttribute('data-v'), col=c.getAttribute('data-c');
+  t.innerHTML='<div class="m">'+esc(m)+'</div>'
+    +'<div class="v"><span class="dot" style="background:'+esc(col)+'"></span><span class="pk">'+esc(lb)+':</span> '+esc(v)+'</div>';
+  const r=c.getBoundingClientRect();
+  t.style.left=(r.left+r.width/2)+'px';
+  t.style.top=r.top+'px';
+  t.style.display='block';
+}
+function hideTip(){ if(TIP) TIP.style.display='none'; }
+// Bấm vào điểm (event delegation — vẫn hoạt động sau mỗi lần vẽ lại)
+$('cmpOut').addEventListener('click',function(e){
+  const c=e.target.closest('.pt');
+  if(c) showTip(c); else hideTip();
+});
+document.addEventListener('click',function(e){ if(!e.target.closest('.pt')&&!e.target.closest('#cmpOut')) hideTip(); });
+window.addEventListener('scroll',hideTip,true);
+window.addEventListener('resize',hideTip);
 
 $('refreshBtn').addEventListener('click',load);
 $('month').addEventListener('change',load);
