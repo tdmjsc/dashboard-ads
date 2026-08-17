@@ -93,12 +93,31 @@
   /* ── DASHBOARD SO SÁNH NHIỀU THÁNG ── */
   .cmp-h{display:flex;align-items:center;gap:10px;flex-wrap:wrap;padding:13px 18px;border-bottom:1px solid rgba(255,255,255,.07);}
   .cmp-h .t{font-weight:600;font-size:14px;font-family:'Space Grotesk';margin-right:auto;}
+  /* Accordion: bấm tiêu đề để mở/đóng */
+  .acc-h{width:100%;display:flex;align-items:center;gap:10px;padding:15px 18px;background:none;border:none;
+    cursor:pointer;color:#E7EEF8;font-family:inherit;text-align:left;}
+  .acc-h .t{font-weight:600;font-size:14px;font-family:'Space Grotesk';margin-right:auto;}
+  .acc-h .chev{color:#9FB0C8;font-size:13px;transition:transform .2s;}
+  .acc-h.open .chev{transform:rotate(90deg);}
+  .acc-h:hover .t{color:#fff;}
+  .acc-body{border-top:1px solid rgba(255,255,255,.07);}
+  .acc-body[hidden]{display:none;}
+  .acc-tools{display:flex;align-items:center;gap:10px;flex-wrap:wrap;padding:13px 18px;border-bottom:1px solid rgba(255,255,255,.07);}
   .seg{display:inline-flex;background:rgba(255,255,255,.05);border:1px solid rgba(255,255,255,.12);border-radius:9px;padding:2px;}
   .seg button{background:none;border:none;color:#9FB0C8;font-family:inherit;font-size:12.5px;font-weight:600;padding:5px 12px;border-radius:7px;cursor:pointer;}
   .seg button.on{background:#3D5AFE;color:#fff;}
   .cmp-range{display:inline-flex;align-items:center;gap:6px;flex-wrap:wrap;}
   .cmp-range label{font-size:12px;color:#9FB0C8;}
   .cmp-range input[type=month]{padding:6px 9px;font-size:12.5px;}
+  .cmp-range select{padding:6px 9px;font-size:12.5px;background:#0F1829;border:1px solid rgba(255,255,255,.12);border-radius:9px;color:#E7EEF8;}
+  .old-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(190px,1fr));gap:12px;margin-bottom:16px;}
+  .old-grid label{display:flex;flex-direction:column;gap:5px;font-size:12px;color:#9FB0C8;}
+  .old-grid input{padding:9px 11px;font-size:15px;font-family:'Space Grotesk';background:#0F1829;border:1px solid rgba(255,255,255,.12);border-radius:9px;color:#E7EEF8;text-align:right;}
+  .old-grid input:focus{border-color:#3D5AFE;outline:none;}
+  .old-preview{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:10px;}
+  .old-pv{background:#0F1829;border:1px solid rgba(255,255,255,.07);border-radius:11px;padding:11px 13px;}
+  .old-pv .lb{font-size:10.5px;color:#9FB0C8;text-transform:uppercase;letter-spacing:.4px;font-weight:600;}
+  .old-pv .vl{font-family:'Space Grotesk';font-size:18px;font-weight:600;margin-top:5px;letter-spacing:-.3px;}
   button.link{background:none;cursor:pointer;font-family:inherit;}
   .cmp-body{padding:16px 18px;}
   .cmp-status{font-size:12.5px;color:#9FB0C8;margin-bottom:14px;}
@@ -193,22 +212,64 @@
     • <b>Thuế</b> = 17% × lợi nhuận trước thuế (lỗ thì thuế = 0).
   </div>
 
-  <!-- ══ DASHBOARD SO SÁNH NHIỀU THÁNG ══ -->
-  <div class="card" id="cmpCard">
-    <div class="cmp-h">
-      <span class="t">📈 So sánh nhiều tháng</span>
-      <div class="cmp-range">
-        <label>Từ</label><input type="month" id="cmpFrom" min="2026-06">
-        <label>Đến</label><input type="month" id="cmpTo" min="2026-06">
+  <!-- ══ NHẬP SỐ LIỆU THÁNG CŨ (trước khi có hệ thống ads) ══ -->
+  <div class="card acc" id="oldCard">
+    <button class="acc-h" type="button"><span class="t">🖉 Nhập số liệu tháng cũ</span><span class="chev">▸</span></button>
+    <div class="acc-body" hidden>
+      <div class="acc-tools">
+        <div class="cmp-range">
+          <label>Tháng</label>
+          <select id="oldMonth">
+            <option value="2026-01">Tháng 1/2026</option>
+            <option value="2026-02">Tháng 2/2026</option>
+            <option value="2026-03">Tháng 3/2026</option>
+            <option value="2026-04">Tháng 4/2026</option>
+            <option value="2026-05">Tháng 5/2026</option>
+          </select>
+        </div>
+        <button class="btn" id="oldSave">Lưu</button>
+        <span class="cmp-status" id="oldStatus" style="margin:0;"></span>
       </div>
-      <button class="btn" id="cmpLoad">So sánh</button>
-      <button class="link" id="cmpRefresh" title="Bỏ cache, tải lại các tháng">↻ Tải lại</button>
+      <div class="cmp-body">
+        <div class="cmp-empty" style="padding:0 0 14px;text-align:left;">
+          Các tháng <b>trước 6/2026</b> chưa có hệ thống ads nên nhập tay tại đây. Số liệu lưu trên máy chủ và dùng luôn cho bảng <b>So sánh nhiều tháng</b>.
+        </div>
+        <div class="old-grid">
+          <label>Doanh thu<input id="o_dt" inputmode="numeric" placeholder="0"></label>
+          <label>Ngân sách QC (quảng cáo)<input id="o_qc" inputmode="numeric" placeholder="0"></label>
+          <label>Giá vốn<input id="o_gv" inputmode="numeric" placeholder="0"></label>
+          <label>Phí ship<input id="o_ship" inputmode="numeric" placeholder="0"></label>
+          <label>Tổng lương<input id="o_luong" inputmode="numeric" placeholder="0"></label>
+          <label>Chi phí khác<input id="o_cp" inputmode="numeric" placeholder="0"></label>
+        </div>
+        <div class="old-preview" id="oldPreview"></div>
+      </div>
     </div>
-    <div class="cmp-body">
-      <div class="cmp-status" id="cmpStatus"></div>
-      <div id="cmpOut">
-        <div class="cmp-empty">Chọn khoảng <b>Từ</b> → <b>Đến</b> rồi bấm <b>So sánh</b>.
-          Dữ liệu có từ <b>tháng 6/2026</b>; mỗi tháng được lưu lại để lần sau xem tức thì.</div>
+  </div>
+
+  <!-- ══ DASHBOARD SO SÁNH NHIỀU THÁNG ══ -->
+  <div class="card acc" id="cmpCard">
+    <button class="acc-h" type="button"><span class="t">📈 So sánh nhiều tháng</span><span class="chev">▸</span></button>
+    <div class="acc-body" hidden>
+      <div class="acc-tools">
+        <div class="seg" id="cmpMode">
+          <button data-mode="range" class="on">Khoảng liên tục</button>
+          <button data-mode="pair">2 tháng bất kỳ</button>
+        </div>
+        <div class="cmp-range">
+          <label id="lblFrom">Từ</label><input type="month" id="cmpFrom" min="2026-01">
+          <label id="lblTo">Đến</label><input type="month" id="cmpTo" min="2026-01">
+        </div>
+        <button class="btn" id="cmpLoad">So sánh</button>
+        <button class="link" id="cmpRefresh" title="Bỏ cache, tải lại các tháng">↻ Tải lại</button>
+      </div>
+      <div class="cmp-body">
+        <div class="cmp-status" id="cmpStatus"></div>
+        <div id="cmpOut">
+          <div class="cmp-empty"><b>Khoảng liên tục</b>: chọn Từ → Đến để xem mọi tháng ở giữa.
+            <b>2 tháng bất kỳ</b>: chọn Tháng A và Tháng B để so đúng 2 tháng (ví dụ T6 với T8).
+            So được từ <b>1/2026</b> (gồm cả các tháng nhập tay). Bấm <b>So sánh</b>.</div>
+        </div>
       </div>
     </div>
   </div>
@@ -243,7 +304,9 @@ async function load(){
     if(!RAW.tay) RAW.tay={};
     if(!Array.isArray(RAW.tay.chiPhiList)) RAW.tay.chiPhiList=[];
     tinhLai();
-    $('status').innerHTML='Tháng <b>'+curMonth+'</b> ('+RAW.since+' → '+RAW.until+') · cập nhật '+new Date(RAW.lastUpdated).toLocaleString('vi-VN');
+    $('status').innerHTML = RAW.manualOnly
+      ? 'Tháng <b>'+curMonth+'</b> · <span class="warn">số liệu nhập tay</span> (trước khi có hệ thống ads) · sửa ở mục “Nhập số liệu tháng cũ” bên dưới.'
+      : 'Tháng <b>'+curMonth+'</b> ('+RAW.since+' → '+RAW.until+') · cập nhật '+new Date(RAW.lastUpdated).toLocaleString('vi-VN');
     render();
   }catch(e){ $('status').innerHTML='<span class="err">Lỗi kết nối: '+esc(e.message)+'</span>'; }
   finally{ $('refreshBtn').disabled=false; }
@@ -252,11 +315,24 @@ async function load(){
 /* Tính P&L từ dữ liệu thô 1 tháng — HÀM THUẦN, dùng ĐÚNG công thức trang Lương MKT / PTSP.
    Dùng chung cho: xem 1 tháng (tinhLai) và dashboard so sánh nhiều tháng. */
 function computeKQKD(raw){
+  const tay=raw.tay||{};
+
+  // Tháng CŨ nhập tay (trước khi có hệ thống ads) → dùng thẳng số đã nhập
+  if(tay.manual){
+    const doanhThu=+tay.mDoanhThu||0, nganSach=+tay.mNganSach||0, giaVon=+tay.mGiaVon||0,
+          phiShip=+tay.mPhiShip||0, luongTong=+tay.mLuong||0, chiPhi=+tay.mChiPhi||0;
+    const luong={ mkt:0, mktAdmin:0, ptsp:0, sale:0, keToan:0, kho:0, tong:luongTong };
+    const lnTruocThue=doanhThu-nganSach-giaVon-phiShip-luongTong-chiPhi;
+    const thueSuat=raw.thueSuat;
+    const thue=lnTruocThue>0?Math.round(lnTruocThue*thueSuat):0;
+    return { doanhThu,nganSach,giaVon,phiShip,luong, chiPhiList:[],chiPhi,
+      lnTruocThue,thue, lnSauThue:lnTruocThue-thue, thueSuat, mktList:[],ptspList:[], manual:true };
+  }
+
   const mkt=SalaryCalc.tinhLuongMKT(raw.mkt.rows, raw.mktManual, {
     tyLe: raw.mkt.tyLe, teamLead: raw.mkt.teamLead, roster: raw.mkt.roster,
   });
   const ptsp=SalaryCalc.tinhLuongPTSP(raw.ptsp.managers, raw.ptspManual);
-  const tay=raw.tay||{};
   const chiPhiList=Array.isArray(tay.chiPhiList)?tay.chiPhiList:[];
   const chiPhi=chiPhiList.reduce((s,x)=>s+(+x.soTien||0),0);
 
@@ -298,6 +374,11 @@ function render(){
   h+=row('Tổng giá vốn', -S.giaVon, 'minus', true);
   h+=row('Tổng phí ship', -S.phiShip, 'minus', true);
 
+  if(S.manual){
+    // Tháng nhập tay: hiện gọn, sửa ở mục "Nhập số liệu tháng cũ" bên dưới
+    h+=row('Tổng lương', -L.tong, 'minus', true);
+    h+=row('Chi phí khác', -S.chiPhi, 'minus', true);
+  } else {
   // ── Tổng lương (mở rộng được) ──
   h+='<tr class="minus"><td class="lbl"><button class="exp" onclick="tog(this)">＋</button>Tổng lương</td>'
     +'<td class="num">−'+vnd(L.tong)+'</td></tr>';
@@ -339,6 +420,7 @@ function render(){
     +'<td class="num"><input class="inp" inputmode="numeric" id="cp-new-tien" placeholder="0">'
     +'<button class="addbtn" onclick="themChiPhi()">+ Thêm</button></td></tr></table>';
   h+='<tr class="det"><td colspan="2">'+cp+'</td></tr>';
+  }
 
   h+='<tr class="sum big"><td>Lợi nhuận trước thuế</td>'
     +'<td class="num" style="color:'+(S.lnTruocThue>=0?'#7BE3B5':'#ff9b8a')+'">'+vnd(S.lnTruocThue)+' ₫</td></tr>';
@@ -561,9 +643,10 @@ async function xoaChiPhi(index){
    - Luôn nạp lại tháng hiện tại + tháng đang chọn (dữ liệu còn thay đổi)
    - Biểu đồ SVG tự vẽ, không cần thư viện ngoài
    ════════════════════════════════════════════════════════════════════ */
-let CMP_DATA=[];
+let CMP_DATA=[], CMP_MODE='range';    // 'range' = khoảng liên tục · 'pair' = 2 tháng bất kỳ
 const CAL_NOW=new Date().toISOString().slice(0,7);
-const DATA_START='2026-06';           // dữ liệu bắt đầu có từ tháng 6/2026
+const DATA_START='2026-06';           // hệ thống ads có dữ liệu từ 6/2026
+const HIST_MIN='2026-01';             // đã nhập tay T1–T5/2026 nên cho so từ 1/2026
 const CK=m=>'kqkd-sum:'+m;
 
 function monthLabel(m){ const p=String(m).split('-'); return 'T'+(+p[1])+'/'+String(p[0]).slice(2); }
@@ -598,12 +681,18 @@ function fetchMonthRaw(m){
 
 async function loadCompare(force){
   let a=$('cmpFrom').value||DATA_START, b=$('cmpTo').value||CAL_NOW;
-  if(a<DATA_START) a=DATA_START;
-  if(b<DATA_START) b=DATA_START;
-  if(a>b){ const t=a; a=b; b=t; }                    // chọn ngược thì tự hoán
+  if(a<HIST_MIN) a=HIST_MIN;
+  if(b<HIST_MIN) b=HIST_MIN;
+  if(a>b){ const t=a; a=b; b=t; }                    // luôn xếp theo thời gian tăng dần
   $('cmpFrom').value=a; $('cmpTo').value=b;
-  const months=monthsBetween(a,b);
-  if(months.length>24){ $('cmpStatus').innerHTML='<span class="err">Khoảng tối đa 24 tháng — hãy thu hẹp lại.</span>'; return; }
+  // Dựng danh sách tháng theo chế độ
+  let months;
+  if(CMP_MODE==='pair'){
+    months = (a===b) ? [a] : [a,b];                  // CHỈ 2 tháng đã chọn (bỏ các tháng ở giữa)
+  }else{
+    months = monthsBetween(a,b);                     // toàn bộ tháng liên tục
+    if(months.length>24){ $('cmpStatus').innerHTML='<span class="err">Khoảng tối đa 24 tháng — hãy thu hẹp lại.</span>'; return; }
+  }
   $('cmpLoad').disabled=true;
   const total=months.length; let done=0;
   const prog=pct=>'<div class="prog"><i style="width:'+Math.round(pct)+'%"></i></div>';
@@ -794,8 +883,27 @@ function compareTable(out){
   return h;
 }
 
-// Khoảng mặc định: Từ 6/2026 → Đến tháng hiện tại (không sớm hơn 6/2026)
+// Mở/đóng khu Nhập tháng cũ & So sánh (mặc định đóng, bấm tiêu đề để mở)
+[].forEach.call(document.querySelectorAll('.acc-h'),function(h){
+  h.addEventListener('click',function(){
+    const body=h.nextElementSibling;
+    if(body.hasAttribute('hidden')){ body.removeAttribute('hidden'); h.classList.add('open'); }
+    else { body.setAttribute('hidden',''); h.classList.remove('open'); }
+  });
+});
+// Khoảng mặc định: Từ 6/2026 → Đến tháng hiện tại
 (function(){ $('cmpFrom').value=DATA_START; $('cmpTo').value=CAL_NOW>=DATA_START?CAL_NOW:DATA_START; })();
+// Chuyển chế độ: khoảng liên tục ↔ 2 tháng bất kỳ
+[].forEach.call(document.querySelectorAll('#cmpMode button'),function(b){
+  b.addEventListener('click',function(){
+    CMP_MODE=b.dataset.mode;
+    [].forEach.call(document.querySelectorAll('#cmpMode button'),x=>x.classList.remove('on'));
+    b.classList.add('on');
+    const pair=CMP_MODE==='pair';
+    $('lblFrom').textContent=pair?'Tháng A':'Từ';
+    $('lblTo').textContent  =pair?'Tháng B':'Đến';
+  });
+});
 $('cmpLoad').addEventListener('click',function(){ loadCompare(false); });
 $('cmpRefresh').addEventListener('click',function(){ loadCompare(true); });
 
@@ -824,6 +932,60 @@ window.addEventListener('resize',hideTip);
 
 $('refreshBtn').addEventListener('click',load);
 $('month').addEventListener('change',load);
+
+/* ── NHẬP SỐ LIỆU THÁNG CŨ (T1–T5/2026) ── */
+const OINP=['o_dt','o_qc','o_gv','o_ship','o_luong','o_cp'];
+const onum=id=>money($(id).value);
+function ofmtAll(){ OINP.forEach(id=>{ const v=onum(id); $(id).value = v? vnd(v):''; }); }
+function oldCalc(){
+  const dt=onum('o_dt'), qc=onum('o_qc'), gv=onum('o_gv'), sh=onum('o_ship'), lg=onum('o_luong'), cp=onum('o_cp');
+  const lnt=dt-qc-gv-sh-lg-cp, thue=lnt>0?Math.round(lnt*0.17):0, lns=lnt-thue, bien=dt>0?lns/dt*100:0;
+  const pv=(lb,val,col)=>'<div class="old-pv"><div class="lb">'+lb+'</div><div class="vl"'+(col?' style="color:'+col+'"':'')+'>'+val+'</div></div>';
+  $('oldPreview').innerHTML=
+     pv('LN trước thuế', vnd(lnt)+' ₫', lnt>=0?'#E7EEF8':'#ff9b8a')
+    +pv('Thuế (17%)', vnd(thue)+' ₫')
+    +pv('LN sau thuế', vnd(lns)+' ₫', lns>=0?'#7BE3B5':'#ff9b8a')
+    +pv('Biên lợi nhuận', bien.toFixed(1)+'%', lns>=0?'#7BE3B5':'#ff9b8a');
+}
+function oldFill(d){ d=d||{};
+  $('o_dt').value   = d.mDoanhThu? vnd(d.mDoanhThu):'';
+  $('o_qc').value   = d.mNganSach? vnd(d.mNganSach):'';
+  $('o_gv').value   = d.mGiaVon?   vnd(d.mGiaVon):'';
+  $('o_ship').value = d.mPhiShip?  vnd(d.mPhiShip):'';
+  $('o_luong').value= d.mLuong?    vnd(d.mLuong):'';
+  $('o_cp').value   = d.mChiPhi?   vnd(d.mChiPhi):'';
+  oldCalc();
+}
+async function oldLoad(){
+  const m=$('oldMonth').value; $('oldStatus').textContent='';
+  try{
+    const r=await fetch('/api/business-result/manual?month='+m);
+    if(r.status===401){ location.href='/login'; return; }
+    const d=await r.json(); oldFill(d.ok?d.data:{});
+  }catch(e){ oldFill({}); }
+}
+async function oldSaveFn(){
+  const m=$('oldMonth').value;
+  $('oldSave').disabled=true; $('oldStatus').innerHTML='<span class="warn">Đang lưu…</span>';
+  try{
+    const r=await fetch('/api/business-result/manual-pnl',{ method:'POST',
+      headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({ month:m, doanhThu:onum('o_dt'), nganSach:onum('o_qc'), giaVon:onum('o_gv'),
+        phiShip:onum('o_ship'), luong:onum('o_luong'), chiPhi:onum('o_cp') }) });
+    if(r.status===401){ location.href='/login'; return; }
+    const d=await r.json();
+    if(!d.ok){ $('oldStatus').innerHTML='<span class="err">❌ '+esc(d.message||'Lỗi')+'</span>'; return; }
+    $('oldStatus').innerHTML='<span style="color:#7BE3B5">✓ Đã lưu tháng '+m+'</span>';
+    try{ localStorage.removeItem(CK(m)); }catch(e){}    // bỏ cache dashboard của tháng này
+    if(CMP_DATA.length) loadCompare(false);             // làm mới bảng so sánh (tháng cũ nạp rất nhanh)
+    if($('month').value===m) load();                    // nếu đang xem đúng tháng đó ở bảng trên
+  }catch(e){ $('oldStatus').innerHTML='<span class="err">Lỗi kết nối: '+esc(e.message)+'</span>'; }
+  finally{ $('oldSave').disabled=false; }
+}
+OINP.forEach(id=>{ $(id).addEventListener('input',oldCalc); $(id).addEventListener('blur',ofmtAll); });
+$('oldMonth').addEventListener('change',oldLoad);
+$('oldSave').addEventListener('click',oldSaveFn);
+oldLoad();
 
 fetch('/api/me').then(function(r){return r.ok?r.json():null;}).then(function(me){
   if(me&&me.displayName){ const b=$('userBadge'); if(b) b.textContent='👤 '+me.displayName; }
