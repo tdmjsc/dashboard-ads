@@ -3039,6 +3039,7 @@ app.post('/api/meta-cache/reload', express.json(), async (req, res) => {
    ═══════════════════════════════════════════════════════════════════ */
 
 const THUE_SUAT = Number(process.env.THUE_SUAT || 0.17);   // 17% thuế TNDN
+const ADS_START = process.env.ADS_START || '2026-06';      // hệ thống ads bắt đầu có dữ liệu từ tháng này; trước đó nhập tay
 
 // Chi phí + lương nhập tay theo tháng
 //   { luongSale, luongKeToan, luongKho, chiPhiList:[{ten, soTien}] }
@@ -3075,6 +3076,20 @@ app.get('/api/business-result', async (req, res) => {
   if (!y || !mo) return res.json({ ok: false, message: 'Tháng không hợp lệ' });
   const since = `${y}-${String(mo).padStart(2, '0')}-01`;
   const until = `${y}-${String(mo).padStart(2, '0')}-${String(new Date(y, mo, 0).getDate()).padStart(2, '0')}`;
+
+  // Tháng TRƯỚC khi có hệ thống ads (ads.tdmjsc.com) → không có dữ liệu tự động.
+  // Không gọi Sandbox/Meta (nhanh + không lỗi), chỉ trả về số NHẬP TAY đã lưu.
+  if (month < ADS_START) {
+    return res.json({
+      ok: true, month, since, until,
+      thueSuat: THUE_SUAT,
+      mkt: { rows: [], roster: [], tyLe: 0.02, teamLead: {} }, mktManual: {},
+      ptsp: { managers: [] }, ptspManual: {},
+      tay: kqkdOf(month),
+      manualOnly: true,
+      lastUpdated: new Date().toISOString(),
+    });
+  }
 
   try {
     const [repMKT, repPTSP] = await Promise.all([
@@ -3246,6 +3261,32 @@ app.get('/api/business-result/manual', (req, res) => {
   const me = req.session.user || {};
   if (me.role !== 'admin') return res.status(403).json({ ok: false, message: 'Chỉ admin' });
   res.json({ ok: true, data: kqkdOf(req.query.month || '') });
+});
+
+/* Nhập tay TOÀN BỘ số liệu cho tháng CŨ (trước khi có hệ thống ads).
+   Lưu cùng file ket-qua-kinh-doanh.json trong DATA_DIR (bền, mọi máy đều thấy).
+   POST /api/business-result/manual-pnl {month, doanhThu, nganSach, giaVon, phiShip, luong, chiPhi} */
+app.post('/api/business-result/manual-pnl', express.json(), (req, res) => {
+  const me = req.session.user || {};
+  if (me.role !== 'admin') return res.status(403).json({ ok: false, message: 'Chỉ admin' });
+  const b = req.body || {};
+  const month = String(b.month || '');
+  if (!/^\d{4}-\d{2}$/.test(month)) return res.json({ ok: false, message: 'Tháng không hợp lệ' });
+  if (month >= ADS_START)
+    return res.json({ ok: false, message: `Chỉ nhập tay cho tháng trước ${ADS_START}. Các tháng từ ${ADS_START} lấy tự động từ hệ thống ads.` });
+  const money = v => parseInt(String(v == null ? '' : v).replace(/[^\d-]/g, ''), 10) || 0;
+  const rec = kqkdOf(month);
+  rec.mDoanhThu = money(b.doanhThu);
+  rec.mNganSach = money(b.nganSach);
+  rec.mGiaVon   = money(b.giaVon);
+  rec.mPhiShip  = money(b.phiShip);
+  rec.mLuong    = money(b.luong);
+  rec.mChiPhi   = money(b.chiPhi);
+  rec.manual    = true;
+  rec.manualAt  = new Date().toISOString();
+  rec.manualBy  = me.user || '';
+  saveKqkd();
+  res.json({ ok: true, month, data: rec });
 });
 
 app.use(express.static(path.join(__dirname, 'public')));
