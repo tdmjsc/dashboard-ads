@@ -89,6 +89,52 @@
   .addrow td{padding-top:9px;padding-bottom:11px;}
   .addbtn{background:rgba(123,227,181,.14);color:#7BE3B5;border:1px solid rgba(123,227,181,.3);border-radius:7px;padding:5px 12px;font-size:12px;font-weight:600;cursor:pointer;font-family:inherit;margin-left:6px;}
   .addbtn:hover{background:rgba(123,227,181,.22);}
+
+  /* ── DASHBOARD SO SÁNH NHIỀU THÁNG ── */
+  .cmp-h{display:flex;align-items:center;gap:10px;flex-wrap:wrap;padding:13px 18px;border-bottom:1px solid rgba(255,255,255,.07);}
+  .cmp-h .t{font-weight:600;font-size:14px;font-family:'Space Grotesk';margin-right:auto;}
+  .seg{display:inline-flex;background:rgba(255,255,255,.05);border:1px solid rgba(255,255,255,.12);border-radius:9px;padding:2px;}
+  .seg button{background:none;border:none;color:#9FB0C8;font-family:inherit;font-size:12.5px;font-weight:600;padding:5px 12px;border-radius:7px;cursor:pointer;}
+  .seg button.on{background:#3D5AFE;color:#fff;}
+  button.link{background:none;cursor:pointer;font-family:inherit;}
+  .cmp-body{padding:16px 18px;}
+  .cmp-status{font-size:12.5px;color:#9FB0C8;margin-bottom:14px;}
+  .cmp-empty{font-size:13px;color:#8C9BB4;padding:22px 4px;text-align:center;}
+  .prog{height:5px;background:rgba(255,255,255,.08);border-radius:4px;overflow:hidden;margin-top:8px;}
+  .prog>i{display:block;height:100%;background:linear-gradient(90deg,#3D5AFE,#7BE3B5);width:0;transition:width .25s;}
+
+  .delta-kpis{display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:11px;margin-bottom:18px;}
+  .dk{background:#0F1829;border:1px solid rgba(255,255,255,.07);border-radius:12px;padding:13px 15px;}
+  .dk .lb{font-size:10.5px;color:#9FB0C8;text-transform:uppercase;letter-spacing:.4px;font-weight:600;}
+  .dk .vl{font-family:'Space Grotesk';font-size:20px;font-weight:600;margin-top:6px;letter-spacing:-.3px;}
+  .dk .dl{font-size:11.5px;margin-top:5px;font-weight:600;}
+  .up{color:#7BE3B5;} .down{color:#ff9b8a;} .flat{color:#8C9BB4;}
+
+  .chart-box{background:#0F1829;border:1px solid rgba(255,255,255,.07);border-radius:12px;padding:14px 8px 8px;margin-bottom:16px;}
+  .chart-title{font-size:12.5px;color:#C4D0E2;font-weight:600;padding:0 10px 4px;font-family:'Space Grotesk';}
+  .legend{display:flex;flex-wrap:wrap;gap:12px;padding:2px 10px 10px;}
+  .lg{display:inline-flex;align-items:center;gap:6px;font-size:11.5px;color:#9FB0C8;}
+  .lg i{width:11px;height:11px;border-radius:3px;display:inline-block;}
+  .chart-scroll{overflow-x:auto;-webkit-overflow-scrolling:touch;}
+  .chart-scroll svg{display:block;}
+  .gl{stroke:rgba(255,255,255,.06);stroke-width:1;}
+  .axl{fill:#6B7C97;font-size:10px;font-family:Inter,sans-serif;}
+  .mxl{fill:#9FB0C8;font-size:11px;font-weight:600;font-family:Inter,sans-serif;}
+  .zl{stroke:rgba(255,255,255,.22);stroke-width:1;stroke-dasharray:3 3;}
+
+  .cmp-table-wrap{overflow-x:auto;border:1px solid rgba(255,255,255,.07);border-radius:11px;}
+  table.cmp{width:100%;border-collapse:collapse;min-width:520px;}
+  table.cmp th,table.cmp td{padding:9px 13px;font-size:12.5px;border-top:1px solid rgba(255,255,255,.05);white-space:nowrap;}
+  table.cmp thead th{position:sticky;top:0;background:#12203A;color:#C4D0E2;font-weight:600;font-size:11.5px;text-align:right;border-top:none;}
+  table.cmp thead th:first-child{text-align:left;}
+  table.cmp td.rlbl{text-align:left;color:#C4D0E2;position:sticky;left:0;background:#0F1829;font-weight:500;}
+  table.cmp td.num2{text-align:right;font-variant-numeric:tabular-nums;color:#E7EEF8;}
+  table.cmp tr.hi td{background:rgba(123,227,181,.05);}
+  table.cmp tr.hi td.rlbl{background:#12203A;font-weight:600;}
+  table.cmp td.dcell{text-align:right;font-variant-numeric:tabular-nums;font-weight:600;}
+  table.cmp tbody tr:hover td{background:rgba(255,255,255,.03);}
+  table.cmp tbody tr:hover td.rlbl{background:#15243F;}
+
   @media(max-width:700px){
     main{padding:13px;} h1{font-size:15px;}
     td{padding:9px 11px;font-size:12.5px;} .sub-lbl{padding-left:20px;}
@@ -99,6 +145,8 @@
     .thumb img{width:52px;height:52px;}
     .lb-nav{width:34px;height:52px;font-size:22px;}
     .lb-prev{left:6px;} .lb-next{right:6px;}
+    .cmp-body{padding:12px;} .dk .vl{font-size:17px;}
+    .cmp-h{padding:11px 12px;}
   }
 </style>
 </head>
@@ -133,6 +181,27 @@
     • <b>Lương sale / kế toán / kho</b> và <b>các loại chi phí</b> nhập tay, tự lưu theo từng tháng.<br>
     • <b>📎 Ảnh giải trình</b>: mỗi loại chi phí đính được tối đa 12 ảnh (hoá đơn, bảng kê các khoản con). Ảnh tự thu nhỏ trước khi tải lên cho nhẹ, bấm vào ảnh để xem to.<br>
     • <b>Thuế</b> = 17% × lợi nhuận trước thuế (lỗ thì thuế = 0).
+  </div>
+
+  <!-- ══ DASHBOARD SO SÁNH NHIỀU THÁNG ══ -->
+  <div class="card" id="cmpCard">
+    <div class="cmp-h">
+      <span class="t">📈 So sánh nhiều tháng</span>
+      <div class="seg" id="cmpSeg">
+        <button data-n="3">3 tháng</button>
+        <button data-n="6" class="on">6 tháng</button>
+        <button data-n="12">12 tháng</button>
+      </div>
+      <button class="btn" id="cmpLoad">Tải &amp; so sánh</button>
+      <button class="link" id="cmpRefresh" title="Bỏ cache, tải lại toàn bộ các tháng">↻ Tải lại</button>
+    </div>
+    <div class="cmp-body">
+      <div class="cmp-status" id="cmpStatus"></div>
+      <div id="cmpOut">
+        <div class="cmp-empty">Chọn số tháng rồi bấm <b>Tải &amp; so sánh</b>.
+          Các tháng tính đến <b>tháng đang chọn ở trên</b> sẽ được nạp và lưu lại để lần sau xem tức thì.</div>
+      </div>
+    </div>
   </div>
 </main>
 
@@ -171,14 +240,15 @@ async function load(){
   finally{ $('refreshBtn').disabled=false; }
 }
 
-/* Tính lại toàn bộ — dùng ĐÚNG công thức của trang Lương MKT / Lương PTSP */
-function tinhLai(){
-  const mkt=SalaryCalc.tinhLuongMKT(RAW.mkt.rows, RAW.mktManual, {
-    tyLe: RAW.mkt.tyLe, teamLead: RAW.mkt.teamLead, roster: RAW.mkt.roster,
+/* Tính P&L từ dữ liệu thô 1 tháng — HÀM THUẦN, dùng ĐÚNG công thức trang Lương MKT / PTSP.
+   Dùng chung cho: xem 1 tháng (tinhLai) và dashboard so sánh nhiều tháng. */
+function computeKQKD(raw){
+  const mkt=SalaryCalc.tinhLuongMKT(raw.mkt.rows, raw.mktManual, {
+    tyLe: raw.mkt.tyLe, teamLead: raw.mkt.teamLead, roster: raw.mkt.roster,
   });
-  const ptsp=SalaryCalc.tinhLuongPTSP(RAW.ptsp.managers, RAW.ptspManual);
-  const tay=RAW.tay||{};
-  const chiPhiList=tay.chiPhiList||[];
+  const ptsp=SalaryCalc.tinhLuongPTSP(raw.ptsp.managers, raw.ptspManual);
+  const tay=raw.tay||{};
+  const chiPhiList=Array.isArray(tay.chiPhiList)?tay.chiPhiList:[];
   const chiPhi=chiPhiList.reduce((s,x)=>s+(+x.soTien||0),0);
 
   const doanhThu=Math.round(mkt.tong.DT);
@@ -195,10 +265,14 @@ function tinhLai(){
   luong.tong=luong.mkt+luong.ptsp+luong.sale+luong.keToan+luong.kho;
 
   const lnTruocThue=doanhThu-nganSach-giaVon-phiShip-luong.tong-chiPhi;
-  const thue=lnTruocThue>0?Math.round(lnTruocThue*RAW.thueSuat):0;
-  S={doanhThu,nganSach,giaVon,phiShip,luong,chiPhiList,chiPhi,lnTruocThue,thue,lnSauThue:lnTruocThue-thue,
-     thueSuat:RAW.thueSuat, mktList:mkt.list, ptspList:ptsp.list};
+  const thueSuat=raw.thueSuat;
+  const thue=lnTruocThue>0?Math.round(lnTruocThue*thueSuat):0;
+  return {doanhThu,nganSach,giaVon,phiShip,luong,chiPhiList,chiPhi,lnTruocThue,thue,
+     lnSauThue:lnTruocThue-thue, thueSuat, mktList:mkt.list, ptspList:ptsp.list};
 }
+
+/* Tính lại tháng đang xem → gán vào S cho giao diện chi tiết */
+function tinhLai(){ S=computeKQKD(RAW); }
 
 function render(){
   const bien=S.doanhThu>0?(S.lnSauThue/S.doanhThu*100):0;
@@ -470,6 +544,262 @@ async function xoaChiPhi(index){
     tinhLai(); veLai();
   }catch(e){ alert('❌ '+e.message); }
 }
+
+/* ══════════════════════════════════════════════════════════════════
+   DASHBOARD SO SÁNH NHIỀU THÁNG
+   - Tái dùng /api/business-result + computeKQKD (số khớp tuyệt đối với bảng trên)
+   - Nạp tuần tự từng tháng, cache vào localStorage → lần sau xem tức thì
+   - Luôn nạp lại tháng hiện tại + tháng đang chọn (dữ liệu còn thay đổi)
+   - Biểu đồ SVG tự vẽ, không cần thư viện ngoài
+   ════════════════════════════════════════════════════════════════════ */
+let CMP_N=6, CMP_DATA=[];
+const CAL_NOW=new Date().toISOString().slice(0,7);
+const CK=m=>'kqkd-sum:'+m;
+
+function monthLabel(m){ const p=String(m).split('-'); return 'T'+(+p[1])+'/'+String(p[0]).slice(2); }
+function fmtShort(n){ n=Number(n)||0; const s=n<0?'-':''; const a=Math.abs(n);
+  if(a>=1e9) return s+(a/1e9).toFixed(a>=1e10?0:1).replace('.',',')+'tỷ';
+  if(a>=1e6) return s+Math.round(a/1e6)+'tr';
+  if(a>=1e3) return s+Math.round(a/1e3)+'k';
+  return s+Math.round(a); }
+function lastNMonths(end,n){ const p=String(end).split('-').map(Number); const out=[];
+  for(let i=n-1;i>=0;i--){ const d=new Date(p[0],p[1]-1-i,1); out.push(d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2,'0')); }
+  return out; }
+
+function readCache(m){ try{const s=localStorage.getItem(CK(m)); return s?JSON.parse(s):null;}catch(e){return null;} }
+function writeCache(m,o){ try{localStorage.setItem(CK(m),JSON.stringify(o));}catch(e){} }
+// Bản gọn để cache — chỉ các con số cần cho dashboard
+function slim(m,So){ return { month:m,
+  doanhThu:So.doanhThu, nganSach:So.nganSach, giaVon:So.giaVon, phiShip:So.phiShip,
+  luongMkt:So.luong.mkt, luongPtsp:So.luong.ptsp, luongSale:So.luong.sale,
+  luongKeToan:So.luong.keToan, luongKho:So.luong.kho, luongTong:So.luong.tong,
+  chiPhi:So.chiPhi, tongCP:So.nganSach+So.giaVon+So.phiShip+So.luong.tong+So.chiPhi,
+  lnTruocThue:So.lnTruocThue, thue:So.thue, lnSauThue:So.lnSauThue,
+  bien: So.doanhThu>0?(So.lnSauThue/So.doanhThu*100):0, at:Date.now() }; }
+
+function fetchMonthRaw(m){
+  return fetch('/api/business-result?month='+m).then(function(r){
+    if(r.status===401){ location.href='/login'; throw new Error('__login'); }
+    if(!r.ok) throw new Error('HTTP '+r.status);
+    return r.json();
+  }).then(function(d){ if(!d.ok) throw new Error(d.message||'lỗi'); return d; });
+}
+
+async function loadCompare(force){
+  const end=$('month').value||CAL_NOW;
+  const months=lastNMonths(end,CMP_N);
+  $('cmpLoad').disabled=true;
+  const total=months.length; let done=0;
+  const prog=pct=>'<div class="prog"><i style="width:'+Math.round(pct)+'%"></i></div>';
+  const out=[];
+  for(const m of months){
+    let sum=readCache(m);
+    const needFetch = force || !sum || m===CAL_NOW || m===end;
+    if(needFetch){
+      $('cmpStatus').innerHTML='<span class="warn">Đang nạp tháng '+m+'…</span> '+done+'/'+total
+        +' · ~20–35s mỗi tháng'+prog(done/total*100);
+      try{ const raw=await fetchMonthRaw(m); sum=slim(m,computeKQKD(raw)); writeCache(m,sum); }
+      catch(e){ if(e.message==='__login') return; sum = sum || { month:m, err:e.message }; }
+    }
+    done++; out.push(sum);
+    $('cmpStatus').innerHTML='<span class="warn">Đang nạp…</span> '+done+'/'+total+prog(done/total*100);
+  }
+  CMP_DATA=out; $('cmpLoad').disabled=false;
+  const okN=out.filter(x=>!x.err).length;
+  $('cmpStatus').innerHTML='Đã so sánh <b>'+okN+'/'+total+'</b> tháng · số liệu lưu tại trình duyệt · bấm '
+    +'<b>↻ Tải lại</b> để cập nhật mới nhất.';
+  renderCompare(out);
+}
+
+/* ── Vẽ dashboard ── */
+const CMP_METRICS=[
+  {k:'doanhThu',  lb:'Doanh thu',    hi:true},
+  {k:'nganSach',  lb:'Ngân sách QC', cost:true},
+  {k:'giaVon',    lb:'Giá vốn',      cost:true},
+  {k:'phiShip',   lb:'Phí ship',     cost:true},
+  {k:'luongTong', lb:'Tổng lương',   cost:true},
+  {k:'chiPhi',    lb:'Chi phí khác', cost:true},
+  {k:'tongCP',    lb:'Tổng chi phí', cost:true},
+  {k:'lnTruocThue',lb:'LN trước thuế'},
+  {k:'thue',      lb:'Thuế',         cost:true},
+  {k:'lnSauThue', lb:'LN sau thuế',  hi:true},
+  {k:'bien',      lb:'Biên LN (%)',  pct:true, hi:true},
+];
+
+function renderCompare(out){
+  const rows=out.filter(x=>!x.err);         // dùng cho biểu đồ + KPI
+  if(!rows.length){
+    $('cmpOut').innerHTML='<div class="cmp-empty err">Không nạp được tháng nào. Kiểm tra kết nối rồi thử lại.</div>';
+    return;
+  }
+  const cur=rows[rows.length-1], prev=rows.length>1?rows[rows.length-2]:null;
+
+  // 1) KPI so sánh tháng mới nhất vs liền trước
+  let html='';
+  if(prev){
+    html+='<div class="delta-kpis">'
+      +dk('Doanh thu', vnd(cur.doanhThu)+' ₫', cur.doanhThu, prev.doanhThu, false)
+      +dk('Tổng chi phí', vnd(cur.tongCP)+' ₫', cur.tongCP, prev.tongCP, true)
+      +dk('LN sau thuế', vnd(cur.lnSauThue)+' ₫', cur.lnSauThue, prev.lnSauThue, false)
+      +dkPct('Biên lợi nhuận', cur.bien, prev.bien)
+      +'</div>';
+  }
+
+  // 2) Biểu đồ: Doanh thu · Tổng chi phí · LN sau thuế (cột nhóm)
+  const sG=[{k:'doanhThu',lb:'Doanh thu',c:'#6BA8FF'},
+            {k:'tongCP',lb:'Tổng chi phí',c:'#FFA98A'},
+            {k:'lnSauThue',lb:'LN sau thuế',c:'#7BE3B5',neg:true}];
+  html+='<div class="chart-box"><div class="chart-title">Doanh thu · Tổng chi phí · Lợi nhuận sau thuế</div>'
+    +legend(sG)+'<div class="chart-scroll">'+chartGrouped(rows,sG)+'</div></div>';
+
+  // 3) Cơ cấu chi phí (cột chồng)
+  const sS=[{k:'nganSach',lb:'Ngân sách QC',c:'#FFC56B'},
+            {k:'giaVon',lb:'Giá vốn',c:'#ff9b8a'},
+            {k:'phiShip',lb:'Phí ship',c:'#C58BFF'},
+            {k:'luongTong',lb:'Lương',c:'#6BC5FF'},
+            {k:'chiPhi',lb:'Chi phí khác',c:'#8C9BB4'}];
+  html+='<div class="chart-box"><div class="chart-title">Cơ cấu chi phí theo tháng</div>'
+    +legend(sS)+'<div class="chart-scroll">'+chartStacked(rows,sS)+'</div></div>';
+
+  // 4) Biên lợi nhuận (%) — đường
+  html+='<div class="chart-box"><div class="chart-title">Biên lợi nhuận sau thuế (%)</div>'
+    +'<div class="chart-scroll">'+chartLine(rows,'bien','#7BE3B5')+'</div></div>';
+
+  // 5) Bảng so sánh đầy đủ (kể cả tháng lỗi → "—")
+  html+=compareTable(out);
+
+  $('cmpOut').innerHTML=html;
+}
+
+function dk(lb,valStr,cur,prev,invert){
+  const d=deltaPct(cur,prev); let c=d.c;
+  if(invert) c = c==='up'?'down' : c==='down'?'up' : 'flat';
+  return '<div class="dk"><div class="lb">'+lb+'</div><div class="vl">'+valStr+'</div>'
+    +'<div class="dl '+c+'">'+d.t+' so tháng trước</div></div>';
+}
+function dkPct(lb,cur,prev){
+  const dd=(prev==null)?null:(cur-prev);
+  const c=dd==null?'flat':dd>0?'up':dd<0?'down':'flat';
+  const t=dd==null?'—':(dd>0?'▲ ':dd<0?'▼ ':'• ')+Math.abs(dd).toFixed(1)+' điểm %';
+  return '<div class="dk"><div class="lb">'+lb+'</div><div class="vl">'+cur.toFixed(1)+'%</div>'
+    +'<div class="dl '+c+'">'+t+' so tháng trước</div></div>';
+}
+function deltaPct(cur,prev){
+  if(prev==null||!isFinite(prev)||prev===0) return {t:'—',c:'flat'};
+  const d=(cur-prev)/Math.abs(prev)*100;
+  return {t:(d>0?'▲ ':d<0?'▼ ':'• ')+Math.abs(d).toFixed(1)+'%', c:d>0?'up':d<0?'down':'flat'};
+}
+function legend(series){ return '<div class="legend">'+series.map(function(s){
+  return '<span class="lg"><i style="background:'+s.c+'"></i>'+s.lb+'</span>'; }).join('')+'</div>'; }
+
+/* ── Thang chia đẹp ── */
+function niceNum(x,round){ if(x===0)return 0;
+  const exp=Math.floor(Math.log10(Math.abs(x))), f=Math.abs(x)/Math.pow(10,exp);
+  let nf; if(round){ nf=f<1.5?1:f<3?2:f<7?5:10; } else { nf=f<=1?1:f<=2?2:f<=5?5:10; }
+  return nf*Math.pow(10,exp)*(x<0?-1:1); }
+function niceScale(min,max){
+  if(min===max){ if(min===0){max=1;} else { min=Math.min(0,min); max=Math.max(0,max); } }
+  const step=niceNum((max-min)/4,true)||1;
+  const lo=Math.floor(min/step)*step, hi=Math.ceil(max/step)*step, ticks=[];
+  for(let v=lo; v<=hi+step*0.5; v+=step) ticks.push(Math.round(v));
+  return {lo,hi,ticks};
+}
+
+function chartGrouped(rows,series){
+  const H=250, pl=56,pr=14,pt=14,pb=30;
+  const gw=Math.max(72, series.length*24+28);
+  const W=pl+pr+rows.length*gw, px0=pl,px1=W-pr,py0=pt,py1=H-pb;
+  let mn=0,mx=0; rows.forEach(r=>series.forEach(s=>{const v=+r[s.k]||0; if(v<mn)mn=v; if(v>mx)mx=v;}));
+  const sc=niceScale(mn,mx), Y=v=>py1-(v-sc.lo)/((sc.hi-sc.lo)||1)*(py1-py0);
+  let g=''; sc.ticks.forEach(t=>{const y=Y(t);
+    g+='<line class="gl" x1="'+px0+'" y1="'+y+'" x2="'+px1+'" y2="'+y+'"/>'
+      +'<text class="axl" x="'+(px0-6)+'" y="'+(y+3)+'" text-anchor="end">'+fmtShort(t)+'</text>';});
+  const zy=Y(0); g+='<line class="zl" x1="'+px0+'" y1="'+zy+'" x2="'+px1+'" y2="'+zy+'"/>';
+  const bw=Math.min(18,(gw-18)/series.length);
+  rows.forEach((r,i)=>{ const cx=px0+i*gw+gw/2, gwd=bw*series.length+2*(series.length-1); let bx=cx-gwd/2;
+    series.forEach(s=>{ const v=+r[s.k]||0,y=Y(v),top=Math.min(y,zy),h=Math.max(0.5,Math.abs(y-zy));
+      const col=(s.neg&&v<0)?'#ff9b8a':s.c;
+      g+='<rect x="'+bx.toFixed(1)+'" y="'+top.toFixed(1)+'" width="'+bw.toFixed(1)+'" height="'+h.toFixed(1)+'" rx="2" fill="'+col+'"><title>'+monthLabel(r.month)+' · '+s.lb+': '+vnd(v)+' ₫</title></rect>';
+      bx+=bw+2; });
+    g+='<text class="mxl" x="'+cx.toFixed(1)+'" y="'+(H-9)+'" text-anchor="middle">'+monthLabel(r.month)+'</text>'; });
+  return '<svg width="'+W+'" height="'+H+'" viewBox="0 0 '+W+' '+H+'">'+g+'</svg>';
+}
+
+function chartStacked(rows,series){
+  const H=250, pl=56,pr=14,pt=14,pb=30, gw=Math.max(56,50);
+  const W=pl+pr+rows.length*gw, px0=pl,px1=W-pr,py0=pt,py1=H-pb;
+  let mx=0; rows.forEach(r=>{let s=0; series.forEach(se=>s+=Math.max(0,+r[se.k]||0)); if(s>mx)mx=s;});
+  const sc=niceScale(0,mx), Y=v=>py1-(v-sc.lo)/((sc.hi-sc.lo)||1)*(py1-py0);
+  let g=''; sc.ticks.forEach(t=>{const y=Y(t);
+    g+='<line class="gl" x1="'+px0+'" y1="'+y+'" x2="'+px1+'" y2="'+y+'"/>'
+      +'<text class="axl" x="'+(px0-6)+'" y="'+(y+3)+'" text-anchor="end">'+fmtShort(t)+'</text>';});
+  const bw=Math.min(30,gw-18);
+  rows.forEach((r,i)=>{ const cx=px0+i*gw+gw/2, bx=cx-bw/2; let acc=0;
+    series.forEach(se=>{ const v=Math.max(0,+r[se.k]||0); if(v<=0)return;
+      const yt=Y(acc+v),yb=Y(acc);
+      g+='<rect x="'+bx.toFixed(1)+'" y="'+yt.toFixed(1)+'" width="'+bw.toFixed(1)+'" height="'+Math.max(0.5,yb-yt).toFixed(1)+'" fill="'+se.c+'"><title>'+monthLabel(r.month)+' · '+se.lb+': '+vnd(v)+' ₫</title></rect>';
+      acc+=v; });
+    g+='<text class="mxl" x="'+cx.toFixed(1)+'" y="'+(H-9)+'" text-anchor="middle">'+monthLabel(r.month)+'</text>'; });
+  return '<svg width="'+W+'" height="'+H+'" viewBox="0 0 '+W+' '+H+'">'+g+'</svg>';
+}
+
+function chartLine(rows,key,color){
+  const H=220, pl=52,pr=18,pt=18,pb=30, gw=Math.max(58,54);
+  const W=pl+pr+rows.length*gw, px0=pl,px1=W-pr,py0=pt,py1=H-pb;
+  let mn=Infinity,mx=-Infinity; rows.forEach(r=>{const v=+r[key]||0; if(v<mn)mn=v; if(v>mx)mx=v;});
+  if(mn>0)mn=0; if(mx<0)mx=0;
+  const sc=niceScale(mn,mx), Y=v=>py1-(v-sc.lo)/((sc.hi-sc.lo)||1)*(py1-py0), X=i=>px0+i*gw+gw/2;
+  let g=''; sc.ticks.forEach(t=>{const y=Y(t);
+    g+='<line class="gl" x1="'+px0+'" y1="'+y+'" x2="'+px1+'" y2="'+y+'"/>'
+      +'<text class="axl" x="'+(px0-6)+'" y="'+(y+3)+'" text-anchor="end">'+t+'%</text>';});
+  if(sc.lo<0&&sc.hi>0){const zy=Y(0); g+='<line class="zl" x1="'+px0+'" y1="'+zy+'" x2="'+px1+'" y2="'+zy+'"/>';}
+  const pts=rows.map((r,i)=>X(i).toFixed(1)+','+Y(+r[key]||0).toFixed(1)).join(' ');
+  g+='<polyline points="'+pts+'" fill="none" stroke="'+color+'" stroke-width="2.2" stroke-linejoin="round" stroke-linecap="round"/>';
+  rows.forEach((r,i)=>{ const v=+r[key]||0,x=X(i),y=Y(v), ly=v<0?y+16:y-9;
+    g+='<circle cx="'+x.toFixed(1)+'" cy="'+y.toFixed(1)+'" r="3.4" fill="#0F1829" stroke="'+color+'" stroke-width="2"><title>'+monthLabel(r.month)+': '+v.toFixed(1)+'%</title></circle>'
+      +'<text class="axl" x="'+x.toFixed(1)+'" y="'+ly.toFixed(1)+'" text-anchor="middle" style="fill:'+color+';font-weight:600;">'+v.toFixed(1)+'%</text>'
+      +'<text class="mxl" x="'+x.toFixed(1)+'" y="'+(H-9)+'" text-anchor="middle">'+monthLabel(r.month)+'</text>'; });
+  return '<svg width="'+W+'" height="'+H+'" viewBox="0 0 '+W+' '+H+'">'+g+'</svg>';
+}
+
+function compareTable(out){
+  // Δ = 2 tháng có dữ liệu mới nhất
+  const ok=out.filter(x=>!x.err);
+  const c=ok[ok.length-1]||null, p=ok.length>1?ok[ok.length-2]:null;
+  let h='<div class="cmp-table-wrap"><table class="cmp"><thead><tr><th>Chỉ tiêu</th>';
+  out.forEach(x=>{ h+='<th'+(x.err?' style="color:#ff9b8a"':'')+'>'+monthLabel(x.month)+'</th>'; });
+  h+='<th>Δ tháng mới</th></tr></thead><tbody>';
+  CMP_METRICS.forEach(m=>{
+    h+='<tr'+(m.hi?' class="hi"':'')+'><td class="rlbl">'+m.lb+'</td>';
+    out.forEach(x=>{
+      if(x.err){ h+='<td class="num2" style="color:#6B7C97">—</td>'; return; }
+      const v=x[m.k]; h+='<td class="num2">'+(m.pct?Number(v).toFixed(1)+'%':vnd(v))+'</td>';
+    });
+    // cột Δ
+    if(c&&p){
+      let t,cl;
+      if(m.pct){ const dd=c[m.k]-p[m.k]; cl=dd>0?'up':dd<0?'down':'flat';
+        t=(dd>0?'▲ ':dd<0?'▼ ':'• ')+Math.abs(dd).toFixed(1)+' đ%'; }
+      else { const d=deltaPct(c[m.k],p[m.k]); cl=d.c; t=d.t;
+        if(m.cost) cl=cl==='up'?'down':cl==='down'?'up':'flat'; }
+      h+='<td class="dcell '+cl+'">'+t+'</td>';
+    } else h+='<td class="dcell flat">—</td>';
+    h+='</tr>';
+  });
+  h+='</tbody></table></div>';
+  return h;
+}
+
+// Nút chọn số tháng
+[].forEach.call(document.querySelectorAll('#cmpSeg button'),function(b){
+  b.addEventListener('click',function(){
+    CMP_N=+b.dataset.n||6;
+    [].forEach.call(document.querySelectorAll('#cmpSeg button'),x=>x.classList.remove('on'));
+    b.classList.add('on');
+  });
+});
+$('cmpLoad').addEventListener('click',function(){ loadCompare(false); });
+$('cmpRefresh').addEventListener('click',function(){ loadCompare(true); });
 
 $('refreshBtn').addEventListener('click',load);
 $('month').addEventListener('change',load);
