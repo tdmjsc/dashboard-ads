@@ -96,6 +96,9 @@
   .seg{display:inline-flex;background:rgba(255,255,255,.05);border:1px solid rgba(255,255,255,.12);border-radius:9px;padding:2px;}
   .seg button{background:none;border:none;color:#9FB0C8;font-family:inherit;font-size:12.5px;font-weight:600;padding:5px 12px;border-radius:7px;cursor:pointer;}
   .seg button.on{background:#3D5AFE;color:#fff;}
+  .cmp-range{display:inline-flex;align-items:center;gap:6px;flex-wrap:wrap;}
+  .cmp-range label{font-size:12px;color:#9FB0C8;}
+  .cmp-range input[type=month]{padding:6px 9px;font-size:12.5px;}
   button.link{background:none;cursor:pointer;font-family:inherit;}
   .cmp-body{padding:16px 18px;}
   .cmp-status{font-size:12.5px;color:#9FB0C8;margin-bottom:14px;}
@@ -187,19 +190,18 @@
   <div class="card" id="cmpCard">
     <div class="cmp-h">
       <span class="t">📈 So sánh nhiều tháng</span>
-      <div class="seg" id="cmpSeg">
-        <button data-n="3">3 tháng</button>
-        <button data-n="6" class="on">6 tháng</button>
-        <button data-n="12">12 tháng</button>
+      <div class="cmp-range">
+        <label>Từ</label><input type="month" id="cmpFrom" min="2026-06">
+        <label>Đến</label><input type="month" id="cmpTo" min="2026-06">
       </div>
-      <button class="btn" id="cmpLoad">Tải &amp; so sánh</button>
-      <button class="link" id="cmpRefresh" title="Bỏ cache, tải lại toàn bộ các tháng">↻ Tải lại</button>
+      <button class="btn" id="cmpLoad">So sánh</button>
+      <button class="link" id="cmpRefresh" title="Bỏ cache, tải lại các tháng">↻ Tải lại</button>
     </div>
     <div class="cmp-body">
       <div class="cmp-status" id="cmpStatus"></div>
       <div id="cmpOut">
-        <div class="cmp-empty">Chọn số tháng rồi bấm <b>Tải &amp; so sánh</b>.
-          Các tháng tính đến <b>tháng đang chọn ở trên</b> sẽ được nạp và lưu lại để lần sau xem tức thì.</div>
+        <div class="cmp-empty">Chọn khoảng <b>Từ</b> → <b>Đến</b> rồi bấm <b>So sánh</b>.
+          Dữ liệu có từ <b>tháng 6/2026</b>; mỗi tháng được lưu lại để lần sau xem tức thì.</div>
       </div>
     </div>
   </div>
@@ -552,8 +554,9 @@ async function xoaChiPhi(index){
    - Luôn nạp lại tháng hiện tại + tháng đang chọn (dữ liệu còn thay đổi)
    - Biểu đồ SVG tự vẽ, không cần thư viện ngoài
    ════════════════════════════════════════════════════════════════════ */
-let CMP_N=6, CMP_DATA=[];
+let CMP_DATA=[];
 const CAL_NOW=new Date().toISOString().slice(0,7);
+const DATA_START='2026-06';           // dữ liệu bắt đầu có từ tháng 6/2026
 const CK=m=>'kqkd-sum:'+m;
 
 function monthLabel(m){ const p=String(m).split('-'); return 'T'+(+p[1])+'/'+String(p[0]).slice(2); }
@@ -562,8 +565,9 @@ function fmtShort(n){ n=Number(n)||0; const s=n<0?'-':''; const a=Math.abs(n);
   if(a>=1e6) return s+Math.round(a/1e6)+'tr';
   if(a>=1e3) return s+Math.round(a/1e3)+'k';
   return s+Math.round(a); }
-function lastNMonths(end,n){ const p=String(end).split('-').map(Number); const out=[];
-  for(let i=n-1;i>=0;i--){ const d=new Date(p[0],p[1]-1-i,1); out.push(d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2,'0')); }
+function monthsBetween(a,b){ const A=a.split('-').map(Number), B=b.split('-').map(Number);
+  let y=A[0], m=A[1]; const out=[]; let guard=0;
+  while((y<B[0]||(y===B[0]&&m<=B[1])) && guard++<300){ out.push(y+'-'+String(m).padStart(2,'0')); m++; if(m>12){m=1;y++;} }
   return out; }
 
 function readCache(m){ try{const s=localStorage.getItem(CK(m)); return s?JSON.parse(s):null;}catch(e){return null;} }
@@ -586,15 +590,20 @@ function fetchMonthRaw(m){
 }
 
 async function loadCompare(force){
-  const end=$('month').value||CAL_NOW;
-  const months=lastNMonths(end,CMP_N);
+  let a=$('cmpFrom').value||DATA_START, b=$('cmpTo').value||CAL_NOW;
+  if(a<DATA_START) a=DATA_START;
+  if(b<DATA_START) b=DATA_START;
+  if(a>b){ const t=a; a=b; b=t; }                    // chọn ngược thì tự hoán
+  $('cmpFrom').value=a; $('cmpTo').value=b;
+  const months=monthsBetween(a,b);
+  if(months.length>24){ $('cmpStatus').innerHTML='<span class="err">Khoảng tối đa 24 tháng — hãy thu hẹp lại.</span>'; return; }
   $('cmpLoad').disabled=true;
   const total=months.length; let done=0;
   const prog=pct=>'<div class="prog"><i style="width:'+Math.round(pct)+'%"></i></div>';
   const out=[];
   for(const m of months){
     let sum=readCache(m);
-    const needFetch = force || !sum || m===CAL_NOW || m===end;
+    const needFetch = force || !sum || m===CAL_NOW;   // tháng hiện tại luôn nạp lại
     if(needFetch){
       $('cmpStatus').innerHTML='<span class="warn">Đang nạp tháng '+m+'…</span> '+done+'/'+total
         +' · ~20–35s mỗi tháng'+prog(done/total*100);
@@ -645,25 +654,23 @@ function renderCompare(out){
       +'</div>';
   }
 
-  // 2) Biểu đồ: Doanh thu · Tổng chi phí · LN sau thuế (cột nhóm)
-  const sG=[{k:'doanhThu',lb:'Doanh thu',c:'#6BA8FF'},
-            {k:'tongCP',lb:'Tổng chi phí',c:'#FFA98A'},
-            {k:'lnSauThue',lb:'LN sau thuế',c:'#7BE3B5',neg:true}];
-  html+='<div class="chart-box"><div class="chart-title">Doanh thu · Tổng chi phí · Lợi nhuận sau thuế</div>'
-    +legend(sG)+'<div class="chart-scroll">'+chartGrouped(rows,sG)+'</div></div>';
+  // 2) Doanh thu · Tổng chi phí · LN sau thuế (đường)
+  const sMoney=[{k:'doanhThu',lb:'Doanh thu',c:'#6BA8FF'},
+                {k:'tongCP',lb:'Tổng chi phí',c:'#FFA98A'},
+                {k:'lnSauThue',lb:'LN sau thuế',c:'#7BE3B5'}];
+  html+=chartBox('Doanh thu · Tổng chi phí · Lợi nhuận sau thuế', legend(sMoney), chartLines(rows,sMoney,{}));
 
-  // 3) Cơ cấu chi phí (cột chồng)
-  const sS=[{k:'nganSach',lb:'Ngân sách QC',c:'#FFC56B'},
-            {k:'giaVon',lb:'Giá vốn',c:'#ff9b8a'},
-            {k:'phiShip',lb:'Phí ship',c:'#C58BFF'},
-            {k:'luongTong',lb:'Lương',c:'#6BC5FF'},
-            {k:'chiPhi',lb:'Chi phí khác',c:'#8C9BB4'}];
-  html+='<div class="chart-box"><div class="chart-title">Cơ cấu chi phí theo tháng</div>'
-    +legend(sS)+'<div class="chart-scroll">'+chartStacked(rows,sS)+'</div></div>';
+  // 3) Cơ cấu chi phí (đường)
+  const sCost=[{k:'nganSach',lb:'Ngân sách QC',c:'#FFC56B'},
+               {k:'giaVon',lb:'Giá vốn',c:'#ff9b8a'},
+               {k:'phiShip',lb:'Phí ship',c:'#C58BFF'},
+               {k:'luongTong',lb:'Lương',c:'#6BC5FF'},
+               {k:'chiPhi',lb:'Chi phí khác',c:'#8C9BB4'}];
+  html+=chartBox('Cơ cấu chi phí theo tháng', legend(sCost), chartLines(rows,sCost,{}));
 
-  // 4) Biên lợi nhuận (%) — đường
-  html+='<div class="chart-box"><div class="chart-title">Biên lợi nhuận sau thuế (%)</div>'
-    +'<div class="chart-scroll">'+chartLine(rows,'bien','#7BE3B5')+'</div></div>';
+  // 4) Biên lợi nhuận (%) — đường có nhãn từng điểm
+  html+=chartBox('Biên lợi nhuận sau thuế (%)', '',
+    chartLines(rows,[{k:'bien',lb:'Biên LN',c:'#7BE3B5'}],{pct:true,labelPts:true}));
 
   // 5) Bảng so sánh đầy đủ (kể cả tháng lỗi → "—")
   html+=compareTable(out);
@@ -705,61 +712,48 @@ function niceScale(min,max){
   return {lo,hi,ticks};
 }
 
-function chartGrouped(rows,series){
-  const H=250, pl=56,pr=14,pt=14,pb=30;
-  const gw=Math.max(72, series.length*24+28);
-  const W=pl+pr+rows.length*gw, px0=pl,px1=W-pr,py0=pt,py1=H-pb;
-  let mn=0,mx=0; rows.forEach(r=>series.forEach(s=>{const v=+r[s.k]||0; if(v<mn)mn=v; if(v>mx)mx=v;}));
-  const sc=niceScale(mn,mx), Y=v=>py1-(v-sc.lo)/((sc.hi-sc.lo)||1)*(py1-py0);
-  let g=''; sc.ticks.forEach(t=>{const y=Y(t);
-    g+='<line class="gl" x1="'+px0+'" y1="'+y+'" x2="'+px1+'" y2="'+y+'"/>'
-      +'<text class="axl" x="'+(px0-6)+'" y="'+(y+3)+'" text-anchor="end">'+fmtShort(t)+'</text>';});
-  const zy=Y(0); g+='<line class="zl" x1="'+px0+'" y1="'+zy+'" x2="'+px1+'" y2="'+zy+'"/>';
-  const bw=Math.min(18,(gw-18)/series.length);
-  rows.forEach((r,i)=>{ const cx=px0+i*gw+gw/2, gwd=bw*series.length+2*(series.length-1); let bx=cx-gwd/2;
-    series.forEach(s=>{ const v=+r[s.k]||0,y=Y(v),top=Math.min(y,zy),h=Math.max(0.5,Math.abs(y-zy));
-      const col=(s.neg&&v<0)?'#ff9b8a':s.c;
-      g+='<rect x="'+bx.toFixed(1)+'" y="'+top.toFixed(1)+'" width="'+bw.toFixed(1)+'" height="'+h.toFixed(1)+'" rx="2" fill="'+col+'"><title>'+monthLabel(r.month)+' · '+s.lb+': '+vnd(v)+' ₫</title></rect>';
-      bx+=bw+2; });
-    g+='<text class="mxl" x="'+cx.toFixed(1)+'" y="'+(H-9)+'" text-anchor="middle">'+monthLabel(r.month)+'</text>'; });
-  return '<svg width="'+W+'" height="'+H+'" viewBox="0 0 '+W+' '+H+'">'+g+'</svg>';
+// Khung 1 biểu đồ (tiêu đề + chú thích + vùng cuộn ngang)
+function chartBox(title, legendHtml, svg){
+  return '<div class="chart-box"><div class="chart-title">'+title+'</div>'
+    +(legendHtml||'')+'<div class="chart-scroll">'+svg+'</div></div>';
 }
 
-function chartStacked(rows,series){
-  const H=250, pl=56,pr=14,pt=14,pb=30, gw=Math.max(56,50);
-  const W=pl+pr+rows.length*gw, px0=pl,px1=W-pr,py0=pt,py1=H-pb;
-  let mx=0; rows.forEach(r=>{let s=0; series.forEach(se=>s+=Math.max(0,+r[se.k]||0)); if(s>mx)mx=s;});
-  const sc=niceScale(0,mx), Y=v=>py1-(v-sc.lo)/((sc.hi-sc.lo)||1)*(py1-py0);
-  let g=''; sc.ticks.forEach(t=>{const y=Y(t);
-    g+='<line class="gl" x1="'+px0+'" y1="'+y+'" x2="'+px1+'" y2="'+y+'"/>'
-      +'<text class="axl" x="'+(px0-6)+'" y="'+(y+3)+'" text-anchor="end">'+fmtShort(t)+'</text>';});
-  const bw=Math.min(30,gw-18);
-  rows.forEach((r,i)=>{ const cx=px0+i*gw+gw/2, bx=cx-bw/2; let acc=0;
-    series.forEach(se=>{ const v=Math.max(0,+r[se.k]||0); if(v<=0)return;
-      const yt=Y(acc+v),yb=Y(acc);
-      g+='<rect x="'+bx.toFixed(1)+'" y="'+yt.toFixed(1)+'" width="'+bw.toFixed(1)+'" height="'+Math.max(0.5,yb-yt).toFixed(1)+'" fill="'+se.c+'"><title>'+monthLabel(r.month)+' · '+se.lb+': '+vnd(v)+' ₫</title></rect>';
-      acc+=v; });
-    g+='<text class="mxl" x="'+cx.toFixed(1)+'" y="'+(H-9)+'" text-anchor="middle">'+monthLabel(r.month)+'</text>'; });
-  return '<svg width="'+W+'" height="'+H+'" viewBox="0 0 '+W+' '+H+'">'+g+'</svg>';
-}
-
-function chartLine(rows,key,color){
-  const H=220, pl=52,pr=18,pt=18,pb=30, gw=Math.max(58,54);
-  const W=pl+pr+rows.length*gw, px0=pl,px1=W-pr,py0=pt,py1=H-pb;
-  let mn=Infinity,mx=-Infinity; rows.forEach(r=>{const v=+r[key]||0; if(v<mn)mn=v; if(v>mx)mx=v;});
+/* Biểu đồ ĐƯỜNG đa chuỗi (dùng cho tất cả biểu đồ).
+   opts.pct=true → trục %, opts.labelPts=true → ghi giá trị ở từng điểm.
+   Ít điểm → svg tự giãn đầy khung; nhiều điểm → cố định + cuộn ngang. */
+function chartLines(rows, series, opts){
+  opts=opts||{};
+  const pct=!!opts.pct, labelPts=!!opts.labelPts;
+  const H=opts.h||230, pl=58, pr=26, pt=18, pb=30, n=rows.length;
+  const W=Math.max(620, pl+pr+n*90), px0=pl, px1=W-pr, py0=pt, py1=H-pb;
+  let mn=Infinity, mx=-Infinity;
+  rows.forEach(r=>series.forEach(s=>{const v=+r[s.k]||0; if(v<mn)mn=v; if(v>mx)mx=v;}));
+  if(!isFinite(mn)){ mn=0; mx=1; }
   if(mn>0)mn=0; if(mx<0)mx=0;
-  const sc=niceScale(mn,mx), Y=v=>py1-(v-sc.lo)/((sc.hi-sc.lo)||1)*(py1-py0), X=i=>px0+i*gw+gw/2;
-  let g=''; sc.ticks.forEach(t=>{const y=Y(t);
+  const sc=niceScale(mn,mx), Y=v=>py1-(v-sc.lo)/((sc.hi-sc.lo)||1)*(py1-py0);
+  const X=i=> n>1 ? px0+i*(px1-px0)/(n-1) : (px0+px1)/2;
+  let g='';
+  // lưới ngang + nhãn trục y
+  sc.ticks.forEach(t=>{ const y=Y(t);
     g+='<line class="gl" x1="'+px0+'" y1="'+y+'" x2="'+px1+'" y2="'+y+'"/>'
-      +'<text class="axl" x="'+(px0-6)+'" y="'+(y+3)+'" text-anchor="end">'+t+'%</text>';});
-  if(sc.lo<0&&sc.hi>0){const zy=Y(0); g+='<line class="zl" x1="'+px0+'" y1="'+zy+'" x2="'+px1+'" y2="'+zy+'"/>';}
-  const pts=rows.map((r,i)=>X(i).toFixed(1)+','+Y(+r[key]||0).toFixed(1)).join(' ');
-  g+='<polyline points="'+pts+'" fill="none" stroke="'+color+'" stroke-width="2.2" stroke-linejoin="round" stroke-linecap="round"/>';
-  rows.forEach((r,i)=>{ const v=+r[key]||0,x=X(i),y=Y(v), ly=v<0?y+16:y-9;
-    g+='<circle cx="'+x.toFixed(1)+'" cy="'+y.toFixed(1)+'" r="3.4" fill="#0F1829" stroke="'+color+'" stroke-width="2"><title>'+monthLabel(r.month)+': '+v.toFixed(1)+'%</title></circle>'
-      +'<text class="axl" x="'+x.toFixed(1)+'" y="'+ly.toFixed(1)+'" text-anchor="middle" style="fill:'+color+';font-weight:600;">'+v.toFixed(1)+'%</text>'
-      +'<text class="mxl" x="'+x.toFixed(1)+'" y="'+(H-9)+'" text-anchor="middle">'+monthLabel(r.month)+'</text>'; });
-  return '<svg width="'+W+'" height="'+H+'" viewBox="0 0 '+W+' '+H+'">'+g+'</svg>';
+      +'<text class="axl" x="'+(px0-6)+'" y="'+(y+3)+'" text-anchor="end">'+(pct?t+'%':fmtShort(t))+'</text>'; });
+  if(sc.lo<0&&sc.hi>0){ const zy=Y(0); g+='<line class="zl" x1="'+px0+'" y1="'+zy+'" x2="'+px1+'" y2="'+zy+'"/>'; }
+  // nhãn tháng trục x
+  rows.forEach((r,i)=>{ g+='<text class="mxl" x="'+X(i).toFixed(1)+'" y="'+(H-9)+'" text-anchor="middle">'+monthLabel(r.month)+'</text>'; });
+  // từng đường
+  series.forEach(s=>{
+    if(n>1){ const pts=rows.map((r,i)=>X(i).toFixed(1)+','+Y(+r[s.k]||0).toFixed(1)).join(' ');
+      g+='<polyline points="'+pts+'" fill="none" stroke="'+s.c+'" stroke-width="2.2" stroke-linejoin="round" stroke-linecap="round"/>'; }
+    rows.forEach((r,i)=>{ const v=+r[s.k]||0, x=X(i), y=Y(v);
+      g+='<circle cx="'+x.toFixed(1)+'" cy="'+y.toFixed(1)+'" r="3.3" fill="#0F1829" stroke="'+s.c+'" stroke-width="2">'
+        +'<title>'+monthLabel(r.month)+' · '+s.lb+': '+(pct?v.toFixed(1)+'%':vnd(v)+' ₫')+'</title></circle>';
+      if(labelPts){ const ly=v<0?y+16:y-9;
+        g+='<text class="axl" x="'+x.toFixed(1)+'" y="'+ly.toFixed(1)+'" text-anchor="middle" style="fill:'+s.c+';font-weight:600;">'+(pct?v.toFixed(1)+'%':fmtShort(v))+'</text>'; }
+    });
+  });
+  const fluid = W<=780;
+  const dim = fluid ? 'style="width:100%;height:auto"' : 'width="'+W+'" height="'+H+'"';
+  return '<svg '+dim+' viewBox="0 0 '+W+' '+H+'" preserveAspectRatio="xMidYMid meet">'+g+'</svg>';
 }
 
 function compareTable(out){
@@ -790,14 +784,8 @@ function compareTable(out){
   return h;
 }
 
-// Nút chọn số tháng
-[].forEach.call(document.querySelectorAll('#cmpSeg button'),function(b){
-  b.addEventListener('click',function(){
-    CMP_N=+b.dataset.n||6;
-    [].forEach.call(document.querySelectorAll('#cmpSeg button'),x=>x.classList.remove('on'));
-    b.classList.add('on');
-  });
-});
+// Khoảng mặc định: Từ 6/2026 → Đến tháng hiện tại (không sớm hơn 6/2026)
+(function(){ $('cmpFrom').value=DATA_START; $('cmpTo').value=CAL_NOW>=DATA_START?CAL_NOW:DATA_START; })();
 $('cmpLoad').addEventListener('click',function(){ loadCompare(false); });
 $('cmpRefresh').addEventListener('click',function(){ loadCompare(true); });
 
