@@ -758,15 +758,7 @@ function renderCompare(out){
                 {k:'lnSauThue',lb:'LN sau thuế',c:'#7BE3B5'}];
   html+=chartBox('Doanh thu · Tổng chi phí · Lợi nhuận sau thuế', legend(sMoney), chartLines(rows,sMoney,{}));
 
-  // 3) Cơ cấu chi phí (đường)
-  const sCost=[{k:'nganSach',lb:'Ngân sách QC',c:'#FFC56B'},
-               {k:'giaVon',lb:'Giá vốn',c:'#ff9b8a'},
-               {k:'phiShip',lb:'Phí ship',c:'#C58BFF'},
-               {k:'luongTong',lb:'Lương',c:'#6BC5FF'},
-               {k:'chiPhi',lb:'Chi phí khác',c:'#8C9BB4'}];
-  html+=chartBox('Cơ cấu chi phí theo tháng', legend(sCost), chartLines(rows,sCost,{}));
-
-  // 4) Biên lợi nhuận (%) — đường có nhãn từng điểm
+  // 3) Biên lợi nhuận (%) — đường có nhãn từng điểm
   html+=chartBox('Biên lợi nhuận sau thuế (%)', '',
     chartLines(rows,[{k:'bien',lb:'Biên LN',c:'#7BE3B5'}],{pct:true,labelPts:true}));
 
