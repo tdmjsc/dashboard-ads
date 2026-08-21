@@ -751,7 +751,10 @@ async function setupMenu(){
   }catch(e){}
 }
 setupMenu();
-loadData();
+// Không tự tải dữ liệu khi vào trang — chỉ tải khi người dùng bấm "Tìm kiếm".
+msg.style.display='block';
+msg.style.color='';
+msg.textContent='Chọn khoảng ngày rồi bấm "Tìm kiếm" để tải dữ liệu.';
 </script>
 <script src="/api/oms-button"></script>
 </body>
