@@ -804,10 +804,29 @@ async function fetchAllAccounts(since, until, days, key, past) {
     for (const acc of src.accounts)
       accList.push({ acc, token: src.token });
 
-  // Chạy theo LÔ nhỏ (mặc định 2 tài khoản/lô), nghỉ giữa các lô để không dội
-  // quá nhiều lời gọi cùng lúc lên Meta → giảm mạnh nguy cơ dính rate limit.
-  const BATCH = Math.max(1, Number(process.env.META_BATCH || 2));
-  const BATCH_GAP_MS = Number(process.env.META_BATCH_GAP_MS || 1200);
+  // Chạy theo LÔ, nghỉ giữa các lô để không dội quá nhiều lời gọi cùng lúc lên
+  // Meta → giảm nguy cơ dính rate limit. NHƯNG khoảng ngày CÀNG NGẮN thì dữ liệu
+  // càng nhẹ, rủi ro rate limit càng thấp → cho chạy SONG SONG nhiều tài khoản
+  // hơn và (gần như) bỏ thời gian nghỉ để tải nhanh hơn hẳn.
+  //   • ≤ 3 ngày  : lô lớn, gần như không nghỉ  (mặc định 6 TK/lô, nghỉ 200ms)
+  //   • ≤ 10 ngày : lô vừa                        (mặc định 4 TK/lô, nghỉ 600ms)
+  //   • dài hơn   : giữ nguyên như cũ (thận trọng) (mặc định 2 TK/lô, nghỉ 1200ms)
+  // Có thể ép cứng qua .env META_BATCH / META_BATCH_GAP_MS (áp cho mọi khoảng).
+  const nDays = Array.isArray(days) ? days.length : 1;
+  let BATCH, BATCH_GAP_MS;
+  if (process.env.META_BATCH || process.env.META_BATCH_GAP_MS) {
+    BATCH = Math.max(1, Number(process.env.META_BATCH || 2));
+    BATCH_GAP_MS = Number(process.env.META_BATCH_GAP_MS || 1200);
+  } else if (nDays <= 3) {
+    BATCH = Math.max(1, Number(process.env.META_BATCH_SMALL || 6));
+    BATCH_GAP_MS = Number(process.env.META_BATCH_GAP_SMALL_MS || 200);
+  } else if (nDays <= 10) {
+    BATCH = Math.max(1, Number(process.env.META_BATCH_MED || 4));
+    BATCH_GAP_MS = Number(process.env.META_BATCH_GAP_MED_MS || 600);
+  } else {
+    BATCH = Math.max(1, Number(process.env.META_BATCH_BIG || 2));
+    BATCH_GAP_MS = Number(process.env.META_BATCH_GAP_BIG_MS || 1200);
+  }
   const campaigns = [];
   let failed = 0;
   const emptyAccts = [];   // tài khoản trả về THÀNH CÔNG nhưng RỖNG
