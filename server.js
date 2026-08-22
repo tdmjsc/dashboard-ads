@@ -726,6 +726,26 @@ app.use((req, res, next) => {
   next();
 });
 
+// ── CHỈ ADMIN THẬT (KHÔNG gồm kế toán): trang "Dòng tiền / Tiền mặt" ──
+//    Kế toán là tài khoản role='admin' nhưng khongBoGhim=true → BỊ CHẶN trang này.
+//    Đặt sau block admin ở trên để người CHƯA đăng nhập đã được middleware phía
+//    trước chuyển về /login, ở đây chắc chắn đã có req.session.user.
+app.use((req, res, next) => {
+  const me = req.session.user;
+  if (!me) return next();
+  const p = req.path;
+  const laTrangDongTien = (p === '/dong-tien.html') || p.startsWith('/api/cash-flow');
+  if (laTrangDongTien) {
+    const adminThat = me.role === 'admin' && !me.khongBoGhim;
+    if (!adminThat) {
+      if (p.startsWith('/api/'))
+        return res.status(403).json({ ok: false, message: 'Chỉ quản trị viên (không gồm kế toán) xem được mục này.' });
+      return res.redirect('/');
+    }
+  }
+  next();
+});
+
 // Bộ nhớ đệm tạm trong RAM: giữ kết quả theo từng khoảng ngày trong vài phút,
 // để các lần mở/đăng nhập lại không phải gọi lại Meta -> nhanh hơn nhiều.
 const DATA_CACHE = new Map();
@@ -3306,6 +3326,123 @@ app.post('/api/business-result/manual-pnl', express.json(), (req, res) => {
   rec.manualBy  = me.user || '';
   saveKqkd();
   res.json({ ok: true, month, data: rec });
+});
+
+/* =========================================================================
+   DÒNG TIỀN — KIỂM TRA SỰ THAY ĐỔI VỀ TIỀN MẶT (nhập tay 100%)
+   Ba nhóm: Tiền mặt, Tiền hàng, Các tiền khác. Mỗi nhóm là danh sách khoản
+   { ten, soTien }. Lưu theo TỪNG THÁNG trong file dong-tien.json (DATA_DIR).
+   CHỈ admin thật xem được (middleware phía trên đã chặn kế toán).
+   ========================================================================= */
+const CASHFLOW_FILE = path.join(DATA_DIR, 'dong-tien.json');
+let CASHFLOW = {};
+try { CASHFLOW = JSON.parse(fs.readFileSync(CASHFLOW_FILE, 'utf8')) || {}; } catch { CASHFLOW = {}; }
+function saveCashflow() {
+  try { fs.writeFileSync(CASHFLOW_FILE, JSON.stringify(CASHFLOW)); }
+  catch (e) { console.error('[SAVE] dong-tien lỗi:', e.message); }
+}
+const CF_GROUPS = ['tienMat', 'tienHang', 'tienKhac'];
+const cfMoney = v => parseInt(String(v == null ? '' : v).replace(/[^\d-]/g, ''), 10) || 0;
+const laAdminThat = me => !!(me && me.role === 'admin' && !me.khongBoGhim);
+
+// Lấy bản ghi 1 tháng, tự bảo đảm đủ 3 nhóm dạng mảng
+function cashOf(month) {
+  const r = CASHFLOW[month] || (CASHFLOW[month] = {});
+  for (const g of CF_GROUPS) if (!Array.isArray(r[g])) r[g] = [];
+  if (typeof r.ghiChu !== 'string') r.ghiChu = '';
+  return r;
+}
+// Tổng từng nhóm + tổng cộng của 1 bản ghi
+function cashTotals(rec) {
+  const t = {};
+  let tong = 0;
+  for (const g of CF_GROUPS) {
+    const s = (rec[g] || []).reduce((a, x) => a + cfMoney(x.soTien), 0);
+    t[g] = s; tong += s;
+  }
+  t.tong = tong;
+  return t;
+}
+// Tháng trước (YYYY-MM) → YYYY-MM
+function prevMonthStr(month) {
+  const [y, m] = String(month).split('-').map(Number);
+  if (!y || !m) return '';
+  const d = new Date(Date.UTC(y, m - 1, 1)); d.setUTCMonth(d.getUTCMonth() - 1);
+  return d.toISOString().slice(0, 7);
+}
+
+/* GET /api/cash-flow?month=YYYY-MM → số liệu 1 tháng + tổng + so với tháng trước */
+app.get('/api/cash-flow', (req, res) => {
+  const me = req.session.user || {};
+  if (!laAdminThat(me)) return res.status(403).json({ ok: false, message: 'Chỉ quản trị viên' });
+  const month = req.query.month || new Date().toISOString().slice(0, 7);
+  if (!/^\d{4}-\d{2}$/.test(month)) return res.json({ ok: false, message: 'Tháng không hợp lệ' });
+  const rec = cashOf(month);
+  const pm = prevMonthStr(month);
+  const prevRec = CASHFLOW[pm] ? cashOf(pm) : null;
+  const totals = cashTotals(rec);
+  const prevTotals = prevRec ? cashTotals(prevRec) : null;
+  const delta = {};
+  for (const k of [...CF_GROUPS, 'tong']) delta[k] = totals[k] - (prevTotals ? prevTotals[k] : 0);
+  res.json({
+    ok: true, month, prevMonth: pm,
+    data: { tienMat: rec.tienMat, tienHang: rec.tienHang, tienKhac: rec.tienKhac, ghiChu: rec.ghiChu },
+    totals, prevTotals, delta, coPrev: !!prevRec,
+  });
+});
+
+/* GET /api/cash-flow/compare → tổng theo từng tháng (đã có dữ liệu) để dựng bảng so sánh */
+app.get('/api/cash-flow/compare', (req, res) => {
+  const me = req.session.user || {};
+  if (!laAdminThat(me)) return res.status(403).json({ ok: false, message: 'Chỉ quản trị viên' });
+  const months = Object.keys(CASHFLOW).filter(m => /^\d{4}-\d{2}$/.test(m)).sort();
+  const rows = months.map(m => {
+    const t = cashTotals(cashOf(m));
+    return { month: m, tienMat: t.tienMat, tienHang: t.tienHang, tienKhac: t.tienKhac, tong: t.tong };
+  }).filter(r => r.tienMat || r.tienHang || r.tienKhac); // bỏ tháng rỗng
+  res.json({ ok: true, rows });
+});
+
+/* Thêm / sửa / xoá 1 khoản trong 1 nhóm
+   POST /api/cash-flow/item {month, group, action:'add'|'update'|'delete', index, ten, soTien} */
+app.post('/api/cash-flow/item', express.json(), (req, res) => {
+  const me = req.session.user || {};
+  if (!laAdminThat(me)) return res.status(403).json({ ok: false, message: 'Chỉ quản trị viên' });
+  const { month, group, action, index, ten, soTien } = req.body || {};
+  if (!/^\d{4}-\d{2}$/.test(String(month || ''))) return res.json({ ok: false, message: 'Tháng không hợp lệ' });
+  if (!CF_GROUPS.includes(group)) return res.json({ ok: false, message: 'Nhóm không hợp lệ' });
+  const rec = cashOf(month);
+  const list = rec[group];
+  const i = Number(index);
+
+  if (action === 'add') {
+    list.push({ ten: String(ten || '').trim() || 'Khoản mới', soTien: cfMoney(soTien) });
+  } else if (action === 'update') {
+    if (!(i >= 0 && i < list.length)) return res.json({ ok: false, message: 'Dòng không tồn tại' });
+    if (ten != null) list[i].ten = String(ten).trim();
+    if (soTien != null) list[i].soTien = cfMoney(soTien);
+  } else if (action === 'delete') {
+    if (!(i >= 0 && i < list.length)) return res.json({ ok: false, message: 'Dòng không tồn tại' });
+    list.splice(i, 1);
+  } else {
+    return res.json({ ok: false, message: 'action phải là add / update / delete' });
+  }
+  rec.at = new Date().toISOString();
+  rec.by = me.user || '';
+  saveCashflow();
+  res.json({ ok: true, group, list, totals: cashTotals(rec) });
+});
+
+/* Ghi chú tháng: POST /api/cash-flow/note {month, ghiChu} */
+app.post('/api/cash-flow/note', express.json(), (req, res) => {
+  const me = req.session.user || {};
+  if (!laAdminThat(me)) return res.status(403).json({ ok: false, message: 'Chỉ quản trị viên' });
+  const { month, ghiChu } = req.body || {};
+  if (!/^\d{4}-\d{2}$/.test(String(month || ''))) return res.json({ ok: false, message: 'Tháng không hợp lệ' });
+  const rec = cashOf(month);
+  rec.ghiChu = String(ghiChu || '').slice(0, 2000);
+  saveCashflow();
+  res.json({ ok: true });
 });
 
 app.use(express.static(path.join(__dirname, 'public')));
