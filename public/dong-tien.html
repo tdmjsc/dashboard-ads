@@ -1,0 +1,358 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Dòng tiền — TDMJSC</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&family=Space+Grotesk:wght@500;600;700&display=swap" rel="stylesheet">
+<style>
+  :root{
+    --ink:#10192B; --ink-soft:#1C2A42; --paper:#EEF1F5; --card:#FFFFFF;
+    --line:#E2E6EC; --line-soft:#EFF2F6; --text:#1A2436; --muted:#697587; --faint:#9AA4B2;
+    --teal:#0E8C76; --teal-bg:#E2F4F0; --amber:#B7791F; --amber-bg:#FBF1DD;
+    --red:#C2412D; --red-bg:#FBE7E2; --accent:#3D5AFE;
+    --shadow:0 1px 2px rgba(16,25,43,.04), 0 6px 24px rgba(16,25,43,.05); --radius:14px;
+  }
+  *{box-sizing:border-box;margin:0;padding:0}
+  body{font-family:'Inter',system-ui,sans-serif;background:var(--paper);color:var(--text);
+    -webkit-font-smoothing:antialiased;font-variant-numeric:tabular-nums;line-height:1.45;}
+  .num{font-family:'Space Grotesk',sans-serif;font-variant-numeric:tabular-nums;}
+  .wrap{max-width:1100px;margin:0 auto;padding:0 20px 64px;}
+
+  header.topbar{background:var(--ink);color:#fff;}
+  .topbar-inner{max-width:1100px;margin:0 auto;padding:15px 20px;display:flex;align-items:center;justify-content:space-between;gap:14px;flex-wrap:wrap;}
+  .brand{display:flex;align-items:center;gap:11px;}
+  .brand .mark{width:36px;height:36px;border-radius:10px;background:#22314f;display:grid;place-items:center;flex:none;font-size:18px;}
+  .brand h1{font-family:'Space Grotesk';font-size:16px;font-weight:600;letter-spacing:.2px;}
+  .brand p{font-size:12px;color:#9FB0C8;margin-top:1px;}
+  .topbar .right{display:flex;align-items:center;gap:12px;flex-wrap:wrap;}
+  .back{color:#C4D0E2;font-size:13px;text-decoration:none;border:1px solid rgba(255,255,255,.14);padding:7px 12px;border-radius:9px;white-space:nowrap;}
+  .back:hover{background:rgba(255,255,255,.08);color:#fff;}
+  .monthpick{display:flex;align-items:center;gap:8px;background:rgba(255,255,255,.06);border:1px solid rgba(255,255,255,.10);padding:6px 11px;border-radius:9px;}
+  .monthpick label{font-size:11px;color:#9FB0C8;}
+  .monthpick input[type=month]{font-family:'Inter';font-size:13px;color:#fff;background:transparent;border:none;outline:none;color-scheme:dark;}
+
+  /* KPI tổng ở đầu */
+  .summary{background:var(--ink);padding:4px 0 26px;}
+  .summary-inner{max-width:1100px;margin:0 auto;padding:0 20px;display:grid;grid-template-columns:repeat(4,1fr);gap:1px;background:rgba(255,255,255,.07);border-radius:14px;overflow:hidden;border:1px solid rgba(255,255,255,.07);}
+  .kpi{background:var(--ink-soft);padding:16px 18px;}
+  .kpi .label{font-size:11.5px;color:#9FB0C8;letter-spacing:.3px;text-transform:uppercase;font-weight:500;}
+  .kpi .val{font-family:'Space Grotesk';font-size:22px;font-weight:600;color:#fff;margin-top:6px;letter-spacing:-.5px;white-space:nowrap;}
+  .kpi .val small{font-size:13px;color:#B7C3D6;font-weight:500;margin-left:2px;}
+  .kpi .sub{font-size:12px;margin-top:5px;color:#8C9BB4;white-space:nowrap;}
+  .kpi .sub.up{color:#5FD0B5;}
+  .kpi .sub.down{color:#F2A79B;}
+  .kpi.total{background:#16233c;}
+
+  .panel{background:var(--card);border:1px solid var(--line);border-radius:var(--radius);margin-top:16px;box-shadow:var(--shadow);overflow:hidden;}
+  .panel-head{padding:14px 18px;border-bottom:1px solid var(--line-soft);display:flex;justify-content:space-between;align-items:center;gap:12px;}
+  .panel-head h2{font-family:'Space Grotesk';font-size:15px;font-weight:600;display:flex;align-items:center;gap:9px;}
+  .panel-head .dot{width:9px;height:9px;border-radius:50%;flex:none;}
+  .panel-head .subtotal{font-family:'Space Grotesk';font-weight:600;font-size:15px;}
+
+  .rows{padding:6px 8px 12px;}
+  .cf-row{display:flex;align-items:center;gap:10px;padding:6px 10px;border-radius:9px;}
+  .cf-row:hover{background:#FAFBFC;}
+  .cf-row input.ten{flex:1;min-width:0;font-family:'Inter';font-size:13.5px;color:var(--text);border:1px solid transparent;background:transparent;border-radius:8px;padding:8px 9px;outline:none;}
+  .cf-row input.ten:focus{border-color:var(--line);background:#fff;}
+  .cf-row input.tien{width:170px;flex:none;text-align:right;font-family:'Space Grotesk';font-weight:500;font-size:14px;color:var(--text);border:1px solid var(--line);background:#fff;border-radius:8px;padding:8px 10px;outline:none;}
+  .cf-row input.tien:focus{border-color:var(--teal);box-shadow:0 0 0 3px var(--teal-bg);}
+  .cf-row .cur{color:var(--faint);font-size:12px;flex:none;width:14px;}
+  .cf-row .del{flex:none;border:none;background:transparent;color:var(--faint);cursor:pointer;font-size:16px;line-height:1;padding:6px;border-radius:7px;}
+  .cf-row .del:hover{background:var(--red-bg);color:var(--red);}
+  .addrow{margin:2px 10px 4px;}
+  .addrow button{font-family:'Inter';font-size:13px;font-weight:500;color:var(--accent);background:transparent;border:1px dashed #C6CFDD;border-radius:9px;padding:9px 12px;cursor:pointer;width:100%;text-align:left;}
+  .addrow button:hover{background:#F4F6FB;border-color:var(--accent);}
+  .emptyhint{padding:10px 16px 14px;color:var(--faint);font-size:12.5px;}
+
+  /* Bảng so sánh */
+  .tablescroll{overflow-x:auto;}
+  table{width:100%;border-collapse:collapse;min-width:640px;}
+  thead th{text-align:right;font-size:11.5px;font-weight:600;color:var(--faint);text-transform:uppercase;letter-spacing:.4px;padding:11px 14px;border-bottom:1px solid var(--line-soft);white-space:nowrap;background:#FBFCFD;}
+  thead th.l{text-align:left;}
+  tbody td{padding:12px 14px;border-bottom:1px solid var(--line-soft);font-size:13.5px;text-align:right;white-space:nowrap;}
+  tbody td.l{text-align:left;font-weight:600;}
+  tbody tr:last-child td{border-bottom:none;}
+  tbody tr:hover{background:#FAFBFC;}
+  tbody tr.cur-month{background:#F3F6FF;}
+  tbody tr.cur-month:hover{background:#EDF1FF;}
+  .mono{font-family:'Space Grotesk';font-weight:500;}
+  .chg{font-family:'Space Grotesk';font-weight:600;font-size:12.5px;padding:3px 8px;border-radius:7px;display:inline-block;}
+  .chg.up{background:var(--teal-bg);color:var(--teal);}
+  .chg.down{background:var(--red-bg);color:var(--red);}
+  .chg.flat{background:#F0F3F8;color:var(--muted);}
+
+  .note-wrap{padding:14px 18px 18px;}
+  .note-wrap label{display:block;font-size:12px;color:var(--muted);margin-bottom:6px;font-weight:500;}
+  .note-wrap textarea{width:100%;min-height:64px;resize:vertical;font-family:'Inter';font-size:13.5px;color:var(--text);border:1px solid var(--line);border-radius:10px;padding:10px 12px;outline:none;}
+  .note-wrap textarea:focus{border-color:var(--teal);box-shadow:0 0 0 3px var(--teal-bg);}
+
+  .savetag{font-size:12px;color:var(--faint);}
+  .savetag.ok{color:var(--teal);}
+  .gate{max-width:520px;margin:80px auto;padding:28px;background:#fff;border:1px solid var(--line);border-radius:14px;text-align:center;box-shadow:var(--shadow);}
+  .gate h2{font-family:'Space Grotesk';font-size:18px;margin-bottom:8px;}
+  .gate p{color:var(--muted);font-size:14px;}
+  .gate a{color:var(--accent);text-decoration:none;font-weight:600;}
+  @media(max-width:720px){
+    .summary-inner{grid-template-columns:repeat(2,1fr);}
+    .cf-row input.tien{width:130px;}
+  }
+</style>
+</head>
+<body>
+
+<div id="app" style="display:none">
+<header class="topbar">
+  <div class="topbar-inner">
+    <div class="brand">
+      <div class="mark">💰</div>
+      <div><h1>Dòng tiền</h1><p>Kiểm tra thay đổi tiền mặt</p></div>
+    </div>
+    <div class="right">
+      <div class="monthpick"><label for="month">Tháng</label><input type="month" id="month"></div>
+      <a href="/" class="back">← Dashboard</a>
+      <a href="/logout" class="back">Đăng xuất</a>
+    </div>
+  </div>
+</header>
+
+<div class="summary">
+  <div class="summary-inner">
+    <div class="kpi"><div class="label">Tiền mặt</div><div class="val num" id="kMat">—</div><div class="sub" id="dMat"></div></div>
+    <div class="kpi"><div class="label">Tiền hàng</div><div class="val num" id="kHang">—</div><div class="sub" id="dHang"></div></div>
+    <div class="kpi"><div class="label">Tiền khác</div><div class="val num" id="kKhac">—</div><div class="sub" id="dKhac"></div></div>
+    <div class="kpi total"><div class="label">Tổng cộng</div><div class="val num" id="kTong">—</div><div class="sub" id="dTong"></div></div>
+  </div>
+</div>
+
+<div class="wrap">
+
+  <!-- Ba nhóm nhập tay -->
+  <div class="panel">
+    <div class="panel-head">
+      <h2><span class="dot" style="background:var(--teal)"></span>Tiền mặt</h2>
+      <span class="subtotal num" id="stMat">0 đ</span>
+    </div>
+    <div class="rows" id="rowsMat"></div>
+    <div class="addrow"><button data-g="tienMat">＋ Thêm khoản tiền mặt</button></div>
+  </div>
+
+  <div class="panel">
+    <div class="panel-head">
+      <h2><span class="dot" style="background:var(--amber)"></span>Tiền hàng</h2>
+      <span class="subtotal num" id="stHang">0 đ</span>
+    </div>
+    <div class="rows" id="rowsHang"></div>
+    <div class="addrow"><button data-g="tienHang">＋ Thêm khoản tiền hàng</button></div>
+  </div>
+
+  <div class="panel">
+    <div class="panel-head">
+      <h2><span class="dot" style="background:var(--accent)"></span>Các tiền khác</h2>
+      <span class="subtotal num" id="stKhac">0 đ</span>
+    </div>
+    <div class="rows" id="rowsKhac"></div>
+    <div class="addrow"><button data-g="tienKhac">＋ Thêm khoản khác</button></div>
+  </div>
+
+  <!-- Ghi chú -->
+  <div class="panel">
+    <div class="panel-head"><h2>📝 Ghi chú tháng</h2><span class="savetag" id="noteSave"></span></div>
+    <div class="note-wrap">
+      <textarea id="ghiChu" placeholder="Giải thích biến động, đối chiếu sổ quỹ, cam kết công nợ…"></textarea>
+    </div>
+  </div>
+
+  <!-- Bảng so sánh biến động giữa các tháng -->
+  <div class="panel">
+    <div class="panel-head"><h2>📈 So sánh biến động giữa các tháng</h2></div>
+    <div class="tablescroll">
+      <table>
+        <thead><tr>
+          <th class="l">Tháng</th>
+          <th>Tiền mặt</th>
+          <th>Tiền hàng</th>
+          <th>Tiền khác</th>
+          <th>Tổng cộng</th>
+          <th>Thay đổi tổng</th>
+        </tr></thead>
+        <tbody id="cmpBody"></tbody>
+      </table>
+    </div>
+    <div class="emptyhint" id="cmpEmpty" style="display:none">Chưa có tháng nào có dữ liệu. Nhập số ở trên để bắt đầu.</div>
+  </div>
+
+</div>
+</div>
+
+<div id="gate" class="gate" style="display:none">
+  <h2>Không có quyền truy cập</h2>
+  <p>Trang này chỉ dành cho quản trị viên. <a href="/">Về Dashboard</a></p>
+</div>
+
+<script>
+const fmt = n => (n||0).toLocaleString('vi-VN');
+const parseMoney = s => parseInt(String(s==null?'':s).replace(/[^\d-]/g,''),10) || 0;
+const GROUPS = { tienMat:'rowsMat', tienHang:'rowsHang', tienKhac:'rowsKhac' };
+const SUBID  = { tienMat:'stMat', tienHang:'stHang', tienKhac:'stKhac' };
+let MONTH = new Date().toISOString().slice(0,7);
+let DATA = { tienMat:[], tienHang:[], tienKhac:[], ghiChu:'' };
+
+async function api(url, opts){
+  const r = await fetch(url, opts);
+  if(r.status===403 || r.status===401){ showGate(); throw new Error('no-access'); }
+  return r.json();
+}
+function showGate(){
+  document.getElementById('app').style.display='none';
+  document.getElementById('gate').style.display='block';
+}
+
+// ── Vẽ một nhóm ──
+function renderGroup(g){
+  const box = document.getElementById(GROUPS[g]);
+  const list = DATA[g] || [];
+  box.innerHTML = '';
+  list.forEach((item, i) => {
+    const row = document.createElement('div');
+    row.className = 'cf-row';
+    row.innerHTML =
+      '<input class="ten" value="'+escapeHtml(item.ten||'')+'" placeholder="Tên khoản">' +
+      '<input class="tien num" inputmode="numeric" value="'+fmt(parseMoney(item.soTien))+'">' +
+      '<span class="cur">đ</span>' +
+      '<button class="del" title="Xoá">✕</button>';
+    const ten = row.querySelector('.ten');
+    const tien = row.querySelector('.tien');
+    const del = row.querySelector('.del');
+    ten.addEventListener('blur', ()=> saveItem(g,'update',i,{ten:ten.value}));
+    tien.addEventListener('focus', ()=>{ tien.value = String(parseMoney(tien.value) || ''); tien.select(); });
+    tien.addEventListener('blur', ()=>{ const v=parseMoney(tien.value); tien.value=fmt(v); saveItem(g,'update',i,{soTien:v}); });
+    tien.addEventListener('keydown', e=>{ if(e.key==='Enter') tien.blur(); });
+    ten.addEventListener('keydown', e=>{ if(e.key==='Enter') ten.blur(); });
+    del.addEventListener('click', ()=> saveItem(g,'delete',i));
+    box.appendChild(row);
+  });
+}
+function escapeHtml(s){ return String(s).replace(/[&<>"]/g, c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c])); }
+
+// ── Ghi 1 khoản lên server rồi cập nhật lại ──
+async function saveItem(group, action, index, extra){
+  try{
+    const body = Object.assign({ month:MONTH, group, action, index }, extra||{});
+    const r = await api('/api/cash-flow/item', {
+      method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify(body)
+    });
+    if(!r.ok){ alert(r.message||'Lỗi lưu'); return; }
+    DATA[group] = r.list;
+    renderGroup(group);
+    applyTotals(r.totals);
+    loadCompare();
+  }catch(e){ if(e.message!=='no-access') console.error(e); }
+}
+
+// ── Cập nhật KPI + subtotal ──
+function applyTotals(t){
+  document.getElementById('stMat').textContent  = fmt(t.tienMat)+' đ';
+  document.getElementById('stHang').textContent = fmt(t.tienHang)+' đ';
+  document.getElementById('stKhac').textContent = fmt(t.tienKhac)+' đ';
+  document.getElementById('kMat').innerHTML  = fmt(t.tienMat)+' <small>đ</small>';
+  document.getElementById('kHang').innerHTML = fmt(t.tienHang)+' <small>đ</small>';
+  document.getElementById('kKhac').innerHTML = fmt(t.tienKhac)+' <small>đ</small>';
+  document.getElementById('kTong').innerHTML = fmt(t.tong)+' <small>đ</small>';
+}
+function applyDelta(delta, coPrev){
+  const map = { tienMat:'dMat', tienHang:'dHang', tienKhac:'dKhac', tong:'dTong' };
+  for(const k in map){
+    const el = document.getElementById(map[k]);
+    if(!coPrev){ el.textContent='Chưa có tháng trước'; el.className='sub'; continue; }
+    const d = delta[k]||0;
+    const sign = d>0 ? '▲ +' : (d<0 ? '▼ ' : '± ');
+    el.textContent = sign + fmt(d) + ' đ so tháng trước';
+    el.className = 'sub ' + (d>0?'up':(d<0?'down':''));
+  }
+}
+
+// ── Tải số liệu 1 tháng ──
+async function loadMonth(){
+  try{
+    const r = await api('/api/cash-flow?month='+MONTH);
+    if(!r.ok){ alert(r.message||'Lỗi tải'); return; }
+    DATA = r.data;
+    for(const g in GROUPS) renderGroup(g);
+    applyTotals(r.totals);
+    applyDelta(r.delta, r.coPrev);
+    document.getElementById('ghiChu').value = r.data.ghiChu || '';
+  }catch(e){ if(e.message!=='no-access') console.error(e); }
+}
+
+// ── Bảng so sánh giữa các tháng ──
+async function loadCompare(){
+  try{
+    const r = await api('/api/cash-flow/compare');
+    if(!r.ok) return;
+    const rows = r.rows || [];
+    const body = document.getElementById('cmpBody');
+    const empty = document.getElementById('cmpEmpty');
+    body.innerHTML = '';
+    if(!rows.length){ empty.style.display='block'; return; }
+    empty.style.display='none';
+    rows.forEach((row, i) => {
+      const prev = i>0 ? rows[i-1] : null;
+      const d = prev ? row.tong - prev.tong : null;
+      let chg = '<span class="chg flat">—</span>';
+      if(d!=null){
+        const cls = d>0?'up':(d<0?'down':'flat');
+        const sign = d>0?'+':'';
+        chg = '<span class="chg '+cls+'">'+(d>0?'▲ ':(d<0?'▼ ':''))+sign+fmt(d)+'</span>';
+      }
+      const tr = document.createElement('tr');
+      if(row.month===MONTH) tr.className='cur-month';
+      tr.innerHTML =
+        '<td class="l">'+thangVN(row.month)+'</td>'+
+        '<td class="mono">'+fmt(row.tienMat)+'</td>'+
+        '<td class="mono">'+fmt(row.tienHang)+'</td>'+
+        '<td class="mono">'+fmt(row.tienKhac)+'</td>'+
+        '<td class="mono"><b>'+fmt(row.tong)+'</b></td>'+
+        '<td>'+chg+'</td>';
+      body.appendChild(tr);
+    });
+  }catch(e){ if(e.message!=='no-access') console.error(e); }
+}
+function thangVN(m){ const [y,mo]=m.split('-'); return 'Th'+Number(mo)+'/'+y; }
+
+// ── Thêm khoản ──
+document.querySelectorAll('.addrow button').forEach(btn=>{
+  btn.addEventListener('click', ()=> saveItem(btn.dataset.g,'add',-1,{ten:'',soTien:0}));
+});
+
+// ── Ghi chú (lưu khi rời ô) ──
+const noteEl = document.getElementById('ghiChu');
+noteEl.addEventListener('blur', async ()=>{
+  try{
+    await api('/api/cash-flow/note',{method:'POST',headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({month:MONTH, ghiChu:noteEl.value})});
+    const tag=document.getElementById('noteSave'); tag.textContent='Đã lưu'; tag.className='savetag ok';
+    setTimeout(()=>{tag.textContent='';},1500);
+  }catch(e){}
+});
+
+// ── Đổi tháng ──
+const monthEl = document.getElementById('month');
+monthEl.addEventListener('change', ()=>{ MONTH = monthEl.value || MONTH; loadMonth(); loadCompare(); });
+
+// ── Khởi động: kiểm tra quyền admin thật trước ──
+(async ()=>{
+  try{
+    const me = await (await fetch('/api/me')).json();
+    if(!me || me.role!=='admin' || me.khongBoGhim){ showGate(); return; }
+    document.getElementById('app').style.display='block';
+    monthEl.value = MONTH;
+    await loadMonth();
+    await loadCompare();
+  }catch(e){ showGate(); }
+})();
+</script>
+</body>
+</html>
