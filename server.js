@@ -3331,7 +3331,9 @@ app.post('/api/business-result/manual-pnl', express.json(), (req, res) => {
 /* =========================================================================
    DÒNG TIỀN — KIỂM TRA SỰ THAY ĐỔI VỀ TIỀN MẶT (nhập tay 100%)
    Ba nhóm: Tiền mặt, Tiền hàng, Các tiền khác. Mỗi nhóm là danh sách khoản
-   { ten, soTien }. Lưu theo TỪNG THÁNG trong file dong-tien.json (DATA_DIR).
+   { ten, soTien }. Lưu theo TỪNG NGÀY (YYYY-MM-DD) trong dong-tien.json.
+   → 1 tháng có thể kiểm tra nhiều lần: mỗi ngày là một "ảnh chụp" riêng.
+   → Bảng so sánh tính biến động giữa các LẦN NHẬP (ngày) liền kề nhau.
    CHỈ admin thật xem được (middleware phía trên đã chặn kế toán).
    ========================================================================= */
 const CASHFLOW_FILE = path.join(DATA_DIR, 'dong-tien.json');
@@ -3344,13 +3346,18 @@ function saveCashflow() {
 const CF_GROUPS = ['tienMat', 'tienHang', 'tienKhac'];
 const cfMoney = v => parseInt(String(v == null ? '' : v).replace(/[^\d-]/g, ''), 10) || 0;
 const laAdminThat = me => !!(me && me.role === 'admin' && !me.khongBoGhim);
+const laNgay = s => /^\d{4}-\d{2}-\d{2}$/.test(String(s || ''));
 
-// Lấy bản ghi 1 tháng, tự bảo đảm đủ 3 nhóm dạng mảng
-function cashOf(month) {
-  const r = CASHFLOW[month] || (CASHFLOW[month] = {});
+// Lấy bản ghi 1 ngày, tự bảo đảm đủ 3 nhóm dạng mảng
+function cashOf(date) {
+  const r = CASHFLOW[date] || (CASHFLOW[date] = {});
   for (const g of CF_GROUPS) if (!Array.isArray(r[g])) r[g] = [];
   if (typeof r.ghiChu !== 'string') r.ghiChu = '';
   return r;
+}
+// Bản ghi có dữ liệu thực (ít nhất 1 khoản) hay chưa
+function cashHasData(rec) {
+  return CF_GROUPS.some(g => Array.isArray(rec[g]) && rec[g].length > 0);
 }
 // Tổng từng nhóm + tổng cộng của 1 bản ghi
 function cashTotals(rec) {
@@ -3363,55 +3370,55 @@ function cashTotals(rec) {
   t.tong = tong;
   return t;
 }
-// Tháng trước (YYYY-MM) → YYYY-MM
-function prevMonthStr(month) {
-  const [y, m] = String(month).split('-').map(Number);
-  if (!y || !m) return '';
-  const d = new Date(Date.UTC(y, m - 1, 1)); d.setUTCMonth(d.getUTCMonth() - 1);
-  return d.toISOString().slice(0, 7);
+// Ngày nhập GẦN NHẤT TRƯỚC ngày đang xem (có dữ liệu) — để so sánh biến động.
+function prevDateWithData(date) {
+  const keys = Object.keys(CASHFLOW)
+    .filter(k => laNgay(k) && k < date && cashHasData(CASHFLOW[k]));
+  keys.sort();
+  return keys.length ? keys[keys.length - 1] : '';
 }
 
-/* GET /api/cash-flow?month=YYYY-MM → số liệu 1 tháng + tổng + so với tháng trước */
+/* GET /api/cash-flow?date=YYYY-MM-DD → số liệu 1 ngày + tổng + so với lần nhập trước */
 app.get('/api/cash-flow', (req, res) => {
   const me = req.session.user || {};
   if (!laAdminThat(me)) return res.status(403).json({ ok: false, message: 'Chỉ quản trị viên' });
-  const month = req.query.month || new Date().toISOString().slice(0, 7);
-  if (!/^\d{4}-\d{2}$/.test(month)) return res.json({ ok: false, message: 'Tháng không hợp lệ' });
-  const rec = cashOf(month);
-  const pm = prevMonthStr(month);
-  const prevRec = CASHFLOW[pm] ? cashOf(pm) : null;
+  const date = req.query.date || new Date().toISOString().slice(0, 10);
+  if (!laNgay(date)) return res.json({ ok: false, message: 'Ngày không hợp lệ' });
+  const rec = cashOf(date);
+  const pd = prevDateWithData(date);
+  const prevRec = pd ? cashOf(pd) : null;
   const totals = cashTotals(rec);
   const prevTotals = prevRec ? cashTotals(prevRec) : null;
   const delta = {};
   for (const k of [...CF_GROUPS, 'tong']) delta[k] = totals[k] - (prevTotals ? prevTotals[k] : 0);
   res.json({
-    ok: true, month, prevMonth: pm,
+    ok: true, date, prevDate: pd,
     data: { tienMat: rec.tienMat, tienHang: rec.tienHang, tienKhac: rec.tienKhac, ghiChu: rec.ghiChu },
     totals, prevTotals, delta, coPrev: !!prevRec,
   });
 });
 
-/* GET /api/cash-flow/compare → tổng theo từng tháng (đã có dữ liệu) để dựng bảng so sánh */
+/* GET /api/cash-flow/compare → tổng theo từng NGÀY (đã có dữ liệu) để dựng bảng so sánh */
 app.get('/api/cash-flow/compare', (req, res) => {
   const me = req.session.user || {};
   if (!laAdminThat(me)) return res.status(403).json({ ok: false, message: 'Chỉ quản trị viên' });
-  const months = Object.keys(CASHFLOW).filter(m => /^\d{4}-\d{2}$/.test(m)).sort();
-  const rows = months.map(m => {
-    const t = cashTotals(cashOf(m));
-    return { month: m, tienMat: t.tienMat, tienHang: t.tienHang, tienKhac: t.tienKhac, tong: t.tong };
-  }).filter(r => r.tienMat || r.tienHang || r.tienKhac); // bỏ tháng rỗng
+  const dates = Object.keys(CASHFLOW).filter(d => laNgay(d)).sort();
+  const rows = dates.map(d => {
+    const t = cashTotals(cashOf(d));
+    return { date: d, tienMat: t.tienMat, tienHang: t.tienHang, tienKhac: t.tienKhac, tong: t.tong };
+  }).filter(r => r.tienMat || r.tienHang || r.tienKhac); // bỏ ngày rỗng
   res.json({ ok: true, rows });
 });
 
 /* Thêm / sửa / xoá 1 khoản trong 1 nhóm
-   POST /api/cash-flow/item {month, group, action:'add'|'update'|'delete', index, ten, soTien} */
+   POST /api/cash-flow/item {date, group, action:'add'|'update'|'delete', index, ten, soTien} */
 app.post('/api/cash-flow/item', express.json(), (req, res) => {
   const me = req.session.user || {};
   if (!laAdminThat(me)) return res.status(403).json({ ok: false, message: 'Chỉ quản trị viên' });
-  const { month, group, action, index, ten, soTien } = req.body || {};
-  if (!/^\d{4}-\d{2}$/.test(String(month || ''))) return res.json({ ok: false, message: 'Tháng không hợp lệ' });
+  const { date, group, action, index, ten, soTien } = req.body || {};
+  if (!laNgay(date)) return res.json({ ok: false, message: 'Ngày không hợp lệ' });
   if (!CF_GROUPS.includes(group)) return res.json({ ok: false, message: 'Nhóm không hợp lệ' });
-  const rec = cashOf(month);
+  const rec = cashOf(date);
   const list = rec[group];
   const i = Number(index);
 
@@ -3433,13 +3440,13 @@ app.post('/api/cash-flow/item', express.json(), (req, res) => {
   res.json({ ok: true, group, list, totals: cashTotals(rec) });
 });
 
-/* Ghi chú tháng: POST /api/cash-flow/note {month, ghiChu} */
+/* Ghi chú ngày: POST /api/cash-flow/note {date, ghiChu} */
 app.post('/api/cash-flow/note', express.json(), (req, res) => {
   const me = req.session.user || {};
   if (!laAdminThat(me)) return res.status(403).json({ ok: false, message: 'Chỉ quản trị viên' });
-  const { month, ghiChu } = req.body || {};
-  if (!/^\d{4}-\d{2}$/.test(String(month || ''))) return res.json({ ok: false, message: 'Tháng không hợp lệ' });
-  const rec = cashOf(month);
+  const { date, ghiChu } = req.body || {};
+  if (!laNgay(date)) return res.json({ ok: false, message: 'Ngày không hợp lệ' });
+  const rec = cashOf(date);
   rec.ghiChu = String(ghiChu || '').slice(0, 2000);
   saveCashflow();
   res.json({ ok: true });
