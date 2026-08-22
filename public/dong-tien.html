@@ -32,7 +32,7 @@
   .back:hover{background:rgba(255,255,255,.08);color:#fff;}
   .monthpick{display:flex;align-items:center;gap:8px;background:rgba(255,255,255,.06);border:1px solid rgba(255,255,255,.10);padding:6px 11px;border-radius:9px;}
   .monthpick label{font-size:11px;color:#9FB0C8;}
-  .monthpick input[type=month]{font-family:'Inter';font-size:13px;color:#fff;background:transparent;border:none;outline:none;color-scheme:dark;}
+  .monthpick input[type=date]{font-family:'Inter';font-size:13px;color:#fff;background:transparent;border:none;outline:none;color-scheme:dark;}
 
   /* KPI tổng ở đầu */
   .summary{background:var(--ink);padding:4px 0 26px;}
@@ -108,10 +108,10 @@
   <div class="topbar-inner">
     <div class="brand">
       <div class="mark">💰</div>
-      <div><h1>Dòng tiền</h1><p>Kiểm tra thay đổi tiền mặt</p></div>
+      <div><h1>Dòng tiền</h1><p>Kiểm tra thay đổi tiền mặt theo ngày</p></div>
     </div>
     <div class="right">
-      <div class="monthpick"><label for="month">Tháng</label><input type="month" id="month"></div>
+      <div class="monthpick"><label for="date">Ngày</label><input type="date" id="date"></div>
       <a href="/" class="back">← Dashboard</a>
       <a href="/logout" class="back">Đăng xuất</a>
     </div>
@@ -159,19 +159,19 @@
 
   <!-- Ghi chú -->
   <div class="panel">
-    <div class="panel-head"><h2>📝 Ghi chú tháng</h2><span class="savetag" id="noteSave"></span></div>
+    <div class="panel-head"><h2>📝 Ghi chú lần kiểm tra này</h2><span class="savetag" id="noteSave"></span></div>
     <div class="note-wrap">
       <textarea id="ghiChu" placeholder="Giải thích biến động, đối chiếu sổ quỹ, cam kết công nợ…"></textarea>
     </div>
   </div>
 
-  <!-- Bảng so sánh biến động giữa các tháng -->
+  <!-- Bảng so sánh biến động giữa các lần nhập (theo ngày) -->
   <div class="panel">
-    <div class="panel-head"><h2>📈 So sánh biến động giữa các tháng</h2></div>
+    <div class="panel-head"><h2>📈 So sánh biến động giữa các ngày</h2></div>
     <div class="tablescroll">
       <table>
         <thead><tr>
-          <th class="l">Tháng</th>
+          <th class="l">Ngày kiểm tra</th>
           <th>Tiền mặt</th>
           <th>Tiền hàng</th>
           <th>Tiền khác</th>
@@ -181,7 +181,7 @@
         <tbody id="cmpBody"></tbody>
       </table>
     </div>
-    <div class="emptyhint" id="cmpEmpty" style="display:none">Chưa có tháng nào có dữ liệu. Nhập số ở trên để bắt đầu.</div>
+    <div class="emptyhint" id="cmpEmpty" style="display:none">Chưa có ngày nào có dữ liệu. Chọn ngày và nhập số ở trên để bắt đầu.</div>
   </div>
 
 </div>
@@ -197,7 +197,8 @@ const fmt = n => (n||0).toLocaleString('vi-VN');
 const parseMoney = s => parseInt(String(s==null?'':s).replace(/[^\d-]/g,''),10) || 0;
 const GROUPS = { tienMat:'rowsMat', tienHang:'rowsHang', tienKhac:'rowsKhac' };
 const SUBID  = { tienMat:'stMat', tienHang:'stHang', tienKhac:'stKhac' };
-let MONTH = new Date().toISOString().slice(0,7);
+function todayStr(){ const d=new Date(), p=n=>String(n).padStart(2,'0'); return d.getFullYear()+'-'+p(d.getMonth()+1)+'-'+p(d.getDate()); }
+let DATE = todayStr();
 let DATA = { tienMat:[], tienHang:[], tienKhac:[], ghiChu:'' };
 
 async function api(url, opts){
@@ -240,7 +241,7 @@ function escapeHtml(s){ return String(s).replace(/[&<>"]/g, c=>({'&':'&amp;','<'
 // ── Ghi 1 khoản lên server rồi cập nhật lại ──
 async function saveItem(group, action, index, extra){
   try{
-    const body = Object.assign({ month:MONTH, group, action, index }, extra||{});
+    const body = Object.assign({ date:DATE, group, action, index }, extra||{});
     const r = await api('/api/cash-flow/item', {
       method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify(body)
     });
@@ -262,27 +263,27 @@ function applyTotals(t){
   document.getElementById('kKhac').innerHTML = fmt(t.tienKhac)+' <small>đ</small>';
   document.getElementById('kTong').innerHTML = fmt(t.tong)+' <small>đ</small>';
 }
-function applyDelta(delta, coPrev){
+function applyDelta(delta, coPrev, prevDate){
   const map = { tienMat:'dMat', tienHang:'dHang', tienKhac:'dKhac', tong:'dTong' };
   for(const k in map){
     const el = document.getElementById(map[k]);
-    if(!coPrev){ el.textContent='Chưa có tháng trước'; el.className='sub'; continue; }
+    if(!coPrev){ el.textContent='Chưa có lần trước'; el.className='sub'; continue; }
     const d = delta[k]||0;
     const sign = d>0 ? '▲ +' : (d<0 ? '▼ ' : '± ');
-    el.textContent = sign + fmt(d) + ' đ so tháng trước';
+    el.textContent = sign + fmt(d) + ' đ so ' + (prevDate ? ngayVN(prevDate) : 'lần trước');
     el.className = 'sub ' + (d>0?'up':(d<0?'down':''));
   }
 }
 
-// ── Tải số liệu 1 tháng ──
-async function loadMonth(){
+// ── Tải số liệu 1 ngày ──
+async function loadDay(){
   try{
-    const r = await api('/api/cash-flow?month='+MONTH);
+    const r = await api('/api/cash-flow?date='+DATE);
     if(!r.ok){ alert(r.message||'Lỗi tải'); return; }
     DATA = r.data;
     for(const g in GROUPS) renderGroup(g);
     applyTotals(r.totals);
-    applyDelta(r.delta, r.coPrev);
+    applyDelta(r.delta, r.coPrev, r.prevDate);
     document.getElementById('ghiChu').value = r.data.ghiChu || '';
   }catch(e){ if(e.message!=='no-access') console.error(e); }
 }
@@ -308,9 +309,9 @@ async function loadCompare(){
         chg = '<span class="chg '+cls+'">'+(d>0?'▲ ':(d<0?'▼ ':''))+sign+fmt(d)+'</span>';
       }
       const tr = document.createElement('tr');
-      if(row.month===MONTH) tr.className='cur-month';
+      if(row.date===DATE) tr.className='cur-month';
       tr.innerHTML =
-        '<td class="l">'+thangVN(row.month)+'</td>'+
+        '<td class="l">'+ngayVN(row.date)+'</td>'+
         '<td class="mono">'+fmt(row.tienMat)+'</td>'+
         '<td class="mono">'+fmt(row.tienHang)+'</td>'+
         '<td class="mono">'+fmt(row.tienKhac)+'</td>'+
@@ -320,7 +321,7 @@ async function loadCompare(){
     });
   }catch(e){ if(e.message!=='no-access') console.error(e); }
 }
-function thangVN(m){ const [y,mo]=m.split('-'); return 'Th'+Number(mo)+'/'+y; }
+function ngayVN(d){ const [y,mo,da]=d.split('-'); return da+'/'+mo+'/'+y; }
 
 // ── Thêm khoản ──
 document.querySelectorAll('.addrow button').forEach(btn=>{
@@ -332,15 +333,15 @@ const noteEl = document.getElementById('ghiChu');
 noteEl.addEventListener('blur', async ()=>{
   try{
     await api('/api/cash-flow/note',{method:'POST',headers:{'Content-Type':'application/json'},
-      body:JSON.stringify({month:MONTH, ghiChu:noteEl.value})});
+      body:JSON.stringify({date:DATE, ghiChu:noteEl.value})});
     const tag=document.getElementById('noteSave'); tag.textContent='Đã lưu'; tag.className='savetag ok';
     setTimeout(()=>{tag.textContent='';},1500);
   }catch(e){}
 });
 
-// ── Đổi tháng ──
-const monthEl = document.getElementById('month');
-monthEl.addEventListener('change', ()=>{ MONTH = monthEl.value || MONTH; loadMonth(); loadCompare(); });
+// ── Đổi ngày ──
+const dateEl = document.getElementById('date');
+dateEl.addEventListener('change', ()=>{ DATE = dateEl.value || DATE; loadDay(); loadCompare(); });
 
 // ── Khởi động: kiểm tra quyền admin thật trước ──
 (async ()=>{
@@ -348,8 +349,8 @@ monthEl.addEventListener('change', ()=>{ MONTH = monthEl.value || MONTH; loadMon
     const me = await (await fetch('/api/me')).json();
     if(!me || me.role!=='admin' || me.khongBoGhim){ showGate(); return; }
     document.getElementById('app').style.display='block';
-    monthEl.value = MONTH;
-    await loadMonth();
+    dateEl.value = DATE;
+    await loadDay();
     await loadCompare();
   }catch(e){ showGate(); }
 })();
