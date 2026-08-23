@@ -413,10 +413,18 @@ async function fetchAccount(acc, token, days, since, until) {
           for (const ad of ads) {
             const cid = ad.campaign_id;
             if (!cid || !byId[cid]) continue;
-            const link = (ad.creative && ad.creative.effective_object_story_id
-                    ? `https://www.facebook.com/${ad.creative.effective_object_story_id}` : null)
-              || ad.preview_shareable_link
-              || null;
+            // Ưu tiên LINK XEM TRƯỚC của Meta: mở được trên app điện thoại và cho cả
+            // người KHÔNG có quyền vào tài khoản QC (nhân viên bấm bằng FB cá nhân).
+            // Bài quảng cáo ẩn (dark post) không xem được qua permalink thường → phải dùng link này.
+            let link = ad.preview_shareable_link || null;
+            if (!link && ad.creative && ad.creative.effective_object_story_id) {
+              // Fallback: ghép permalink theo dạng chuẩn (mở tốt hơn dạng {page}_{post} cũ)
+              const sid = String(ad.creative.effective_object_story_id);
+              const us = sid.indexOf('_');
+              link = us > 0
+                ? `https://www.facebook.com/permalink.php?story_fbid=${sid.slice(us + 1)}&id=${sid.slice(0, us)}`
+                : `https://www.facebook.com/${sid}`;
+            }
             if (!link) continue;
             const active = ad.effective_status === 'ACTIVE';
             if (!chosen[cid] || (active && !chosen[cid].active)) chosen[cid] = { link, active };
