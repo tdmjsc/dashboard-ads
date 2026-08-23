@@ -413,18 +413,20 @@ async function fetchAccount(acc, token, days, since, until) {
           for (const ad of ads) {
             const cid = ad.campaign_id;
             if (!cid || !byId[cid]) continue;
-            // Ưu tiên LINK XEM TRƯỚC của Meta: mở được trên app điện thoại và cho cả
-            // người KHÔNG có quyền vào tài khoản QC (nhân viên bấm bằng FB cá nhân).
-            // Bài quảng cáo ẩn (dark post) không xem được qua permalink thường → phải dùng link này.
-            let link = ad.preview_shareable_link || null;
-            if (!link && ad.creative && ad.creative.effective_object_story_id) {
-              // Fallback: ghép permalink theo dạng chuẩn (mở tốt hơn dạng {page}_{post} cũ)
+            // Bài đều ĐÃ ĐĂNG CÔNG KHAI lên page → trỏ thẳng vào BÀI GỐC: mở ra ngay
+            // trên app điện thoại, có sẵn bình luận, KHÔNG có màn hình "chấp nhận" như
+            // link xem trước. Phải dùng permalink.php?story_fbid=..&id=.. (dạng ghép
+            // {page}_{post} app Facebook thường không mở được → báo "Nội dung không hiển thị").
+            let link = null;
+            if (ad.creative && ad.creative.effective_object_story_id) {
               const sid = String(ad.creative.effective_object_story_id);
               const us = sid.indexOf('_');
               link = us > 0
                 ? `https://www.facebook.com/permalink.php?story_fbid=${sid.slice(us + 1)}&id=${sid.slice(0, us)}`
                 : `https://www.facebook.com/${sid}`;
             }
+            // Chỉ khi không lấy được bài gốc mới dùng link xem trước làm phương án dự phòng
+            if (!link) link = ad.preview_shareable_link || null;
             if (!link) continue;
             const active = ad.effective_status === 'ACTIVE';
             if (!chosen[cid] || (active && !chosen[cid].active)) chosen[cid] = { link, active };
