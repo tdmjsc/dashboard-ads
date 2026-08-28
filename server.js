@@ -1786,8 +1786,9 @@ function mapProductReport(j, owners) {
     const name = pick(o, ['tenSanPham', 'tenSp', 'sanPham', 'itemName', 'productName', 'ten', 'name']) || '';
     const contact = +pick(o, ['soLuongContact', 'soLuongContactThucTe', 'soContact', 'contact', 'tongSoContact', 'soLuongContactPercent']) || 0;
     const chot = +pick(o, ['soLuongChotDon', 'soLuongChotDonThucTe', 'soDonChot', 'soDonHang', 'donChot', 'soDon', 'chot', 'tongSoDonHang']) || 0;
+    const soSP = +pick(o, ['soLuongSanPham', 'soLuongSanPhamChot', 'soLuongSanPhamThucTe', 'soLuongSp', 'tongSanPham', 'tongSoSanPham', 'soSanPham', 'slSanPham', 'soSP']) || 0;
     const own = owners[normProd(name)];
-    return { product: String(name).trim(), manager: own ? own.manager : '', contact, chot };
+    return { product: String(name).trim(), manager: own ? own.manager : '', contact, chot, soSP };
   });
 }
 
