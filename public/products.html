@@ -85,6 +85,8 @@
       <option value="contact_asc">Contact: thấp → cao</option>
       <option value="chot_desc">Đơn chốt: cao → thấp</option>
       <option value="chot_asc">Đơn chốt: thấp → cao</option>
+      <option value="sp_desc">SL sản phẩm chốt: cao → thấp</option>
+      <option value="sp_asc">SL sản phẩm chốt: thấp → cao</option>
       <option value="name_asc">Tên A → Z</option>
     </select>
     <label class="chk"><input type="checkbox" id="hidezero" checked> Ẩn SP không có contact &amp; đơn chốt</label>
@@ -97,6 +99,7 @@
         <th>Người quản lý</th>
         <th class="num" data-sort="contact_desc">Số contact</th>
         <th class="num" data-sort="chot_desc">Số đơn chốt</th>
+        <th class="num" data-sort="sp_desc">SL sản phẩm chốt</th>
         <th class="num">Tỷ lệ chốt</th>
       </tr>
     </thead>
@@ -142,18 +145,20 @@ function render(){
   const dir=st.sort.endsWith('asc')?1:-1;
   if(st.sort.startsWith('name')) rows.sort((a,b)=>(a.product||'').localeCompare(b.product||'','vi')*dir);
   else if(st.sort.startsWith('chot')) rows.sort((a,b)=>((a.chot||0)-(b.chot||0))*dir);
+  else if(st.sort.startsWith('sp')) rows.sort((a,b)=>((a.soSP||0)-(b.soSP||0))*dir);
   else rows.sort((a,b)=>((a.contact||0)-(b.contact||0))*dir);
-  if(!rows.length){ tb.innerHTML='<tr><td colspan="5" class="empty">Không có sản phẩm phù hợp.</td></tr>'; return; }
-  let C=0,K=0;
-  let html=rows.map(r=>{ C+=r.contact||0; K+=r.chot||0;
+  if(!rows.length){ tb.innerHTML='<tr><td colspan="6" class="empty">Không có sản phẩm phù hợp.</td></tr>'; return; }
+  let C=0,K=0,S=0;
+  let html=rows.map(r=>{ C+=r.contact||0; K+=r.chot||0; S+=r.soSP||0;
     return `<tr>
       <td>${esc(r.product)||'<span class="muted">(không tên)</span>'}</td>
       <td>${r.manager?`<span class="chip">${esc(r.manager)}</span>`:'<span class="chip none">chưa gán</span>'}</td>
       <td class="num">${vnd(r.contact)}</td>
       <td class="num ok">${vnd(r.chot)}</td>
+      <td class="num">${vnd(r.soSP)}</td>
       <td class="num">${pct(r.chot,r.contact)}</td>
     </tr>`; }).join('');
-  html+=`<tr class="total"><td>Tổng (${rows.length} SP)</td><td></td><td class="num">${vnd(C)}</td><td class="num">${vnd(K)}</td><td class="num">${pct(K,C)}</td></tr>`;
+  html+=`<tr class="total"><td>Tổng (${rows.length} SP)</td><td></td><td class="num">${vnd(C)}</td><td class="num">${vnd(K)}</td><td class="num">${vnd(S)}</td><td class="num">${pct(K,C)}</td></tr>`;
   tb.innerHTML=html;
 }
 
