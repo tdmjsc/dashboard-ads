@@ -99,7 +99,7 @@ function setRange(kind){
   else if(kind==='yesterday'){ const y=new Date(t); y.setDate(t.getDate()-1); $('from').value=fmt(y); $('to').value=fmt(y); }
   else { $('from').value=fmt(new Date(t.getFullYear(),t.getMonth(),1)); $('to').value=fmt(t); }
 }
-setRange('month');
+setRange('today');
 
 function esc(s){ return String(s==null?'':s).replace(/[&<>"]/g, c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c])); }
 
