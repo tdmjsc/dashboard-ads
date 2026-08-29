@@ -721,9 +721,11 @@ app.use((req, res, next) => {
       '/salary.html',              // Lương Marketing
       '/salary-product.html',      // Lương Phát triển sản phẩm
       '/ket-qua-kinh-doanh.html',  // Kết quả kinh doanh
+      '/attribution.html',         // Đơn theo chiến dịch / nguồn
     ];
     const API_CHI_ADMIN =
-         p.startsWith('/api/salary')            // gồm cả /api/salary-product/*
+         p.startsWith('/api/attribution')       // Đơn theo chiến dịch / nguồn
+      || p.startsWith('/api/salary')            // gồm cả /api/salary-product/*
       || p.startsWith('/api/business-result')   // Kết quả kinh doanh
       || p.startsWith('/api/bank-accounts')     // STK nhân viên (chuyển lương)
       || p.startsWith('/api/meta-cache')        // ghim / xoá / nạp lại cache
@@ -1643,6 +1645,144 @@ app.get('/api/marketing/nguon-fields', async (req, res) => {
       detailKeys: withDetails ? Object.keys(withDetails.details[0]) : null,
     });
   } catch (e) { res.json({ ok: false, message: e.message }); }
+});
+
+/* ===================== QUY ĐỔI ĐƠN ↔ CHIẾN DỊCH QUẢNG CÁO (trang riêng) =====================
+   Trang /attribution.html — TÁCH RIÊNG, không ảnh hưởng hệ thống cũ.
+   - Đơn Sandbox gom theo NGUỒN (sourceName ≈ landing page).
+   - Chi tiêu Meta (theo chiến dịch) cộng dồn về đúng nguồn (khớp theo từ khoá tên).
+   - Job nền + polling để tránh timeout do Sandbox giới hạn ~62s/trang.
+   ============================================================================================= */
+const ATTR = { fetching: false, since: null, until: null, bySource: {}, loaded: 0, error: null, lastUpdated: null };
+
+async function fetchAttribution(since, until) {
+  ATTR.fetching = true; ATTR.since = since; ATTR.until = until;
+  ATTR.bySource = {}; ATTR.loaded = 0; ATTR.error = null;
+  const seen = new Set();
+  let rateRetries = 0;
+  try {
+    for (let page = 1; page <= MKT_MAX_PAGES; page++) {
+      const r = await fetch(`${SANDBOX_BASE}/DonHangLogistic/GetOrderByConditions`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${SANDBOX_TOKEN}` },
+        body: JSON.stringify({
+          idChiNhanh: SANDBOX_BRANCH, kieuNgay: 'NgayTao',
+          tuNgay: since, denNgay: addDay(until),
+          pageInfo: { page, pageSize: 100 }, sorts: [],
+          isIncludeDetail: false, isHistories: false,
+        }),
+      });
+      const j = await r.json().catch(() => ({ success: false, message: 'Phản hồi không hợp lệ' }));
+      if (!j.success) {
+        const msg = String(j.message || j.Message || '');
+        if (/chờ|cần chờ|giây|rate|quá nhanh/i.test(msg) && rateRetries < 8) {
+          const m = msg.match(/(\d+)\s*s/); await sleep(((m ? Number(m[1]) : 60) + 3) * 1000);
+          rateRetries++; page--; continue;
+        }
+        ATTR.error = msg || 'API Sandbox báo lỗi'; break;
+      }
+      rateRetries = 0;
+      const orders = j.data || [];
+      let newSeen = 0;
+      for (const o of orders) {
+        const id = String(o.orderId || o.orderCode || o.orderNumber || '');
+        if (!id || seen.has(id)) continue;
+        seen.add(id); newSeen++;
+        const d = (o.createTime || '').slice(0, 10);
+        if (d && (d < since || d > until)) continue;
+        const key = ((o.sourceName || '').trim()) || '(không có nguồn)';
+        const s = ATTR.bySource[key] || (ATTR.bySource[key] = { nguon: key, sourceId: o.sourceId || '', don: 0, chot: 0, doanhThu: 0, kenh: {} });
+        s.don += 1;
+        if (String(o.orderConfirmId) === '1') { s.chot += 1; s.doanhThu += Number(o.totalPrice || 0); }
+        const kenh = ((o.utmSource || '').toLowerCase().trim()) || '(trống)';
+        s.kenh[kenh] = (s.kenh[kenh] || 0) + 1;
+      }
+      ATTR.loaded = seen.size;
+      if (orders.length < 100) break;
+      if (newSeen === 0) break;
+      await sleep(MKT_PAGE_DELAY_MS);
+    }
+    ATTR.lastUpdated = new Date().toISOString();
+  } catch (e) { ATTR.error = e.message; }
+  finally { ATTR.fetching = false; }
+}
+
+// Ghép chi tiêu Meta (theo chiến dịch) về các nguồn theo trùng TỪ KHOÁ tên.
+function buildAttributionRows() {
+  const stripD = s => String(s || '').toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '').replace(/đ/g, 'd');
+  const STOP = new Set(['td', 'auto', 'ct', 'oto', 'o', 'to', 'sp', 'ban', 'le', 'si', 'the', 'hang', 'moi', 'va', 'cho', 'ad', 'ads', 'camp', 'chien', 'dich', 'test', 'new', 'tdmjsc', 'tdm', 'ver', 'video', 'anh', 'copy', 'x']);
+  const tok = s => stripD(s).replace(/[^a-z0-9]+/g, ' ').split(' ').filter(w => w.length >= 2 && !STOP.has(w) && !/^\d+$/.test(w));
+
+  const sources = Object.values(ATTR.bySource);
+  sources.forEach(s => { s.chiTieu = 0; s.campaigns = []; });
+  const srcTok = sources.map(s => ({ s, t: new Set(tok(s.nguon)) }));
+
+  const camps = (cachedCampaigns(ATTR.since, ATTR.until) || [])
+    .map(c => ({ name: c.name, employee: c.employee, spend: (c.daily || []).reduce((a, x) => a + (x.spent || 0), 0) }))
+    .filter(c => c.spend > 0);
+
+  const unmatched = [];
+  for (const c of camps) {
+    const ct = tok(c.name);
+    let best = null, bestScore = 0;
+    for (const { s, t } of srcTok) {
+      let sc = 0; for (const w of ct) if (t.has(w)) sc++;
+      if (sc > bestScore) { bestScore = sc; best = s; }
+    }
+    if (best && bestScore >= 2) { best.chiTieu += c.spend; best.campaigns.push({ name: c.name, spend: c.spend }); }
+    else unmatched.push(c);
+  }
+  const rows = sources.map(s => ({
+    nguon: s.nguon, don: s.don, chot: s.chot, doanhThu: s.doanhThu, kenh: s.kenh,
+    chiTieu: Math.round(s.chiTieu),
+    cpa: s.don ? Math.round(s.chiTieu / s.don) : 0,
+    cpChot: s.chot ? Math.round(s.chiTieu / s.chot) : 0,
+    roas: s.chiTieu ? Math.round(s.doanhThu / s.chiTieu * 100) / 100 : 0,
+    campaigns: s.campaigns.sort((a, b) => b.spend - a.spend),
+  })).sort((a, b) => b.don - a.don);
+  const totals = {
+    don: rows.reduce((a, r) => a + r.don, 0),
+    chot: rows.reduce((a, r) => a + r.chot, 0),
+    doanhThu: rows.reduce((a, r) => a + r.doanhThu, 0),
+    chiTieu: Math.round(camps.reduce((a, c) => a + c.spend, 0)),
+    chiTieuKhop: rows.reduce((a, r) => a + r.chiTieu, 0),
+  };
+  return { rows, unmatched: unmatched.sort((a, b) => b.spend - a.spend), totals };
+}
+
+// Bắt đầu tải dữ liệu đơn (nền). Trả về ngay.
+app.post('/api/attribution/refresh', express.json(), (req, res) => {
+  const me = req.session.user || {};
+  if (me.role !== 'admin') return res.status(403).json({ ok: false, message: 'Chỉ admin' });
+  if (!SANDBOX_TOKEN) return res.json({ ok: false, message: 'Chưa khai SANDBOX_TOKEN' });
+  const since = (req.body && req.body.since) || new Date().toISOString().slice(0, 10);
+  const until = (req.body && req.body.until) || since;
+  if (ATTR.fetching) return res.json({ ok: true, started: false, message: 'Đang tải…' });
+  fetchAttribution(since, until).catch(() => {});
+  // Nạp sẵn chi tiêu Meta cho khoảng ngày này (nếu chưa có cache)
+  if (!cachedCampaigns(since, until)) getCampaigns(since, until, {}).catch(() => {});
+  res.json({ ok: true, started: true });
+});
+
+// Trả báo cáo (đơn theo nguồn + chi tiêu Meta đã ghép).
+app.get('/api/attribution/report', (req, res) => {
+  const me = req.session.user || {};
+  if (me.role !== 'admin') return res.status(403).json({ ok: false, message: 'Chỉ admin' });
+  const since = req.query.since || new Date().toISOString().slice(0, 10);
+  const until = req.query.until || since;
+  const rangeReady = ATTR.since === since && ATTR.until === until && ATTR.lastUpdated;
+  const metaReady = !!cachedCampaigns(since, until);
+  const built = rangeReady ? buildAttributionRows() : { rows: [], unmatched: [], totals: null };
+  res.json({
+    ok: true, since, until,
+    fetching: ATTR.fetching,
+    rangeReady: !!rangeReady,
+    metaReady,
+    ordersLoaded: (ATTR.since === since && ATTR.until === until) ? ATTR.loaded : 0,
+    error: ATTR.error,
+    lastUpdated: ATTR.lastUpdated,
+    rows: built.rows, unmatchedCampaigns: built.unmatched, totals: built.totals,
+  });
 });
 
 // (TẠM — tự dò) Thử lần lượt các kiểu ngày để biết kiểu nào API lọc theo NGÀY TẠO.

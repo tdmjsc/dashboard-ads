@@ -1,0 +1,233 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Đơn theo chiến dịch — TDMJSC</title>
+<link rel="manifest" href="/manifest.json">
+<meta name="theme-color" content="#0B1322">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="TDM Ads">
+<link rel="apple-touch-icon" href="/icons/icon-192.png">
+<style>
+  *{box-sizing:border-box;}
+  body{margin:0;font-family:'Inter',system-ui,sans-serif;background:#0B1322;color:#E7EEF8;}
+  header{background:#10192B;border-bottom:1px solid rgba(255,255,255,.07);padding:14px 18px;}
+  .top{display:flex;align-items:center;gap:12px;flex-wrap:wrap;}
+  h1{font-size:17px;margin:0;}
+  .sub{color:#9FB0C8;font-size:12px;margin:2px 0 0;font-weight:400;}
+  .quick{display:flex;gap:6px;}
+  .quick button{font-family:'Inter';font-size:11.5px;color:#C4D0E2;background:rgba(255,255,255,.05);border:1px solid rgba(255,255,255,.10);padding:6px 9px;border-radius:8px;cursor:pointer;}
+  .quick button:hover{background:rgba(255,255,255,.12);color:#fff;}
+  .daterange{display:flex;align-items:center;gap:8px;background:rgba(255,255,255,.06);border:1px solid rgba(255,255,255,.10);padding:7px 11px;border-radius:9px;}
+  .daterange label{font-size:11px;color:#9FB0C8;}
+  .daterange input[type=date]{font-family:'Inter';font-size:12.5px;color:#fff;background:transparent;border:none;outline:none;color-scheme:dark;}
+  .btn{font-family:'Inter';font-size:13px;font-weight:600;color:#fff;background:#3D5AFE;border:none;padding:8px 16px;border-radius:9px;cursor:pointer;white-space:nowrap;}
+  .btn:hover{background:#2f49d6;} .btn:disabled{opacity:.5;cursor:not-allowed;}
+  .link{color:#C4D0E2;font-size:13px;text-decoration:none;border:1px solid rgba(255,255,255,.14);padding:7px 12px;border-radius:9px;white-space:nowrap;}
+  .link:hover{background:rgba(255,255,255,.08);color:#fff;}
+  main{padding:18px;max-width:1180px;margin:0 auto;}
+  .status{font-size:13px;color:#9FB0C8;margin:4px 0 16px;min-height:18px;}
+  .status .warn{color:#ffc56b;} .status .err{color:#ff9b8a;}
+  h2{font-size:14px;color:#C4D0E2;margin:22px 0 8px;font-weight:600;}
+  table{width:100%;border-collapse:collapse;background:#101B2E;border-radius:12px;overflow:hidden;}
+  th,td{padding:11px 12px;text-align:left;font-size:13px;border-bottom:1px solid rgba(255,255,255,.05);}
+  th{background:#16233A;color:#9FB0C8;font-weight:600;font-size:11.5px;text-transform:uppercase;letter-spacing:.02em;}
+  td.num,th.num{text-align:right;font-variant-numeric:tabular-nums;}
+  tr:last-child td{border-bottom:none;}
+  tr.total td{background:#16233A;font-weight:700;color:#fff;}
+  .rev{color:#7BE3B5;font-weight:600;}
+  .cpa{color:#ffc56b;}
+  .roas-good{color:#7BE3B5;font-weight:600;} .roas-bad{color:#ff9b8a;font-weight:600;}
+  .muted{color:#6B7C97;}
+  .chip{display:inline-block;padding:1px 7px;border-radius:20px;background:rgba(61,90,254,.15);color:#9DB2FF;font-size:11px;margin:1px 2px;}
+  .empty{padding:26px;text-align:center;color:#6B7C97;font-size:14px;}
+  .camps{font-size:11.5px;color:#8fa3c0;}
+  .toggle{cursor:pointer;color:#9DB2FF;font-size:11.5px;text-decoration:underline;}
+  .note{font-size:12px;color:#8091ab;background:rgba(255,255,255,.03);border:1px solid rgba(255,255,255,.07);border-radius:9px;padding:10px 12px;margin:6px 0 14px;line-height:1.5;}
+  @media(max-width:720px){ h1{font-size:15px;} th,td{padding:8px 7px;font-size:11.5px;} .daterange{flex:1 1 100%;} }
+  .user-badge{display:inline-flex;align-items:center;gap:6px;font-size:13px;color:#9DB2FF;background:rgba(157,178,255,.1);border:1px solid rgba(157,178,255,.2);padding:7px 12px;border-radius:9px;font-weight:600;white-space:nowrap;}
+</style>
+</head>
+<body>
+<header>
+  <div class="top">
+    <div style="flex:1;min-width:190px;">
+      <h1>📊 Đơn theo chiến dịch / nguồn</h1>
+      <p class="sub">Đơn Sandbox gom theo NGUỒN (landing page) · ghép chi tiêu Meta để tính CPA / ROAS</p>
+    </div>
+    <div class="quick">
+      <button data-range="today">Hôm nay</button>
+      <button data-range="yesterday">Hôm qua</button>
+      <button data-range="7d">7 ngày</button>
+      <button data-range="month">Tháng này</button>
+    </div>
+    <div class="daterange">
+      <label>Từ</label><input type="date" id="from">
+      <span style="color:#5C6E8C;">→</span>
+      <label>Đến</label><input type="date" id="to">
+    </div>
+    <button class="btn" id="loadBtn">Tải dữ liệu</button>
+    <a href="/" class="link">← Dashboard</a>
+    <span class="user-badge" id="userBadge"></span>
+  </div>
+</header>
+
+<main>
+  <div class="status" id="status">Chọn khoảng ngày rồi bấm “Tải dữ liệu”.</div>
+  <div class="note">
+    ⚠️ Vì bạn chạy <b>nhiều chiến dịch trên 1 landing page</b>, đơn được gom theo <b>nguồn (landing page)</b>.
+    Chi tiêu Meta được cộng dồn về nguồn bằng cách <b>khớp từ khoá tên chiến dịch ↔ tên nguồn</b> (tự động).
+    Chiến dịch không khớp được liệt kê ở bảng dưới cùng — nếu nhiều, nên đặt tên chiến dịch chứa tên sản phẩm giống tên nguồn để khớp tốt hơn.
+  </div>
+
+  <h2>Hiệu quả theo nguồn</h2>
+  <table id="tbl">
+    <thead>
+      <tr>
+        <th>Nguồn (landing page)</th>
+        <th>Kênh</th>
+        <th class="num">Số đơn</th>
+        <th class="num">Chốt</th>
+        <th class="num">Doanh thu</th>
+        <th class="num">Chi tiêu Meta</th>
+        <th class="num">CP/đơn</th>
+        <th class="num">CP/chốt</th>
+        <th class="num">ROAS</th>
+      </tr>
+    </thead>
+    <tbody id="rows"><tr><td colspan="9" class="empty">Chưa có dữ liệu.</td></tr></tbody>
+  </table>
+
+  <h2 id="unmatchedHead" style="display:none;">Chiến dịch Meta chưa khớp nguồn <span class="muted" id="unmatchedSum"></span></h2>
+  <table id="unmatchedTbl" style="display:none;">
+    <thead>
+      <tr><th>Tên chiến dịch</th><th>Nhân viên</th><th class="num">Chi tiêu</th></tr>
+    </thead>
+    <tbody id="unmatchedRows"></tbody>
+  </table>
+</main>
+
+<script>
+const vnd = n => (Number(n)||0).toLocaleString('vi-VN');
+const $ = id => document.getElementById(id);
+const fmt = d => `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`;
+const esc = s => String(s==null?'':s).replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+
+function setRange(kind){
+  const t=new Date();
+  if(kind==='today'){$('from').value=fmt(t);$('to').value=fmt(t);}
+  else if(kind==='yesterday'){const y=new Date(t);y.setDate(t.getDate()-1);$('from').value=fmt(y);$('to').value=fmt(y);}
+  else if(kind==='7d'){const a=new Date(t);a.setDate(t.getDate()-6);$('from').value=fmt(a);$('to').value=fmt(t);}
+  else {$('from').value=fmt(new Date(t.getFullYear(),t.getMonth(),1));$('to').value=fmt(t);}
+}
+setRange('today');
+
+let pollTimer=null;
+
+function kenhChips(kenh){
+  const ks=Object.entries(kenh||{}).sort((a,b)=>b[1]-a[1]);
+  if(!ks.length) return '<span class="muted">–</span>';
+  return ks.map(([k,v])=>`<span class="chip">${esc(k)}: ${vnd(v)}</span>`).join('');
+}
+
+function render(d){
+  const tb=$('rows');
+  const rows=d.rows||[];
+  if(!rows.length){ tb.innerHTML='<tr><td colspan="9" class="empty">Không có đơn trong khoảng ngày này.</td></tr>'; }
+  else {
+    let html=rows.map((r,i)=>{
+      const roasCls = r.roas>=1 ? 'roas-good' : (r.chiTieu>0?'roas-bad':'muted');
+      const campList = (r.campaigns&&r.campaigns.length)
+        ? `<div class="camps" id="camp${i}" style="display:none;">${r.campaigns.map(c=>`• ${esc(c.name)} — ${vnd(c.spend)}đ`).join('<br>')}</div>
+           <span class="toggle" onclick="var e=document.getElementById('camp${i}');e.style.display=e.style.display==='none'?'block':'none';">${r.campaigns.length} chiến dịch ▾</span>`
+        : '<span class="muted" style="font-size:11px;">chưa khớp CD</span>';
+      return `<tr>
+        <td>${esc(r.nguon)}<br>${campList}</td>
+        <td>${kenhChips(r.kenh)}</td>
+        <td class="num">${vnd(r.don)}</td>
+        <td class="num rev">${vnd(r.chot)}</td>
+        <td class="num rev">${vnd(r.doanhThu)}</td>
+        <td class="num cpa">${r.chiTieu?vnd(r.chiTieu):'<span class="muted">–</span>'}</td>
+        <td class="num">${r.cpa?vnd(r.cpa):'<span class="muted">–</span>'}</td>
+        <td class="num">${r.cpChot?vnd(r.cpChot):'<span class="muted">–</span>'}</td>
+        <td class="num ${roasCls}">${r.chiTieu?r.roas:'<span class="muted">–</span>'}</td>
+      </tr>`;
+    }).join('');
+    const t=d.totals||{};
+    html+=`<tr class="total">
+      <td>Tổng (${rows.length} nguồn)</td><td></td>
+      <td class="num">${vnd(t.don)}</td>
+      <td class="num">${vnd(t.chot)}</td>
+      <td class="num">${vnd(t.doanhThu)}</td>
+      <td class="num">${vnd(t.chiTieuKhop)}</td>
+      <td class="num" colspan="3">Tổng chi tiêu Meta: ${vnd(t.chiTieu)}đ</td>
+    </tr>`;
+    tb.innerHTML=html;
+  }
+  // Chiến dịch chưa khớp
+  const um=d.unmatchedCampaigns||[];
+  if(um.length){
+    const sum=um.reduce((a,c)=>a+c.spend,0);
+    $('unmatchedHead').style.display=''; $('unmatchedTbl').style.display='';
+    $('unmatchedSum').textContent='· '+um.length+' chiến dịch · '+vnd(Math.round(sum))+'đ chưa được gán nguồn';
+    $('unmatchedRows').innerHTML=um.map(c=>`<tr><td>${esc(c.name)}</td><td class="muted">${esc(c.employee)||'–'}</td><td class="num cpa">${vnd(Math.round(c.spend))}</td></tr>`).join('');
+  } else { $('unmatchedHead').style.display='none'; $('unmatchedTbl').style.display='none'; }
+}
+
+async function poll(){
+  const since=$('from').value, until=$('to').value;
+  try{
+    const res=await fetch(`/api/attribution/report?since=${since}&until=${until}`);
+    if(res.status===403){ $('status').innerHTML='<span class="err">Chỉ tài khoản admin xem được trang này.</span>'; stopPoll(); return; }
+    const d=await res.json();
+    if(!d.ok){ $('status').innerHTML='<span class="err">Lỗi: '+esc(d.message||'')+'</span>'; stopPoll(); return; }
+    let msg='';
+    if(d.fetching){ msg='<span class="warn">Đang tải đơn từ Sandbox… ('+vnd(d.ordersLoaded)+' đơn) — API giới hạn ~60s/trang, vui lòng đợi.</span>'; }
+    else if(d.error){ msg='<span class="err">Lỗi tải đơn: '+esc(d.error)+'</span>'; }
+    else if(d.rangeReady){
+      const t=new Date(d.lastUpdated||Date.now());
+      msg='Cập nhật '+t.toLocaleString('vi-VN')+' · '+vnd(d.ordersLoaded)+' đơn'+(d.metaReady?'':' · <span class="warn">đang nạp chi tiêu Meta, làm mới sau ~30s</span>');
+    } else { msg='<span class="warn">Chưa có dữ liệu cho khoảng ngày này — bấm “Tải dữ liệu”.</span>'; }
+    $('status').innerHTML=msg;
+    if(d.rangeReady) render(d);
+    // Tiếp tục poll nếu còn đang tải đơn HOẶC Meta chưa sẵn sàng
+    if(d.fetching || (d.rangeReady && !d.metaReady)) { /* keep polling */ }
+    else stopPoll();
+  }catch(e){ $('status').innerHTML='<span class="err">Không kết nối được máy chủ: '+esc(e.message)+'</span>'; }
+}
+function startPoll(){ stopPoll(); poll(); pollTimer=setInterval(poll, 6000); }
+function stopPoll(){ if(pollTimer){ clearInterval(pollTimer); pollTimer=null; } }
+
+async function load(){
+  const since=$('from').value, until=$('to').value;
+  if(!since||!until) return;
+  $('loadBtn').disabled=true;
+  $('status').innerHTML='<span class="warn">Bắt đầu tải…</span>';
+  try{
+    const r=await fetch('/api/attribution/refresh',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({since,until})});
+    if(r.status===403){ $('status').innerHTML='<span class="err">Chỉ tài khoản admin xem được trang này.</span>'; return; }
+    const d=await r.json();
+    if(!d.ok){ $('status').innerHTML='<span class="err">Lỗi: '+esc(d.message||'')+'</span>'; return; }
+    startPoll();
+  }catch(e){ $('status').innerHTML='<span class="err">Không kết nối được máy chủ: '+esc(e.message)+'</span>'; }
+  finally{ setTimeout(()=>{$('loadBtn').disabled=false;},1500); }
+}
+
+$('loadBtn').addEventListener('click', load);
+document.querySelectorAll('.quick button').forEach(b=>b.addEventListener('click',()=>{setRange(b.dataset.range);}));
+
+// Nếu server đã có sẵn dữ liệu cho khoảng ngày → hiện luôn; nếu không, chờ bấm nút.
+fetch('/api/me').then(r=>r.ok?r.json():null).then(me=>{
+  if(me&&me.displayName){ const b=$('userBadge'); if(b) b.textContent='👤 '+me.displayName; }
+  poll();
+}).catch(()=>{});
+</script>
+<script>
+if ('serviceWorker' in navigator) {
+  window.addEventListener('load', () => { navigator.serviceWorker.register('/service-worker.js').catch(() => {}); });
+}
+</script>
+</body>
+</html>
