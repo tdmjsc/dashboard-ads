@@ -15,7 +15,7 @@ jobs:
           host: 46.202.138.149
           port: 65002
           username: u422036594
-          password: ${{ secrets.SSH_PASSWORD }}
+          key: ${{ secrets.SSH_KEY }}
           script: |
             set -e
             PROJECT=/home/u422036594/domains/ads.tdmjsc.com/nodejs
