@@ -1590,6 +1590,61 @@ app.get('/api/marketing/sample', async (req, res) => {
   } catch (e) { res.json({ error: e.message }); }
 });
 
+// (TẠM — soi NGUỒN/CHIẾN DỊCH của đơn) Cần đăng nhập admin.
+//   Mở /api/marketing/nguon-fields?since=2026-08-01&until=2026-08-29
+//   → xem đơn Sandbox có trường nào chứa nguồn / UTM / link landing page hay không,
+//     kèm vài giá trị mẫu để biết Ladipage đã đẩy campaign vào Sandbox tới đâu.
+app.get('/api/marketing/nguon-fields', async (req, res) => {
+  const me = req.session.user || {};
+  if (me.role !== 'admin') return res.status(403).json({ ok: false, message: 'Chỉ admin mới xem được' });
+  if (!SANDBOX_TOKEN) return res.json({ ok: false, message: 'Chưa khai SANDBOX_TOKEN' });
+  const today = new Date().toISOString().slice(0, 10);
+  const since = req.query.since || (today.slice(0, 8) + '01');
+  const until = req.query.until || today;
+  const addDay = s => { const d = new Date(s + 'T00:00:00Z'); d.setUTCDate(d.getUTCDate() + 1); return d.toISOString().slice(0, 10); };
+  // Tên trường "giống nguồn/chiến dịch/link"
+  const SRC_RE = /nguon|source|utm|campaign|chiendich|\bref\b|marketing|\blp\b|landing|link|url|web|page|origin|kenh|goc|form|note|ghichu|khac/i;
+  try {
+    const r = await fetch(`${SANDBOX_BASE}/DonHangLogistic/GetOrderByConditions`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${SANDBOX_TOKEN}` },
+      body: JSON.stringify({
+        idChiNhanh: SANDBOX_BRANCH, kieuNgay: 'NgayTao',
+        tuNgay: since, denNgay: addDay(until),
+        pageInfo: { page: Number(req.query.pi) || 1, pageSize: 100 }, sorts: [],
+        isIncludeDetail: true, isHistories: false,
+      }),
+    });
+    const json = await r.json().catch(() => ({ success: false }));
+    const orders = json.data || [];
+    // Gộp tất cả tên trường của các đơn trong trang
+    const allKeys = new Set();
+    orders.forEach(o => Object.keys(o || {}).forEach(k => allKeys.add(k)));
+    // Các trường giống nguồn + vài giá trị mẫu (không rỗng, không trùng)
+    const srcKeys = [...allKeys].filter(k => SRC_RE.test(k));
+    const srcSamples = {};
+    srcKeys.forEach(k => {
+      const vals = [];
+      for (const o of orders) {
+        const v = o[k];
+        if (v != null && String(v).trim() !== '' && !vals.some(x => x === v)) vals.push(v);
+        if (vals.length >= 8) break;
+      }
+      srcSamples[k] = vals;
+    });
+    const withDetails = orders.find(o => Array.isArray(o.details) && o.details.length);
+    res.json({
+      ok: json.success !== false,
+      count: orders.length,
+      range: [since, until],
+      allOrderKeys: [...allKeys].sort(),
+      sourceLikeFields: srcKeys.sort(),
+      sourceLikeSamples: srcSamples,
+      detailKeys: withDetails ? Object.keys(withDetails.details[0]) : null,
+    });
+  } catch (e) { res.json({ ok: false, message: e.message }); }
+});
+
 // (TẠM — tự dò) Thử lần lượt các kiểu ngày để biết kiểu nào API lọc theo NGÀY TẠO.
 //  Mở /api/marketing/kieu-test?day=2026-06-12 để BẮT ĐẦU (chạy ngầm ~5-6 phút),
 //  rồi mở lại chính link đó mỗi ~1 phút để xem kết quả điền dần. Xoá sau khi xong.
