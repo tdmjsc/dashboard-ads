@@ -40,19 +40,34 @@ jobs:
             done
             echo "Backup $TS: $(ls "$BK" | wc -l) file"
 
-            # ── 2. GIT PULL code mới ──
-            git checkout main
-            git pull origin main
+            # ── 2. LẤY CODE MỚI (khớp đúng origin/main) ──
+            git checkout -f main
+            git fetch origin main
+            git reset --hard origin/main
 
-            # ── 3. SYNTAX CHECK — rollback file lỗi ──
-            for f in server.js thailand.js oms.js; do
-              if [ -f "$f" ]; then
-                node --check "$f" 2>/dev/null || {
-                  echo "SYNTAX ERROR: $f — rollback!"
-                  [ -f "$BK/$f" ] && cp "$BK/$f" "$PROJECT/$f"
-                }
-              fi
-            done
+            # ── 3. SYNTAX CHECK — chỉ rollback khi THỰC SỰ lỗi cú pháp ──
+            # Tìm node (phiên SSH không tương tác thường không có node trong PATH)
+            NODE_BIN="$(command -v node || true)"
+            if [ -z "$NODE_BIN" ]; then
+              for c in "$HOME"/.nvm/versions/node/*/bin/node \
+                       /opt/alt/alt-nodejs*/root/usr/bin/node \
+                       /usr/local/bin/node /usr/bin/node; do
+                [ -x "$c" ] && NODE_BIN="$c" && break
+              done
+            fi
+            if [ -n "$NODE_BIN" ]; then
+              echo "Dùng node: $NODE_BIN"
+              for f in server.js thailand.js oms.js; do
+                if [ -f "$f" ]; then
+                  "$NODE_BIN" --check "$f" 2>/dev/null || {
+                    echo "SYNTAX ERROR: $f — rollback!"
+                    [ -f "$BK/$f" ] && cp "$BK/$f" "$PROJECT/$f"
+                  }
+                fi
+              done
+            else
+              echo "Khong tim thay node — bo qua syntax check (khong rollback)"
+            fi
 
             # Symlink dữ liệu
             rm -f "$PROJECT/salary-manual.json"
