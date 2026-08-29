@@ -13,15 +13,15 @@ jobs:
       - name: Deploy to Hostinger via SSH
         uses: appleboy/ssh-action@v1.0.3
         with:
-          host: 46.202.138.149
+          host: 145.79.14.208
           port: 65002
-          username: u422036594
+          username: u112372823
           key: ${{ secrets.SSH_KEY }}
           script: |
             set -e
-            PROJECT=/home/u422036594/domains/ads.tdmjsc.com/nodejs
-            DATA=/home/u422036594/data
-            BACKUPS=/home/u422036594/backups
+            PROJECT=/home/u112372823/domains/ads.tdmjsc.com/nodejs
+            DATA=/home/u112372823/data
+            BACKUPS=/home/u112372823/backups
 
             # Đảm bảo thư mục tồn tại
             mkdir -p "$DATA" "$BACKUPS"
