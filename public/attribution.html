@@ -180,9 +180,10 @@ async function poll(){
   const since=$('from').value, until=$('to').value;
   try{
     const res=await fetch(`/api/attribution/report?since=${since}&until=${until}`);
+    if(res.status===401){ location.href='/login'; return; }
     if(res.status===403){ $('status').innerHTML='<span class="err">Chỉ tài khoản admin xem được trang này.</span>'; stopPoll(); return; }
     const d=await res.json();
-    if(!d.ok){ $('status').innerHTML='<span class="err">Lỗi: '+esc(d.message||'')+'</span>'; stopPoll(); return; }
+    if(!d.ok){ $('status').innerHTML='<span class="err">Lỗi: '+esc(d.message||d.error||('HTTP '+res.status))+'</span>'; stopPoll(); return; }
     let msg='';
     if(d.fetching){ msg='<span class="warn">Đang tải đơn từ Sandbox… ('+vnd(d.ordersLoaded)+' đơn) — API giới hạn ~60s/trang, vui lòng đợi.</span>'; }
     else if(d.error){ msg='<span class="err">Lỗi tải đơn: '+esc(d.error)+'</span>'; }
@@ -207,9 +208,10 @@ async function load(){
   $('status').innerHTML='<span class="warn">Bắt đầu tải…</span>';
   try{
     const r=await fetch('/api/attribution/refresh',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({since,until})});
+    if(r.status===401){ location.href='/login'; return; }
     if(r.status===403){ $('status').innerHTML='<span class="err">Chỉ tài khoản admin xem được trang này.</span>'; return; }
     const d=await r.json();
-    if(!d.ok){ $('status').innerHTML='<span class="err">Lỗi: '+esc(d.message||'')+'</span>'; return; }
+    if(!d.ok){ $('status').innerHTML='<span class="err">Lỗi: '+esc(d.message||d.error||('HTTP '+r.status))+'</span>'; return; }
     startPoll();
   }catch(e){ $('status').innerHTML='<span class="err">Không kết nối được máy chủ: '+esc(e.message)+'</span>'; }
   finally{ setTimeout(()=>{$('loadBtn').disabled=false;},1500); }
