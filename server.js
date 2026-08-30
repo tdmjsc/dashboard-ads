@@ -1710,26 +1710,32 @@ async function fetchAttribution(since, until) {
 // Ghép chi tiêu Meta (theo chiến dịch) về các nguồn theo trùng TỪ KHOÁ tên.
 function buildAttributionRows() {
   const stripD = s => String(s || '').toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '').replace(/đ/g, 'd');
-  const STOP = new Set(['td', 'auto', 'ct', 'oto', 'o', 'to', 'sp', 'ban', 'le', 'si', 'the', 'hang', 'moi', 'va', 'cho', 'ad', 'ads', 'camp', 'chien', 'dich', 'test', 'new', 'tdmjsc', 'tdm', 'ver', 'video', 'anh', 'copy', 'x']);
-  const tok = s => stripD(s).replace(/[^a-z0-9]+/g, ' ').split(' ').filter(w => w.length >= 2 && !STOP.has(w) && !/^\d+$/.test(w));
+  const STOP = new Set(['td', 'auto', 'ct', 'oto', 'o', 'to', 'sp', 'ban', 'le', 'si', 'the', 'hang', 'moi', 'va', 'cho', 'ad', 'ads', 'camp', 'chien', 'dich', 'test', 'new', 'tdmjsc', 'tdm', 'ver', 'video', 'anh', 'copy', 'x', 'care', 'cool']);
+  const rawTok = s => stripD(s).replace(/[^a-z0-9]+/g, ' ').split(' ').filter(Boolean);
+  const tok = s => rawTok(s).filter(w => w.length >= 2 && !STOP.has(w) && !/^\d+$/.test(w));
+  // Tên người: token đầu tiên bỏ qua mã kiểu "td3"/"td" và số → "hieu", "phuong", "giang"…
+  const firstName = s => { for (const w of rawTok(s)) { if (/^td\d*$/.test(w) || /^\d+$/.test(w)) continue; return w; } return ''; };
 
   const sources = Object.values(ATTR.bySource);
-  sources.forEach(s => { s.chiTieu = 0; s.campaigns = []; });
-  const srcTok = sources.map(s => ({ s, t: new Set(tok(s.nguon)) }));
+  sources.forEach(s => { s.chiTieu = 0; s.campaigns = []; s._person = firstName(s.nguon); s._tok = new Set(tok(s.nguon)); });
 
   const camps = (cachedCampaigns(ATTR.since, ATTR.until) || [])
     .map(c => ({ name: c.name, employee: c.employee, spend: (c.daily || []).reduce((a, x) => a + (x.spent || 0), 0) }))
     .filter(c => c.spend > 0);
 
+  // GHÉP: chỉ gán chiến dịch vào nguồn khi CÙNG NGƯỜI, rồi trong cùng người mới
+  // xét trùng từ khoá SẢN PHẨM (bỏ chính tên người) → tránh gom nhầm nhiều người.
   const unmatched = [];
   for (const c of camps) {
-    const ct = tok(c.name);
+    const cPerson = firstName(c.name);
+    const cTok = tok(c.name);
     let best = null, bestScore = 0;
-    for (const { s, t } of srcTok) {
-      let sc = 0; for (const w of ct) if (t.has(w)) sc++;
+    for (const s of sources) {
+      if (!cPerson || s._person !== cPerson) continue;      // cùng người mới xét
+      let sc = 0; for (const w of cTok) if (w !== cPerson && s._tok.has(w)) sc++;
       if (sc > bestScore) { bestScore = sc; best = s; }
     }
-    if (best && bestScore >= 2) { best.chiTieu += c.spend; best.campaigns.push({ name: c.name, spend: c.spend }); }
+    if (best && bestScore >= 1) { best.chiTieu += c.spend; best.campaigns.push({ name: c.name, spend: c.spend }); }
     else unmatched.push(c);
   }
   const rows = sources.map(s => ({
