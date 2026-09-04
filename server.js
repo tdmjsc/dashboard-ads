@@ -1468,16 +1468,22 @@ app.get('/api/marketing/report', async (req, res) => {
     const m = mapReport(rp.json);
     const norm = s => String(s == null ? '' : s).trim().toLowerCase().replace(/\s+/g, ' ');
 
+    // Tỷ giá THB→VND để quy đổi doanh thu đơn Thái (mặc định 780, cấu hình qua .env)
+    const THB_RATE = Number(process.env.THB_VND_RATE || 780);
+
     // Gắn chi tiêu Meta vào từng dòng, tính lại giaContact
     let rows = m.rows.map(r => {
       // Dùng chung QC_TAX với module lương (mặc định 11%, cấu hình qua .env)
       const TAX = 1 + QC_TAX;
       const chiTieu = Math.round((metaSpend[norm(r.name)] || 0) * TAX);
       const giaContact = (chiTieu > 0 && r.contact > 0) ? Math.round(chiTieu / r.contact) : 0;
-      const donThai = thaiCounts[norm(r.name)] || 0;
+      const thai = thaiCounts[norm(r.name)] || {};
+      const donThai = Number(thai.soDon) || 0;
+      const doanhThuThai = Math.round((Number(thai.doanhThuThb) || 0) * THB_RATE); // THB → VND
+      const doanhthu = (Number(r.doanhthu) || 0) + doanhThuThai;                    // DT Sandbox + DT Thái
       const tongDon = (Number(r.contact) || 0) + donThai;  // TỔNG ĐƠN = số contact + đơn Thái
       const cpa = (chiTieu > 0 && tongDon > 0) ? Math.round(chiTieu / tongDon) : 0;  // CPA = chi tiêu / (contact + đơn Thái)
-      return { ...r, chiTieu, giaContact, donThai, tongDon, cpa };
+      return { ...r, doanhthu, chiTieu, giaContact, donThai, doanhThuThai, tongDon, cpa };
     });
 
     // Lọc theo quyền

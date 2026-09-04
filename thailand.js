@@ -635,10 +635,12 @@ export function mountThailand(app, { mysql, requireLogin, express, getCampaigns,
 
   // ====== Đếm số đơn Thái Lan theo nhân viên (cho trang Marketing chính server.js gọi) ======
   // Đếm tất cả đơn phát sinh trong kỳ, chỉ trừ đơn Huỷ.
+  // Trả về theo nhân viên: { soDon, doanhThuThb } — số đơn Thái (không tính huỷ)
+  // và doanh thu THB (cùng tập đơn) để trang Marketing quy đổi sang VND.
   async function countThaiOrdersByEmployee(since, until) {
     const p = await db();
     const [rows] = await p.query(
-      `SELECT nhan_vien, COUNT(*) AS so_don
+      `SELECT nhan_vien, COUNT(*) AS so_don, COALESCE(SUM(gia_thb),0) AS doanh_thu_thb
        FROM th_orders
        WHERE ngay_ve >= ? AND ngay_ve <= ?
          AND trang_thai NOT IN ('Huỷ','CANCEL')
@@ -650,7 +652,9 @@ export function mountThailand(app, { mysql, requireLogin, express, getCampaigns,
     for (const r of rows) {
       const key = norm(r.nhan_vien || '');
       if (!key) continue;
-      out[key] = (out[key] || 0) + (Number(r.so_don) || 0);
+      if (!out[key]) out[key] = { soDon: 0, doanhThuThb: 0 };
+      out[key].soDon += Number(r.so_don) || 0;
+      out[key].doanhThuThb += Number(r.doanh_thu_thb) || 0;
     }
     return out;
   }
