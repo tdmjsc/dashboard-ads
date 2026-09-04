@@ -935,15 +935,21 @@ function compareTable(out){
   // Δ = 2 tháng có dữ liệu mới nhất
   const ok=out.filter(x=>!x.err);
   const c=ok[ok.length-1]||null, p=ok.length>1?ok[ok.length-2]:null;
+  const sum = ok.length ? sumRange(ok) : null;   // tổng cả khoảng (bỏ tháng lỗi)
+  const TONG_ST=' style="font-weight:700;color:#fff;background:#16233A"';
   let h='<div class="cmp-table-wrap"><table class="cmp"><thead><tr><th>Chỉ tiêu</th>';
   out.forEach(x=>{ h+='<th'+(x.err?' style="color:#ff9b8a"':'')+'>'+monthLabel(x.month)+'</th>'; });
-  h+='<th>Δ tháng mới</th></tr></thead><tbody>';
+  h+='<th'+TONG_ST+'>Tổng khoảng</th><th>Δ tháng mới</th></tr></thead><tbody>';
   CMP_METRICS.forEach(m=>{
     h+='<tr'+(m.hi?' class="hi"':'')+'><td class="rlbl">'+m.lb+'</td>';
     out.forEach(x=>{
       if(x.err){ h+='<td class="num2" style="color:#6B7C97">—</td>'; return; }
       const v=x[m.k]; h+='<td class="num2">'+(m.pct?Number(v).toFixed(1)+'%':vnd(v))+'</td>';
     });
+    // cột TỔNG cả khoảng (số cộng dồn; % thì tính lại theo tổng)
+    if(sum){ const tv = m.k==='bien' ? sum.bien : sum[m.k];
+      h+='<td class="num2"'+TONG_ST+'>'+(m.pct?Number(tv).toFixed(1)+'%':vnd(tv))+'</td>'; }
+    else h+='<td class="num2"'+TONG_ST+'>—</td>';
     // cột Δ
     if(c&&p){
       let t,cl;
