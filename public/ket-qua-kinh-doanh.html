@@ -733,6 +733,40 @@ const CMP_METRICS=[
   {k:'bien',      lb:'Biên LN (%)',  pct:true, hi:true},
 ];
 
+// Cộng dồn toàn bộ các tháng (bỏ tháng lỗi) → tổng cả khoảng
+function sumRange(rows){
+  const F=['doanhThu','nganSach','giaVon','phiShip','luongMkt','luongPtsp','luongSale',
+           'luongKeToan','luongKho','luongTong','chiPhi','tongCP','lnTruocThue','thue','lnSauThue'];
+  const s={}; F.forEach(k=>s[k]=0);
+  rows.forEach(r=>F.forEach(k=>{ s[k]+=Number(r[k])||0; }));
+  s.bien = s.doanhThu>0 ? s.lnSauThue/s.doanhThu*100 : 0;
+  return s;
+}
+function dkPlain(lb,v){ return '<div class="dk"><div class="lb">'+lb+'</div><div class="vl">'+v+'</div></div>'; }
+function rangeSummary(rows){
+  if(!rows.length) return '';
+  const s=sumRange(rows);
+  const a=rows[0].month, b=rows[rows.length-1].month, cls=s.lnSauThue>=0?'pos':'neg';
+  let h='<div class="cmp-sub" style="margin-top:2px;">Tổng cả khoảng · '+monthLabel(a)+' → '+monthLabel(b)
+       +' · '+rows.length+' tháng</div>'
+    +'<div class="kpis">'
+      +'<div class="kpi hl"><div class="lb">Doanh thu</div><div class="vl">'+vnd(s.doanhThu)+' ₫</div></div>'
+      +'<div class="kpi"><div class="lb">Tổng chi phí</div><div class="vl">'+vnd(s.tongCP)+' ₫</div></div>'
+      +'<div class="kpi hl '+cls+'"><div class="lb">LN sau thuế</div><div class="vl">'+vnd(s.lnSauThue)+' ₫</div></div>'
+      +'<div class="kpi '+cls+'"><div class="lb">Biên LN</div><div class="vl">'+s.bien.toFixed(1)+'%</div></div>'
+    +'</div>'
+    +'<div class="delta-kpis">'
+      +dkPlain('Ngân sách QC', vnd(s.nganSach)+' ₫')
+      +dkPlain('Giá vốn', vnd(s.giaVon)+' ₫')
+      +dkPlain('Phí ship', vnd(s.phiShip)+' ₫')
+      +dkPlain('Tổng lương', vnd(s.luongTong)+' ₫')
+      +dkPlain('Chi phí khác', vnd(s.chiPhi)+' ₫')
+      +dkPlain('LN trước thuế', vnd(s.lnTruocThue)+' ₫')
+      +dkPlain('Thuế', vnd(s.thue)+' ₫')
+    +'</div>';
+  return h;
+}
+
 function renderCompare(out){
   const rows=out.filter(x=>!x.err);         // dùng cho biểu đồ + KPI
   if(!rows.length){
@@ -741,8 +775,11 @@ function renderCompare(out){
   }
   const cur=rows[rows.length-1], prev=rows.length>1?rows[rows.length-2]:null;
 
+  // 0) TỔNG CẢ KHOẢNG (cộng dồn mọi tháng đã chọn)
+  let html=rangeSummary(rows);
+
   // 1) KPI so sánh tháng mới nhất vs liền trước
-  let html='';
+  html+=(prev?'<div class="cmp-sub">So sánh tháng mới nhất</div>':'');
   if(prev){
     html+='<div class="delta-kpis">'
       +dk('Doanh thu', vnd(cur.doanhThu)+' ₫', cur.doanhThu, prev.doanhThu, false)
