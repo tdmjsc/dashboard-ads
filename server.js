@@ -1595,6 +1595,62 @@ app.get('/api/marketing/channel-breakdown', async (req, res) => {
   const key = since + '|' + until;
   const FRESH = 5 * 60 * 1000;
 
+  // DEBUG SÂU: đối chiếu "Số contact" của báo cáo với số đơn GetOrderByConditions,
+  // thử mọi cách lọc ngày để tìm cách nào khớp con số contact.
+  //   /api/marketing/channel-breakdown?since=&until=&name=admin&debug=2
+  if (String(req.query.debug) === '2') {
+    try {
+      const dOnly = t => (t ? String(t).slice(0, 10) : null);
+      const inWin = t => { const d = dOnly(t); return d ? (d >= since && d <= until) : false; };
+      const target = _normNV(req.query.name || 'admin');
+      const isMine = k => (k === target) || (target === 'admin' && k === '(trống)');
+      const TIKTOK = /tik\s*tok|tiktok|tt\s*shop/i, SHOPEE = /shopee|shoppe/i;
+      const chOf = o => {
+        const blob = [o.sourceName, o.utmSource, o.customerType, o.operationName, o.saleUserName, o.reasonToCreate].map(x => String(x || '')).join(' ');
+        return TIKTOK.test(blob) ? 'tiktok' : SHOPEE.test(blob) ? 'shopee' : 'thuong';
+      };
+      // 1) Báo cáo lead (nguồn của cột "Số contact")
+      let reportContact = null, reportRowNames = [];
+      try {
+        const rp = await sandboxReport(since, until);
+        const mp = mapReport(rp.json);
+        reportRowNames = mp.rows.map(r => r.name);
+        const adminRow = mp.rows.find(r => _normNV(r.name) === 'admin');
+        reportContact = { admin: adminRow ? adminRow.contact : null, total: mp.total.contact };
+      } catch (e) { reportContact = { error: e.message }; }
+      // 2) Đơn từ GetOrderByConditions
+      const j = await fetchSandboxOrders(since, until);
+      const orders = j.data || [];
+      const mine = orders.filter(o => isMine(_normNV(o.marketingDisplayName || o.marketingUserName || '') || '(trống)'));
+      const arrival = o => o.timeSaleReceivingData || o.createTime; // ngày data về: ưu tiên ngày sale nhận data
+      const split = pred => {
+        const s = { tiktok: 0, shopee: 0, thuong: 0, tong: 0 };
+        for (const o of mine) { if (!pred(o)) continue; s[chOf(o)]++; s.tong++; }
+        return s;
+      };
+      return res.json({
+        ok: true, since, until, name: req.query.name || 'admin',
+        soContact_baoCao: reportContact,       // <-- con số phải khớp
+        tenNhanVien_baoCao: reportRowNames,
+        tongDon_APItra_ve: orders.length,
+        adminBucket_tongDon: mine.length,
+        cachLoc: {
+          khong_loc:            split(() => true),
+          loc_createTime:       split(o => inWin(o.createTime)),
+          loc_saleNhanData:     split(o => inWin(o.timeSaleReceivingData)),
+          loc_ngayDataVe:       split(o => inWin(arrival(o))),  // saleNhanData || createTime
+          loc_orderConfirmDate: split(o => inWin(o.orderConfirmDate)),
+          loc_updateTime:       split(o => inWin(o.updateTime)),
+        },
+        mau: mine.slice(0, 30).map(o => ({
+          createTime: dOnly(o.createTime), saleNhanData: dOnly(o.timeSaleReceivingData),
+          orderConfirmDate: dOnly(o.orderConfirmDate), updateTime: dOnly(o.updateTime),
+          kenh: chOf(o), chot: String(o.orderConfirmId) === '1' ? 1 : 0, sourceName: o.sourceName || null,
+        })),
+      });
+    } catch (e) { return res.json({ ok: false, message: e.message }); }
+  }
+
   // DEBUG: soi các trường ngày của đơn 1 nhân viên để tìm đúng "ngày data về".
   //   /api/marketing/channel-breakdown?since=&until=&name=...&debug=1
   if (req.query.debug) {
