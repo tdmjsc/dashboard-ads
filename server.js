@@ -1542,23 +1542,47 @@ const CHBRK = { key: '', at: 0, map: null, totalRecord: 0, truncated: false };
 const _normNV = s => String(s == null ? '' : s).trim().toLowerCase().replace(/\s+/g, ' ');
 function _chBucket() { return { tiktok: { don: 0, chot: 0, doanhThu: 0 }, shopee: { don: 0, chot: 0, doanhThu: 0 }, thuong: { don: 0, chot: 0, doanhThu: 0 }, sources: {} }; }
 
+// Lấy TẤT CẢ đơn theo kiểu ngày "NgayTao" = ngày data về hệ thống.
+// API chặn mỗi trang tối đa 100 bản ghi (dù xin pageSize lớn) nên phải phân trang;
+// gộp theo mã đơn để không đếm trùng, và lùi lại khi bị giới hạn tần suất.
+const CHBRK_PAGE_SIZE = 100;
+const CHBRK_MAX_PAGES = 60;
 async function fetchSandboxOrders(since, until) {
-  const r = await fetch(`${SANDBOX_BASE}/DonHangLogistic/GetOrderByConditions`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${SANDBOX_TOKEN}` },
-    body: JSON.stringify({
-      idChiNhanh: SANDBOX_BRANCH, kieuNgay: 'NgayTao',
-      tuNgay: since, denNgay: addDay(until),
-      pageInfo: { page: 1, pageSize: 1000 }, sorts: [],
-      isIncludeDetail: false, isHistories: false,
-    }),
-  });
-  const j = await r.json().catch(() => ({ success: false, message: 'Phản hồi không hợp lệ' }));
-  if (!(j.success ?? j.Success)) {
-    const msg = String(j.message || j.Message || 'API Sandbox lỗi');
-    const err = new Error(msg); err.rateLimited = /chờ|giây|rate|quá nhanh|call api/i.test(msg); throw err;
+  const all = [];
+  const seen = new Set();
+  let totalRecord = 0;
+  for (let page = 1; page <= CHBRK_MAX_PAGES; page++) {
+    let json, attempt = 0;
+    for (;;) {
+      const r = await fetch(`${SANDBOX_BASE}/DonHangLogistic/GetOrderByConditions`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${SANDBOX_TOKEN}` },
+        body: JSON.stringify({
+          idChiNhanh: SANDBOX_BRANCH, kieuNgay: 'NgayTao',
+          tuNgay: since, denNgay: addDay(until),
+          pageInfo: { page, pageSize: CHBRK_PAGE_SIZE }, sorts: [],
+          isIncludeDetail: false, isHistories: false,
+        }),
+      });
+      json = await r.json().catch(() => ({ success: false, message: 'Phản hồi không hợp lệ' }));
+      if (json.success ?? json.Success) break;
+      const msg = String(json.message || json.Message || 'API Sandbox lỗi');
+      const rl = /chờ|cần chờ|call api|giây|rate|quá nhanh/i.test(msg);
+      if (rl && attempt < 6) { const m = msg.match(/(\d+)\s*s/); attempt++; await sleep(((m ? Number(m[1]) : 60) + 2) * 1000); continue; }
+      const err = new Error(msg); err.rateLimited = rl; throw err;
+    }
+    const data = json.data || [];
+    totalRecord = Number(json.totalRecord || json.totalRecords || totalRecord);
+    for (const o of data) {
+      const id = String(o.orderId || o.orderNumber || o.orderCode || '');
+      if (id && seen.has(id)) continue;
+      if (id) seen.add(id);
+      all.push(o);
+    }
+    if (data.length < CHBRK_PAGE_SIZE) break;                 // đã hết trang
+    if (totalRecord && all.length >= totalRecord) break;      // đã đủ tổng
   }
-  return j;
+  return { data: all, totalRecord: totalRecord || all.length };
 }
 
 async function buildChannelBreakdown(since, until) {
@@ -1567,10 +1591,9 @@ async function buildChannelBreakdown(since, until) {
   const TIKTOK = /tik\s*tok|tiktok|tt\s*shop/i, SHOPEE = /shopee|shoppe/i;
   const map = {};
   for (const o of orders) {
-    // Chỉ tính đơn có NGÀY VÀO HỆ THỐNG (createTime = ngày data về / ngày đơn sàn về)
-    // nằm trong khoảng ngày — API trả cả đơn cũ được cập nhật hôm nay nên phải lọc lại.
-    const dd = String(o.createTime || o.timeSaleReceivingData || '').slice(0, 10);
-    if (dd && (dd < since || dd > until)) continue;
+    // API đã lọc theo NgayTao = ngày data về hệ thống, nên KHÔNG lọc lại theo createTime
+    // (createTime là ngày gốc đơn sàn — vd đơn "TIKTOK Cũ" đặt từ tháng trước nhưng
+    // data mới về hệ thống hôm nay).
     const key = _normNV(o.marketingDisplayName || o.marketingUserName || '') || '(trống)';
     const b = map[key] || (map[key] = _chBucket());
     const blob = [o.sourceName, o.utmSource, o.customerType, o.operationName, o.saleUserName, o.reasonToCreate]
@@ -1638,6 +1661,7 @@ app.get('/api/marketing/channel-breakdown', async (req, res) => {
         reportDataKeys, adminRowRaw,           // <-- xem báo cáo có tách nguồn không
         tenNhanVien_baoCao: reportRowNames,
         tongDon_APItra_ve: orders.length,
+        totalRecord_API: j.totalRecord,
         adminBucket_tongDon: mine.length,
         cachLoc: {
           khong_loc:            split(() => true),
