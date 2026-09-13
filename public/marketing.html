@@ -177,7 +177,7 @@ function render(d){
   let html='';
   rows.forEach(r=>{
     html += `<tr>
-      <td>${esc(r.name)||'<span class="muted">(không tên)</span>'}</td>
+      <td class="empname" data-name="${esc(r.name)}" style="cursor:pointer" title="Bấm để xem TikTok / Shopee / đơn thường"><span class="cvx" style="color:#6B7C97;font-size:11px">▸</span> ${esc(r.name)||'<span class="muted">(không tên)</span>'}</td>
       <td class="num">${vnd(r.contact)}</td>
       <td class="num cpa">${vnd(r.giaContact)}</td>
       <td class="num" style="color:#9DB2FF">${vnd(r.donThai)}</td>
@@ -250,6 +250,39 @@ $('refreshBtn').addEventListener('click', load);
 $('teamFilter').addEventListener('change', function(){
   currentTeam = this.value;
   if(window._lastMktData) render(window._lastMktData);
+});
+
+// Bấm vào tên nhân viên (vd "admin") → bung chi tiết đơn theo kênh TikTok/Shopee/thường
+$('rows').addEventListener('click', function(e){
+  const cell = e.target.closest('.empname'); if(!cell) return;
+  const tr = cell.parentElement, name = cell.getAttribute('data-name')||'';
+  const marker = cell.querySelector('.cvx');
+  const nx = tr.nextElementSibling;
+  if(nx && nx.classList.contains('brk')){ nx.remove(); if(marker) marker.textContent='▸'; return; }
+  if(marker) marker.textContent='▾';
+  const sub=document.createElement('tr'); sub.className='brk';
+  sub.innerHTML='<td colspan="10" style="background:rgba(255,255,255,.03)"><span class="warn">Đang tải chi tiết kênh…</span></td>';
+  tr.after(sub);
+  const cellTd=sub.firstChild;
+  const since=$('from').value, until=$('to').value;
+  fetch('/api/marketing/channel-breakdown?since='+since+'&until='+until+'&name='+encodeURIComponent(name))
+    .then(r=>{ if(r.status===401){location.href='/login';throw 0;} return r.json(); })
+    .then(d=>{
+      if(!d.ok){ cellTd.innerHTML='<span class="err">Lỗi: '+esc(d.message||'')+'</span>'; return; }
+      const box=(lb,o,c)=>'<div style="display:inline-block;min-width:170px;margin:2px 16px 2px 0;">'
+        +'<b style="color:'+c+'">'+lb+'</b>: '+vnd(o.don)+' đơn '
+        +'<span class="muted">('+vnd(o.chot)+' chốt · '+vnd(o.doanhThu)+'₫)</span></div>';
+      let h='<div style="padding:6px 2px;">'
+        + box('TikTok', d.tiktok, '#22d3ee')
+        + box('Shopee', d.shopee, '#fb923c')
+        + box('Đơn thường', d.thuong, '#9DB2FF')
+        + '</div>';
+      if(d.truncated) h+='<div class="warn" style="font-size:11.5px">⚠ Khoảng ngày có nhiều đơn ('+vnd(d.totalRecord)+'), chỉ soi được 1000 đơn — thu hẹp ngày để chính xác 100%.</div>';
+      if(d.sources && d.sources.length)
+        h+='<div class="muted" style="font-size:11.5px;margin-top:4px;">Nguồn đơn: '
+          + d.sources.slice(0,12).map(s=>esc(s.name)+' ('+vnd(s.count)+')').join(' · ') + '</div>';
+      cellTd.innerHTML=h;
+    }).catch(()=>{ cellTd.innerHTML='<span class="err">Không tải được chi tiết.</span>'; });
 });
 
 // Ẩn link "Sản phẩm" nếu không phải admin

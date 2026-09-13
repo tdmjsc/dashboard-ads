@@ -1534,6 +1534,62 @@ app.get('/api/marketing/report', async (req, res) => {
   }
 });
 
+// Tách đơn của MỘT nhân viên marketing theo KÊNH: TikTok / Shopee / đơn thường.
+//   /api/marketing/channel-breakdown?since=&until=&name=admin
+// Dùng cho trang Marketing: bấm vào 1 dòng (vd "admin") để xem chi tiết theo kênh.
+app.get('/api/marketing/channel-breakdown', async (req, res) => {
+  const me = req.session.user || {};
+  if (me.role !== 'admin') return res.status(403).json({ ok: false, message: 'Chỉ admin' });
+  if (!SANDBOX_TOKEN) return res.json({ ok: false, message: 'Chưa khai SANDBOX_TOKEN' });
+  const today = new Date().toISOString().slice(0, 10);
+  const since = req.query.since || today;
+  const until = req.query.until || since;
+  const norm = s => String(s == null ? '' : s).trim().toLowerCase().replace(/\s+/g, ' ');
+  const target = norm(req.query.name || 'admin');
+  try {
+    const r = await fetch(`${SANDBOX_BASE}/DonHangLogistic/GetOrderByConditions`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${SANDBOX_TOKEN}` },
+      body: JSON.stringify({
+        idChiNhanh: SANDBOX_BRANCH, kieuNgay: 'NgayTao',
+        tuNgay: since, denNgay: addDay(until),
+        pageInfo: { page: 1, pageSize: 1000 }, sorts: [],
+        isIncludeDetail: false, isHistories: false,
+      }),
+    });
+    const j = await r.json().catch(() => ({ success: false, message: 'Phản hồi không hợp lệ' }));
+    if (!(j.success ?? j.Success)) return res.json({ ok: false, message: j.message || j.Message || 'API Sandbox lỗi' });
+    const orders = j.data || [];
+    const TIKTOK = /tik\s*tok|tiktok|tt\s*shop/i;
+    const SHOPEE = /shopee|shoppe/i;
+    const mk = () => ({ don: 0, chot: 0, doanhThu: 0 });
+    const out = { tiktok: mk(), shopee: mk(), thuong: mk() };
+    const sources = {};
+    let matched = 0;
+    for (const o of orders) {
+      const mkt = norm(o.marketingDisplayName || o.marketingUserName || '');
+      const inBucket = (mkt === target) || (target === 'admin' && mkt === '');
+      if (!inBucket) continue;
+      matched++;
+      const blob = [o.sourceName, o.utmSource, o.customerType, o.operationName, o.saleUserName, o.reasonToCreate]
+        .map(x => String(x || '')).join(' ');
+      const ch = TIKTOK.test(blob) ? 'tiktok' : SHOPEE.test(blob) ? 'shopee' : 'thuong';
+      out[ch].don += 1;
+      if (String(o.orderConfirmId) === '1') { out[ch].chot += 1; out[ch].doanhThu += Number(o.totalPrice || 0); }
+      const sn = (o.sourceName || '(không nguồn)').trim();
+      sources[sn] = (sources[sn] || 0) + 1;
+    }
+    const srcList = Object.entries(sources).map(([name, count]) => ({ name, count })).sort((a, b) => b.count - a.count);
+    const totalRec = Number(j.totalRecord || orders.length);
+    res.json({
+      ok: true, since, until, name: req.query.name || 'admin',
+      matched, totalRecord: totalRec, truncated: totalRec > orders.length,
+      tiktok: out.tiktok, shopee: out.shopee, thuong: out.thuong,
+      sources: srcList,
+    });
+  } catch (e) { res.json({ ok: false, message: e.message }); }
+});
+
 // (TẠM — để gỡ lỗi) Xem cấu trúc dữ liệu thật từ Sandbox: mở /api/marketing/sample
 //  để biết đúng tên trường sản phẩm + trạng thái giao hàng. Xoá sau khi đã chỉnh xong.
 app.get('/api/marketing/sample', async (req, res) => {
