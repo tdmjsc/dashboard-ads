@@ -1543,6 +1543,8 @@ app.get('/api/marketing/report', async (req, res) => {
 // → bấm nhiều dòng liên tiếp không gọi lại Sandbox (tránh lỗi giới hạn tần suất).
 const CHBRK = { key: '', at: 0, map: null, totalRecord: 0, truncated: false, cooldownUntil: 0, inflight: null, inflightKey: '', buildError: null, buildErrorKey: null };
 const CHBRK_FRESH = 5 * 60 * 1000;
+// Admin (không gán nhân viên marketing) = GUID toàn số 0 trong báo cáo Sandbox.
+const ADMIN_MKT_ID = '00000000-0000-0000-0000-000000000000';
 const _normNV = s => String(s == null ? '' : s).trim().toLowerCase().replace(/\s+/g, ' ');
 function _chBucket() { return { tiktok: { don: 0, chot: 0, doanhThu: 0 }, shopee: { don: 0, chot: 0, doanhThu: 0 }, thuong: { don: 0, chot: 0, doanhThu: 0 }, sources: {} }; }
 
@@ -1594,6 +1596,7 @@ async function fetchSandboxOrders(since, until, opts = {}) {
           tuNgay: since, denNgay: addDay(until),
           pageInfo: { page, pageSize: CHBRK_PAGE_SIZE }, sorts: [],
           isIncludeDetail: false, isHistories: false,
+          ...(opts.body || {}),
         }),
       });
       json = await r.json().catch(() => ({ success: false, message: 'Phản hồi không hợp lệ' }));
@@ -1708,6 +1711,55 @@ app.get('/api/marketing/channel-breakdown', async (req, res) => {
           kenh: chOf(o), chot: String(o.orderConfirmId) === '1' ? 1 : 0, sourceName: o.sourceName || null,
         })),
       });
+    } catch (e) { return res.json({ ok: false, message: e.message }); }
+  }
+
+  // DEBUG lọc: thử các tên tham số lọc theo nhân viên MKT để chỉ lấy đơn của Admin (GUID 0),
+  // nhằm giảm số đơn phải tải (tránh giới hạn tần suất). Mỗi thử chỉ lấy 1 trang.
+  //   /api/marketing/channel-breakdown?since=&until=&debug=4
+  if (String(req.query.debug) === '4') {
+    const tries = [
+      { label: 'khong_loc', body: {} },
+      { label: 'idUserMkts_arr', body: { idUserMkts: [ADMIN_MKT_ID] } },
+      { label: 'idUserMkt', body: { idUserMkt: ADMIN_MKT_ID } },
+      { label: 'marketingUserId', body: { marketingUserId: ADMIN_MKT_ID } },
+      { label: 'idNhanVienMkt', body: { idNhanVienMkt: ADMIN_MKT_ID } },
+    ];
+    const out = [];
+    for (const t of tries) {
+      try {
+        const j = await fetchSandboxOrders(since, until, { maxPages: 1, body: t.body });
+        const os = j.data || [];
+        const names = {};
+        for (const o of os) { const k = _normNV(o.marketingDisplayName || o.marketingUserName || '') || '(trống)'; names[k] = (names[k] || 0) + 1; }
+        out.push({ thu: t.label, tra_ve: os.length, totalRecord: j.totalRecord, theo_nhan_vien: names });
+      } catch (e) { out.push({ thu: t.label, loi: e.message, rateLimited: !!e.rateLimited }); break; }
+    }
+    return res.json({ ok: true, since, until, ghiChu: 'Thử nào mà "theo_nhan_vien" chỉ còn (trống)/admin là lọc được', ketqua: out });
+  }
+
+  // DEBUG cookie-report (KHÔNG bị giới hạn tần suất): thử các kiểuXem để tìm cách nhóm
+  // theo NGUỒN DỮ LIỆU (kênh). /api/marketing/channel-breakdown?since=&until=&debug=5
+  if (String(req.query.debug) === '5') {
+    try {
+      if (!sandboxCookie) await sandboxLogin();
+      const tuNgay = `${since}T00:00:00.000+07:00`, denNgay = `${until}T23:59:59.998+07:00`;
+      const post = async (payload) => {
+        const call = () => fetch(SANDBOX_REPORT_URL, { method: 'POST', headers: { 'Content-Type': 'application/json', 'Accept': 'application/json, text/plain, */*', 'Origin': SANDBOX_ORIGIN, 'Referer': SANDBOX_ORIGIN + '/', 'Cookie': sandboxCookie }, body: JSON.stringify(payload) });
+        let r = await call(); if (r.status === 401 || r.status === 403) { await sandboxLogin(); r = await call(); }
+        return { status: r.status, json: await r.json().catch(() => ({})) };
+      };
+      const base = { pageInfo: { page: 1, pageSize: 1000 }, sorts: [], loaiNhanVien: 1, isChietKhau: true, isVat: true, date: [tuNgay, denNgay], tuNgay, denNgay, idChiNhanh: SANDBOX_CHINHANH, kieuNgay: 'NgayTao', typeViewDetail: null, idPhongBanSale: null, idNhomNhanVienSale: null, idUserSale: null, idPhongBanMkts: null, idNhomNhanVienMkts: null, idUserMkts: null };
+      const out = [];
+      for (const kx of [1, 2, 3, 4, 5, 6, 7]) {
+        const { status, json } = await post({ ...base, kieuXem: kx });
+        const d = (json && json.data) || {};
+        const keys = Object.keys(d);
+        const arrKey = keys.find(k => Array.isArray(d[k]) && d[k].length);
+        const sampleRow = arrKey ? d[arrKey][0] : null;
+        out.push({ kieuXem: kx, status, success: json && (json.success ?? json.Success), dataKeys: keys, arrKey, arrLen: arrKey ? d[arrKey].length : 0, sampleRowKeys: sampleRow ? Object.keys(sampleRow) : null, sampleTen: sampleRow ? (sampleRow.ten || sampleRow.tenNguon || sampleRow.nguon || null) : null });
+      }
+      return res.json({ ok: true, since, until, ghiChu: 'Tìm kieuXem có arrKey/ten là NGUỒN dữ liệu (TikTok/Shopee/landing...)', ketqua: out });
     } catch (e) { return res.json({ ok: false, message: e.message }); }
   }
 
