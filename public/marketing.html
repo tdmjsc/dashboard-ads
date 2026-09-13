@@ -272,10 +272,13 @@ $('rows').addEventListener('click', function(e){
       const box=(lb,o,c)=>'<div style="display:inline-block;min-width:170px;margin:2px 16px 2px 0;">'
         +'<b style="color:'+c+'">'+lb+'</b>: '+vnd(o.don)+' đơn '
         +'<span class="muted">('+vnd(o.chot)+' chốt · '+vnd(o.doanhThu)+'₫)</span></div>';
+      const tong=(d.tiktok.don||0)+(d.shopee.don||0)+(d.thuong.don||0);
       let h='<div style="padding:6px 2px;">'
+        + '<div style="margin-bottom:4px;font-weight:600">Tổng '+vnd(tong)+' đơn thực tế</div>'
         + box('TikTok', d.tiktok, '#22d3ee')
         + box('Shopee', d.shopee, '#fb923c')
         + box('Đơn thường', d.thuong, '#9DB2FF')
+        + '<div class="muted" style="font-size:11px;margin-top:3px">Đây là SỐ ĐƠN thực tế theo kênh — có thể khác cột “Tổng đơn” (= số contact + đơn Thái).</div>'
         + '</div>';
       if(d.truncated) h+='<div class="warn" style="font-size:11.5px">⚠ Khoảng ngày có nhiều đơn ('+vnd(d.totalRecord)+'), chỉ soi được 1000 đơn — thu hẹp ngày để chính xác 100%.</div>';
       if(d.sources && d.sources.length)
