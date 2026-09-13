@@ -1624,10 +1624,33 @@ app.get('/api/marketing/channel-breakdown', async (req, res) => {
   }
 
   try {
-    if (!(CHBRK.key === key && CHBRK.map && (Date.now() - CHBRK.at) < FRESH)) {
-      const built = await buildChannelBreakdown(since, until);
-      CHBRK.key = key; CHBRK.at = Date.now(); CHBRK.map = built.map;
-      CHBRK.totalRecord = built.totalRecord; CHBRK.truncated = built.truncated;
+    const hasCache = (CHBRK.key === key && CHBRK.map && (Date.now() - CHBRK.at) < FRESH);
+    if (!hasCache) {
+      // Đang trong thời gian chờ do Sandbox giới hạn tần suất → báo luôn, KHÔNG gọi lại.
+      if (CHBRK.cooldownUntil && Date.now() < CHBRK.cooldownUntil) {
+        const secs = Math.ceil((CHBRK.cooldownUntil - Date.now()) / 1000);
+        return res.json({ ok: false, message: 'Sandbox đang giới hạn tần suất — chờ ~' + secs + 's rồi bấm lại.' });
+      }
+      // Gộp mọi lời bấm cùng lúc vào MỘT lời gọi Sandbox (dedupe theo khoảng ngày).
+      if (!CHBRK.inflight || CHBRK.inflightKey !== key) {
+        CHBRK.inflightKey = key;
+        CHBRK.inflight = buildChannelBreakdown(since, until)
+          .then(built => {
+            CHBRK.key = key; CHBRK.at = Date.now(); CHBRK.map = built.map;
+            CHBRK.totalRecord = built.totalRecord; CHBRK.truncated = built.truncated;
+            CHBRK.cooldownUntil = 0;
+            return built;
+          })
+          .catch(err => {
+            if (err.rateLimited) {
+              const m = String(err.message || '').match(/(\d+)\s*s/);
+              CHBRK.cooldownUntil = Date.now() + (((m ? Number(m[1]) : 60)) + 2) * 1000;
+            }
+            throw err;
+          })
+          .finally(() => { CHBRK.inflight = null; });
+      }
+      await CHBRK.inflight;
     }
     const target = _normNV(req.query.name || 'admin');
     // Gộp bucket: nếu là "admin" thì cộng cả đơn không gán nhân viên ("(trống)")
