@@ -1567,6 +1567,10 @@ async function buildChannelBreakdown(since, until) {
   const TIKTOK = /tik\s*tok|tiktok|tt\s*shop/i, SHOPEE = /shopee|shoppe/i;
   const map = {};
   for (const o of orders) {
+    // Chỉ tính đơn có NGÀY VÀO HỆ THỐNG (createTime = ngày data về / ngày đơn sàn về)
+    // nằm trong khoảng ngày — API trả cả đơn cũ được cập nhật hôm nay nên phải lọc lại.
+    const dd = String(o.createTime || o.timeSaleReceivingData || '').slice(0, 10);
+    if (dd && (dd < since || dd > until)) continue;
     const key = _normNV(o.marketingDisplayName || o.marketingUserName || '') || '(trống)';
     const b = map[key] || (map[key] = _chBucket());
     const blob = [o.sourceName, o.utmSource, o.customerType, o.operationName, o.saleUserName, o.reasonToCreate]
