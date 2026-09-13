@@ -1774,6 +1774,32 @@ app.get('/api/marketing/channel-breakdown', async (req, res) => {
     } catch (e) { return res.json({ ok: false, message: e.message }); }
   }
 
+  // DEBUG tìm endpoint "Leads theo nguồn" (báo cáo Số contact theo NGUỒN DỮ LIỆU, cookie,
+  // KHÔNG bị giới hạn tần suất). /api/marketing/channel-breakdown?since=&until=&debug=6
+  if (String(req.query.debug) === '6') {
+    try {
+      if (!sandboxCookie) await sandboxLogin();
+      const tuNgay = `${since}T00:00:00.000+07:00`, denNgay = `${until}T23:59:59.998+07:00`;
+      const payload = { pageInfo: { page: 1, pageSize: 1000 }, sorts: [], kieuXem: 4, loaiNhanVien: 1, isChietKhau: true, isVat: true, date: [tuNgay, denNgay], tuNgay, denNgay, idChiNhanh: SANDBOX_CHINHANH, kieuNgay: 'NgayTao', typeViewDetail: null, strIdNguonDuLieu: null, idPhongBanSale: null, idNhomNhanVienSale: null, idUserSale: null, idPhongBanMkts: null, idNhomNhanVienMkts: null, idUserMkts: null };
+      const bases = ['https://api.sandbox.com.vn/report/api/report/', 'https://api.sandbox.com.vn/report/api/Report/'];
+      const names = ['ReportLeadByNguonSearch', 'ReportLeadByNguonDuLieuSearch', 'ReportLeadByNguon', 'ReportLeadBySourceSearch', 'ReportContactByNguonSearch', 'BaoCaoLeadTheoNguon', 'BaoCaoLeadTheoNguonDuLieu', 'ReportLeadByNguonDuLieuMktSearch'];
+      const cands = [];
+      for (const b of bases) for (const n of names) cands.push(b + n);
+      const out = [];
+      for (const url of cands) {
+        try {
+          const r = await fetch(url, { method: 'POST', headers: { 'Content-Type': 'application/json', 'Accept': 'application/json, text/plain, */*', 'Origin': SANDBOX_ORIGIN, 'Referer': SANDBOX_ORIGIN + '/', 'Cookie': sandboxCookie }, body: JSON.stringify(payload) });
+          let j = null; try { j = await r.json(); } catch (e) {}
+          const d = (j && j.data) || {};
+          const keys = j ? (d && typeof d === 'object' ? Object.keys(d) : []) : [];
+          const arrKey = keys.find(k => Array.isArray(d[k]) && d[k].length);
+          out.push({ url: url.replace('https://api.sandbox.com.vn', ''), status: r.status, success: j ? (j.success ?? j.Success) : null, dataKeys: keys.slice(0, 8), arrKey, arrLen: arrKey ? d[arrKey].length : 0, sampleRowKeys: arrKey ? Object.keys(d[arrKey][0]).slice(0, 20) : null });
+        } catch (e) { out.push({ url: url.replace('https://api.sandbox.com.vn', ''), err: e.message }); }
+      }
+      return res.json({ ok: true, since, until, ghiChu: 'URL nào success=true + có arrKey/rows là báo cáo Leads theo nguồn', ketqua: out });
+    } catch (e) { return res.json({ ok: false, message: e.message }); }
+  }
+
   // DEBUG: soi các trường ngày của đơn 1 nhân viên để tìm đúng "ngày data về".
   //   /api/marketing/channel-breakdown?since=&until=&name=...&debug=1
   if (req.query.debug) {
