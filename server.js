@@ -1529,6 +1529,9 @@ app.get('/api/marketing/report', async (req, res) => {
       }));
     }
     res.json({ ok: true, ver: 'mkt-2026-06-23-v13', since, until, rows, total, warnings, lastUpdated: new Date().toISOString() });
+    // Làm nóng sẵn phần tách kênh (TikTok/Shopee/thường) cho admin: dựng ở nền ngay khi
+    // trang vừa tải, để lúc bấm vào dòng đã có sẵn (API đơn hàng bị giới hạn ~62s/lần).
+    if ((req.session.user || {}).role === 'admin') { try { kickChannelBuild(since, until); } catch (e) {} }
   } catch (e) {
     res.json({ ok: false, since, until, message: e.message });
   }
@@ -1538,9 +1541,37 @@ app.get('/api/marketing/report', async (req, res) => {
 //   /api/marketing/channel-breakdown?since=&until=&name=admin
 // LẤY ĐƠN 1 LẦN cho cả khoảng ngày, tính sẵn cho MỌI nhân viên rồi cache ~5 phút
 // → bấm nhiều dòng liên tiếp không gọi lại Sandbox (tránh lỗi giới hạn tần suất).
-const CHBRK = { key: '', at: 0, map: null, totalRecord: 0, truncated: false };
+const CHBRK = { key: '', at: 0, map: null, totalRecord: 0, truncated: false, cooldownUntil: 0, inflight: null, inflightKey: '', buildError: null, buildErrorKey: null };
+const CHBRK_FRESH = 5 * 60 * 1000;
 const _normNV = s => String(s == null ? '' : s).trim().toLowerCase().replace(/\s+/g, ' ');
 function _chBucket() { return { tiktok: { don: 0, chot: 0, doanhThu: 0 }, shopee: { don: 0, chot: 0, doanhThu: 0 }, thuong: { don: 0, chot: 0, doanhThu: 0 }, sources: {} }; }
+
+// Bắt đầu dựng breakdown ở NỀN (không chặn). An toàn khi gọi nhiều lần: tự bỏ qua nếu
+// đã có cache tươi / đang dựng / đang trong thời gian chờ do Sandbox giới hạn.
+function kickChannelBuild(since, until) {
+  if (!SANDBOX_TOKEN) return;
+  const key = since + '|' + until;
+  if (CHBRK.key === key && CHBRK.map && (Date.now() - CHBRK.at) < CHBRK_FRESH) return; // còn tươi
+  if (CHBRK.cooldownUntil && Date.now() < CHBRK.cooldownUntil) return;                 // đang chờ
+  if (CHBRK.inflight && CHBRK.inflightKey === key) return;                             // đang dựng
+  CHBRK.inflightKey = key;
+  CHBRK.inflight = buildChannelBreakdown(since, until)
+    .then(built => {
+      CHBRK.key = key; CHBRK.at = Date.now(); CHBRK.map = built.map;
+      CHBRK.totalRecord = built.totalRecord; CHBRK.truncated = built.truncated;
+      CHBRK.cooldownUntil = 0; CHBRK.buildError = null; CHBRK.buildErrorKey = null;
+      return built;
+    })
+    .catch(err => {
+      if (err.rateLimited) {
+        const m = String(err.message || '').match(/(\d+)\s*s/);
+        CHBRK.cooldownUntil = Date.now() + (((m ? Number(m[1]) : 60)) + 2) * 1000;
+      } else {
+        CHBRK.buildError = err.message || 'Lỗi khi tải dữ liệu'; CHBRK.buildErrorKey = key;
+      }
+    })
+    .finally(() => { CHBRK.inflight = null; });
+}
 
 // Lấy TẤT CẢ đơn theo kiểu ngày "NgayTao" = ngày data về hệ thống.
 // API chặn mỗi trang tối đa 100 bản ghi (dù xin pageSize lớn) nên phải phân trang;
@@ -1617,7 +1648,6 @@ app.get('/api/marketing/channel-breakdown', async (req, res) => {
   const since = req.query.since || today;
   const until = req.query.until || since;
   const key = since + '|' + until;
-  const FRESH = 5 * 60 * 1000;
 
   // DEBUG SÂU: đối chiếu "Số contact" của báo cáo với số đơn GetOrderByConditions,
   // thử mọi cách lọc ngày để tìm cách nào khớp con số contact.
@@ -1710,38 +1740,18 @@ app.get('/api/marketing/channel-breakdown', async (req, res) => {
   }
 
   try {
-    const hasCache = (CHBRK.key === key && CHBRK.map && (Date.now() - CHBRK.at) < FRESH);
+    const hasCache = (CHBRK.key === key && CHBRK.map && (Date.now() - CHBRK.at) < CHBRK_FRESH);
     if (!hasCache) {
-      // Đang trong thời gian chờ do Sandbox giới hạn tần suất → báo luôn, KHÔNG gọi lại.
-      if (CHBRK.cooldownUntil && Date.now() < CHBRK.cooldownUntil) {
-        const secs = Math.ceil((CHBRK.cooldownUntil - Date.now()) / 1000);
-        return res.json({ ok: false, loading: true, message: 'Sandbox đang giới hạn tần suất — tự thử lại sau ~' + secs + 's…' });
-      }
       // Có lỗi ở lần dựng gần nhất cho đúng khoảng ngày này → báo 1 lần rồi xoá.
       if (CHBRK.buildErrorKey === key && CHBRK.buildError) {
         const msg = CHBRK.buildError; CHBRK.buildError = null; CHBRK.buildErrorKey = null;
         return res.json({ ok: false, message: msg });
       }
-      // Dựng NỀN (không chặn request): quét hết các trang có thể mất 30–90s vì API giới hạn.
-      // Trả về "đang tải" ngay; giao diện sẽ tự hỏi lại tới khi có cache.
-      if (!CHBRK.inflight || CHBRK.inflightKey !== key) {
-        CHBRK.inflightKey = key;
-        CHBRK.inflight = buildChannelBreakdown(since, until)
-          .then(built => {
-            CHBRK.key = key; CHBRK.at = Date.now(); CHBRK.map = built.map;
-            CHBRK.totalRecord = built.totalRecord; CHBRK.truncated = built.truncated;
-            CHBRK.cooldownUntil = 0; CHBRK.buildError = null; CHBRK.buildErrorKey = null;
-            return built;
-          })
-          .catch(err => {
-            if (err.rateLimited) {
-              const m = String(err.message || '').match(/(\d+)\s*s/);
-              CHBRK.cooldownUntil = Date.now() + (((m ? Number(m[1]) : 60)) + 2) * 1000;
-            } else {
-              CHBRK.buildError = err.message || 'Lỗi khi tải dữ liệu'; CHBRK.buildErrorKey = key;
-            }
-          })
-          .finally(() => { CHBRK.inflight = null; });
+      // Bắt đầu dựng NỀN (nếu chưa) rồi báo "đang tải" ngay; giao diện tự hỏi lại tới khi xong.
+      kickChannelBuild(since, until);
+      if (CHBRK.cooldownUntil && Date.now() < CHBRK.cooldownUntil) {
+        const secs = Math.ceil((CHBRK.cooldownUntil - Date.now()) / 1000);
+        return res.json({ ok: false, loading: true, message: 'Sandbox giới hạn tần suất — tự thử lại sau ~' + secs + 's…' });
       }
       return res.json({ ok: false, loading: true, message: 'Đang tải dữ liệu từ Sandbox (có thể mất 30–90s do API giới hạn)…' });
     }

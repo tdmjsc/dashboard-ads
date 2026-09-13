@@ -290,11 +290,12 @@ $('rows').addEventListener('click', function(e){
       .then(r=>{ if(r.status===401){location.href='/login';throw 0;} return r.json(); })
       .then(d=>{
         if(d.ok){ render(d); return; }
-        if(d.loading && tries<20){ tries++;
-          cellTd.innerHTML='<span class="warn">'+esc(d.message||'Đang tải…')+' <span class="muted">(lần '+tries+')</span></span>';
+        if(d.loading && tries<40){ tries++;
+          const secs=tries*5;
+          cellTd.innerHTML='<span class="warn">'+esc(d.message||'Đang tải…')+' <span class="muted">(đã chờ '+secs+'s)</span></span>';
           setTimeout(poll, 5000); return;
         }
-        cellTd.innerHTML='<span class="err">'+(d.loading?'Quá lâu — bấm lại sau.':'Lỗi: '+esc(d.message||''))+'</span>';
+        cellTd.innerHTML='<span class="err">'+(d.loading?'Quá lâu — Sandbox đang giới hạn, bấm lại sau ít phút.':'Lỗi: '+esc(d.message||''))+'</span>';
       }).catch(()=>{ cellTd.innerHTML='<span class="err">Không tải được chi tiết.</span>'; });
   };
   poll();
