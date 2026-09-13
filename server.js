@@ -1534,9 +1534,48 @@ app.get('/api/marketing/report', async (req, res) => {
   }
 });
 
-// Tách đơn của MỘT nhân viên marketing theo KÊNH: TikTok / Shopee / đơn thường.
+// Tách đơn theo KÊNH (TikTok / Shopee / đơn thường) cho từng nhân viên marketing.
 //   /api/marketing/channel-breakdown?since=&until=&name=admin
-// Dùng cho trang Marketing: bấm vào 1 dòng (vd "admin") để xem chi tiết theo kênh.
+// LẤY ĐƠN 1 LẦN cho cả khoảng ngày, tính sẵn cho MỌI nhân viên rồi cache ~5 phút
+// → bấm nhiều dòng liên tiếp không gọi lại Sandbox (tránh lỗi giới hạn tần suất).
+const CHBRK = { key: '', at: 0, map: null, totalRecord: 0, truncated: false };
+const _normNV = s => String(s == null ? '' : s).trim().toLowerCase().replace(/\s+/g, ' ');
+function _chBucket() { return { tiktok: { don: 0, chot: 0, doanhThu: 0 }, shopee: { don: 0, chot: 0, doanhThu: 0 }, thuong: { don: 0, chot: 0, doanhThu: 0 }, sources: {} }; }
+
+async function buildChannelBreakdown(since, until) {
+  const r = await fetch(`${SANDBOX_BASE}/DonHangLogistic/GetOrderByConditions`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${SANDBOX_TOKEN}` },
+    body: JSON.stringify({
+      idChiNhanh: SANDBOX_BRANCH, kieuNgay: 'NgayTao',
+      tuNgay: since, denNgay: addDay(until),
+      pageInfo: { page: 1, pageSize: 1000 }, sorts: [],
+      isIncludeDetail: false, isHistories: false,
+    }),
+  });
+  const j = await r.json().catch(() => ({ success: false, message: 'Phản hồi không hợp lệ' }));
+  if (!(j.success ?? j.Success)) {
+    const msg = String(j.message || j.Message || 'API Sandbox lỗi');
+    const err = new Error(msg); err.rateLimited = /chờ|giây|rate|quá nhanh|call api/i.test(msg); throw err;
+  }
+  const orders = j.data || [];
+  const TIKTOK = /tik\s*tok|tiktok|tt\s*shop/i, SHOPEE = /shopee|shoppe/i;
+  const map = {};
+  for (const o of orders) {
+    const key = _normNV(o.marketingDisplayName || o.marketingUserName || '') || '(trống)';
+    const b = map[key] || (map[key] = _chBucket());
+    const blob = [o.sourceName, o.utmSource, o.customerType, o.operationName, o.saleUserName, o.reasonToCreate]
+      .map(x => String(x || '')).join(' ');
+    const ch = TIKTOK.test(blob) ? 'tiktok' : SHOPEE.test(blob) ? 'shopee' : 'thuong';
+    b[ch].don += 1;
+    if (String(o.orderConfirmId) === '1') { b[ch].chot += 1; b[ch].doanhThu += Number(o.totalPrice || 0); }
+    const sn = (o.sourceName || '(không nguồn)').trim();
+    b.sources[sn] = (b.sources[sn] || 0) + 1;
+  }
+  const totalRec = Number(j.totalRecord || orders.length);
+  return { map, totalRecord: totalRec, truncated: totalRec > orders.length };
+}
+
 app.get('/api/marketing/channel-breakdown', async (req, res) => {
   const me = req.session.user || {};
   if (me.role !== 'admin') return res.status(403).json({ ok: false, message: 'Chỉ admin' });
@@ -1544,50 +1583,35 @@ app.get('/api/marketing/channel-breakdown', async (req, res) => {
   const today = new Date().toISOString().slice(0, 10);
   const since = req.query.since || today;
   const until = req.query.until || since;
-  const norm = s => String(s == null ? '' : s).trim().toLowerCase().replace(/\s+/g, ' ');
-  const target = norm(req.query.name || 'admin');
+  const key = since + '|' + until;
+  const FRESH = 5 * 60 * 1000;
   try {
-    const r = await fetch(`${SANDBOX_BASE}/DonHangLogistic/GetOrderByConditions`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${SANDBOX_TOKEN}` },
-      body: JSON.stringify({
-        idChiNhanh: SANDBOX_BRANCH, kieuNgay: 'NgayTao',
-        tuNgay: since, denNgay: addDay(until),
-        pageInfo: { page: 1, pageSize: 1000 }, sorts: [],
-        isIncludeDetail: false, isHistories: false,
-      }),
-    });
-    const j = await r.json().catch(() => ({ success: false, message: 'Phản hồi không hợp lệ' }));
-    if (!(j.success ?? j.Success)) return res.json({ ok: false, message: j.message || j.Message || 'API Sandbox lỗi' });
-    const orders = j.data || [];
-    const TIKTOK = /tik\s*tok|tiktok|tt\s*shop/i;
-    const SHOPEE = /shopee|shoppe/i;
-    const mk = () => ({ don: 0, chot: 0, doanhThu: 0 });
-    const out = { tiktok: mk(), shopee: mk(), thuong: mk() };
-    const sources = {};
-    let matched = 0;
-    for (const o of orders) {
-      const mkt = norm(o.marketingDisplayName || o.marketingUserName || '');
-      const inBucket = (mkt === target) || (target === 'admin' && mkt === '');
-      if (!inBucket) continue;
-      matched++;
-      const blob = [o.sourceName, o.utmSource, o.customerType, o.operationName, o.saleUserName, o.reasonToCreate]
-        .map(x => String(x || '')).join(' ');
-      const ch = TIKTOK.test(blob) ? 'tiktok' : SHOPEE.test(blob) ? 'shopee' : 'thuong';
-      out[ch].don += 1;
-      if (String(o.orderConfirmId) === '1') { out[ch].chot += 1; out[ch].doanhThu += Number(o.totalPrice || 0); }
-      const sn = (o.sourceName || '(không nguồn)').trim();
-      sources[sn] = (sources[sn] || 0) + 1;
+    if (!(CHBRK.key === key && CHBRK.map && (Date.now() - CHBRK.at) < FRESH)) {
+      const built = await buildChannelBreakdown(since, until);
+      CHBRK.key = key; CHBRK.at = Date.now(); CHBRK.map = built.map;
+      CHBRK.totalRecord = built.totalRecord; CHBRK.truncated = built.truncated;
     }
-    const srcList = Object.entries(sources).map(([name, count]) => ({ name, count })).sort((a, b) => b.count - a.count);
-    const totalRec = Number(j.totalRecord || orders.length);
+    const target = _normNV(req.query.name || 'admin');
+    // Gộp bucket: nếu là "admin" thì cộng cả đơn không gán nhân viên ("(trống)")
+    const keys = (target === 'admin') ? [target, '(trống)'] : [target];
+    const agg = _chBucket();
+    for (const k of keys) {
+      const b = CHBRK.map[k]; if (!b) continue;
+      for (const ch of ['tiktok', 'shopee', 'thuong']) {
+        agg[ch].don += b[ch].don; agg[ch].chot += b[ch].chot; agg[ch].doanhThu += b[ch].doanhThu;
+      }
+      for (const sn in b.sources) agg.sources[sn] = (agg.sources[sn] || 0) + b.sources[sn];
+    }
+    const srcList = Object.entries(agg.sources).map(([name, count]) => ({ name, count })).sort((a, b) => b.count - a.count);
     res.json({
       ok: true, since, until, name: req.query.name || 'admin',
-      matched, totalRecord: totalRec, truncated: totalRec > orders.length,
-      tiktok: out.tiktok, shopee: out.shopee, thuong: out.thuong,
-      sources: srcList,
+      cached: (Date.now() - CHBRK.at) > 500,
+      totalRecord: CHBRK.totalRecord, truncated: CHBRK.truncated,
+      tiktok: agg.tiktok, shopee: agg.shopee, thuong: agg.thuong, sources: srcList,
     });
-  } catch (e) { res.json({ ok: false, message: e.message }); }
+  } catch (e) {
+    res.json({ ok: false, message: e.rateLimited ? ('Sandbox đang giới hạn tần suất — ' + e.message + '. Chờ chút rồi bấm lại.') : e.message });
+  }
 });
 
 // (TẠM — để gỡ lỗi) Xem cấu trúc dữ liệu thật từ Sandbox: mở /api/marketing/sample
