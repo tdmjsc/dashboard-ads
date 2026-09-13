@@ -176,8 +176,12 @@ function render(d){
   if(!rows.length){ tb.innerHTML = '<tr><td colspan="10" class="empty">Không có dữ liệu trong khoảng ngày này.</td></tr>'; return; }
   let html='';
   rows.forEach(r=>{
+    const isAdmin=String(r.name||'').trim().toLowerCase()==='admin';
+    const nameCell = isAdmin
+      ? `<td class="empname" data-name="${esc(r.name)}" style="cursor:pointer" title="Bấm để xem TikTok / Shopee / đơn thường"><span class="cvx" style="color:#6B7C97;font-size:11px">▸</span> ${esc(r.name)}</td>`
+      : `<td>${esc(r.name)||'<span class="muted">(không tên)</span>'}</td>`;
     html += `<tr>
-      <td class="empname" data-name="${esc(r.name)}" style="cursor:pointer" title="Bấm để xem TikTok / Shopee / đơn thường"><span class="cvx" style="color:#6B7C97;font-size:11px">▸</span> ${esc(r.name)||'<span class="muted">(không tên)</span>'}</td>
+      ${nameCell}
       <td class="num">${vnd(r.contact)}</td>
       <td class="num cpa">${vnd(r.giaContact)}</td>
       <td class="num" style="color:#9DB2FF">${vnd(r.donThai)}</td>
@@ -278,6 +282,7 @@ $('rows').addEventListener('click', function(e){
       + box('Shopee', d.shopee, '#fb923c')
       + box('Đơn thường', d.thuong, '#9DB2FF')
       + '<div class="muted" style="font-size:11px;margin-top:3px">Đếm theo NGÀY DATA VỀ HỆ THỐNG (không phải ngày chốt). Có thể khác cột “Tổng đơn” (= số contact + đơn Thái) vì contact là lead, không phải đơn.</div>'
+      + (d.builtAt?('<div class="muted" style="font-size:10.5px;margin-top:2px">Số liệu lúc '+new Date(d.builtAt).toLocaleTimeString('vi-VN')+(d.stale?' · đang làm mới…':'')+'</div>'):'')
       + '</div>';
     if(d.truncated) h+='<div class="warn" style="font-size:11.5px">⚠ Khoảng ngày có rất nhiều đơn ('+vnd(d.totalRecord)+') — thu hẹp ngày để chính xác 100%.</div>';
     if(d.sources && d.sources.length)

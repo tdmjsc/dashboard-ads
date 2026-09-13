@@ -1620,17 +1620,29 @@ async function fetchSandboxOrders(since, until, opts = {}) {
   return { data: all, totalRecord: totalRecord || all.length };
 }
 
+const _isAdminOrder = o => { const k = _normNV(o.marketingDisplayName || o.marketingUserName || ''); return k === '' || k === 'admin' || k === '(trống)'; };
+
+// CHỈ dựng breakdown cho ADMIN (đơn không gán nhân viên marketing — nơi gom TikTok/Shopee).
+// Trước tiên thử lọc server-side theo idUserMkts = GUID-0 để CHỈ tải đơn Admin (rất ít,
+// tránh giới hạn tần suất). Nếu API không tôn trọng bộ lọc (trả cả đơn có tên NV) thì
+// quét toàn bộ rồi tự lọc Admin — không bao giờ báo nhầm 0.
 async function buildChannelBreakdown(since, until) {
-  const j = await fetchSandboxOrders(since, until);
-  const orders = j.data || [];
+  let orders = null, totalRec = 0;
+  try {
+    const jf = await fetchSandboxOrders(since, until, { body: { idUserMkts: [ADMIN_MKT_ID] } });
+    const os = jf.data || [];
+    const named = os.filter(o => !_isAdminOrder(o)).length;
+    if (os.length > 0 && named === 0) { orders = os; totalRec = Number(jf.totalRecord || os.length); } // lọc sạch
+  } catch (e) { if (e.rateLimited) throw e; /* bộ lọc lỗi → quét toàn bộ */ }
+  if (!orders) {
+    const j = await fetchSandboxOrders(since, until);
+    orders = (j.data || []).filter(_isAdminOrder);
+    totalRec = Number(j.totalRecord || orders.length);
+  }
   const TIKTOK = /tik\s*tok|tiktok|tt\s*shop/i, SHOPEE = /shopee|shoppe/i;
-  const map = {};
+  const b = _chBucket();
   for (const o of orders) {
-    // API đã lọc theo NgayTao = ngày data về hệ thống, nên KHÔNG lọc lại theo createTime
-    // (createTime là ngày gốc đơn sàn — vd đơn "TIKTOK Cũ" đặt từ tháng trước nhưng
-    // data mới về hệ thống hôm nay).
-    const key = _normNV(o.marketingDisplayName || o.marketingUserName || '') || '(trống)';
-    const b = map[key] || (map[key] = _chBucket());
+    // API đã lọc theo NgayTao = ngày data về hệ thống, nên KHÔNG lọc lại theo createTime.
     const blob = [o.sourceName, o.utmSource, o.customerType, o.operationName, o.saleUserName, o.reasonToCreate]
       .map(x => String(x || '')).join(' ');
     const ch = TIKTOK.test(blob) ? 'tiktok' : SHOPEE.test(blob) ? 'shopee' : 'thuong';
@@ -1639,8 +1651,7 @@ async function buildChannelBreakdown(since, until) {
     const sn = (o.sourceName || '(không nguồn)').trim();
     b.sources[sn] = (b.sources[sn] || 0) + 1;
   }
-  const totalRec = Number(j.totalRecord || orders.length);
-  return { map, totalRecord: totalRec, truncated: totalRec > orders.length };
+  return { map: { admin: b }, totalRecord: orders.length, truncated: false };
 }
 
 app.get('/api/marketing/channel-breakdown', async (req, res) => {
@@ -1792,8 +1803,11 @@ app.get('/api/marketing/channel-breakdown', async (req, res) => {
   }
 
   try {
-    const hasCache = (CHBRK.key === key && CHBRK.map && (Date.now() - CHBRK.at) < CHBRK_FRESH);
-    if (!hasCache) {
+    const haveMap = (CHBRK.key === key && CHBRK.map);
+    const fresh = haveMap && (Date.now() - CHBRK.at) < CHBRK_FRESH;
+    // Có bản cũ (stale) → phục vụ NGAY, đồng thời làm mới ở nền (không bắt user chờ).
+    if (haveMap && !fresh) kickChannelBuild(since, until);
+    if (!haveMap) {
       // Có lỗi ở lần dựng gần nhất cho đúng khoảng ngày này → báo 1 lần rồi xoá.
       if (CHBRK.buildErrorKey === key && CHBRK.buildError) {
         const msg = CHBRK.buildError; CHBRK.buildError = null; CHBRK.buildErrorKey = null;
@@ -1822,6 +1836,8 @@ app.get('/api/marketing/channel-breakdown', async (req, res) => {
     res.json({
       ok: true, since, until, name: req.query.name || 'admin',
       cached: (Date.now() - CHBRK.at) > 500,
+      stale: (Date.now() - CHBRK.at) >= CHBRK_FRESH,
+      builtAt: new Date(CHBRK.at).toISOString(),
       totalRecord: CHBRK.totalRecord, truncated: CHBRK.truncated,
       tiktok: agg.tiktok, shopee: agg.shopee, thuong: agg.thuong, sources: srcList,
     });
