@@ -1547,11 +1547,12 @@ function _chBucket() { return { tiktok: { don: 0, chot: 0, doanhThu: 0 }, shopee
 // gộp theo mã đơn để không đếm trùng, và lùi lại khi bị giới hạn tần suất.
 const CHBRK_PAGE_SIZE = 100;
 const CHBRK_MAX_PAGES = 60;
-async function fetchSandboxOrders(since, until) {
+async function fetchSandboxOrders(since, until, opts = {}) {
+  const maxPages = opts.maxPages || CHBRK_MAX_PAGES;
   const all = [];
   const seen = new Set();
   let totalRecord = 0;
-  for (let page = 1; page <= CHBRK_MAX_PAGES; page++) {
+  for (let page = 1; page <= maxPages; page++) {
     let json, attempt = 0;
     for (;;) {
       const r = await fetch(`${SANDBOX_BASE}/DonHangLogistic/GetOrderByConditions`, {
@@ -1645,8 +1646,8 @@ app.get('/api/marketing/channel-breakdown', async (req, res) => {
         const rawAdmin = (rd.reportLeadByNhanSuMktDtos || []).find(r => _normNV(r.ten || '') === 'admin');
         adminRowRaw = rawAdmin || null;
       } catch (e) { reportContact = { error: e.message }; }
-      // 2) Đơn từ GetOrderByConditions
-      const j = await fetchSandboxOrders(since, until);
+      // 2) Đơn từ GetOrderByConditions — chỉ lấy 1 trang để trả nhanh (xem totalRecord thật)
+      const j = await fetchSandboxOrders(since, until, { maxPages: 1 });
       const orders = j.data || [];
       const mine = orders.filter(o => isMine(_normNV(o.marketingDisplayName || o.marketingUserName || '') || '(trống)'));
       const arrival = o => o.timeSaleReceivingData || o.createTime; // ngày data về: ưu tiên ngày sale nhận data
@@ -1684,7 +1685,7 @@ app.get('/api/marketing/channel-breakdown', async (req, res) => {
   //   /api/marketing/channel-breakdown?since=&until=&name=...&debug=1
   if (req.query.debug) {
     try {
-      const j = await fetchSandboxOrders(since, until);
+      const j = await fetchSandboxOrders(since, until, { maxPages: 1 });
       const orders = j.data || [];
       const target = _normNV(req.query.name || 'admin');
       const mine = orders.filter(o => {
@@ -1714,28 +1715,35 @@ app.get('/api/marketing/channel-breakdown', async (req, res) => {
       // Đang trong thời gian chờ do Sandbox giới hạn tần suất → báo luôn, KHÔNG gọi lại.
       if (CHBRK.cooldownUntil && Date.now() < CHBRK.cooldownUntil) {
         const secs = Math.ceil((CHBRK.cooldownUntil - Date.now()) / 1000);
-        return res.json({ ok: false, message: 'Sandbox đang giới hạn tần suất — chờ ~' + secs + 's rồi bấm lại.' });
+        return res.json({ ok: false, loading: true, message: 'Sandbox đang giới hạn tần suất — tự thử lại sau ~' + secs + 's…' });
       }
-      // Gộp mọi lời bấm cùng lúc vào MỘT lời gọi Sandbox (dedupe theo khoảng ngày).
+      // Có lỗi ở lần dựng gần nhất cho đúng khoảng ngày này → báo 1 lần rồi xoá.
+      if (CHBRK.buildErrorKey === key && CHBRK.buildError) {
+        const msg = CHBRK.buildError; CHBRK.buildError = null; CHBRK.buildErrorKey = null;
+        return res.json({ ok: false, message: msg });
+      }
+      // Dựng NỀN (không chặn request): quét hết các trang có thể mất 30–90s vì API giới hạn.
+      // Trả về "đang tải" ngay; giao diện sẽ tự hỏi lại tới khi có cache.
       if (!CHBRK.inflight || CHBRK.inflightKey !== key) {
         CHBRK.inflightKey = key;
         CHBRK.inflight = buildChannelBreakdown(since, until)
           .then(built => {
             CHBRK.key = key; CHBRK.at = Date.now(); CHBRK.map = built.map;
             CHBRK.totalRecord = built.totalRecord; CHBRK.truncated = built.truncated;
-            CHBRK.cooldownUntil = 0;
+            CHBRK.cooldownUntil = 0; CHBRK.buildError = null; CHBRK.buildErrorKey = null;
             return built;
           })
           .catch(err => {
             if (err.rateLimited) {
               const m = String(err.message || '').match(/(\d+)\s*s/);
               CHBRK.cooldownUntil = Date.now() + (((m ? Number(m[1]) : 60)) + 2) * 1000;
+            } else {
+              CHBRK.buildError = err.message || 'Lỗi khi tải dữ liệu'; CHBRK.buildErrorKey = key;
             }
-            throw err;
           })
           .finally(() => { CHBRK.inflight = null; });
       }
-      await CHBRK.inflight;
+      return res.json({ ok: false, loading: true, message: 'Đang tải dữ liệu từ Sandbox (có thể mất 30–90s do API giới hạn)…' });
     }
     const target = _normNV(req.query.name || 'admin');
     // Gộp bucket: nếu là "admin" thì cộng cả đơn không gán nhân viên ("(trống)")

@@ -265,27 +265,39 @@ $('rows').addEventListener('click', function(e){
   tr.after(sub);
   const cellTd=sub.firstChild;
   const since=$('from').value, until=$('to').value;
-  fetch('/api/marketing/channel-breakdown?since='+since+'&until='+until+'&name='+encodeURIComponent(name))
-    .then(r=>{ if(r.status===401){location.href='/login';throw 0;} return r.json(); })
-    .then(d=>{
-      if(!d.ok){ cellTd.innerHTML='<span class="err">Lỗi: '+esc(d.message||'')+'</span>'; return; }
-      const box=(lb,o,c)=>'<div style="display:inline-block;min-width:170px;margin:2px 16px 2px 0;">'
-        +'<b style="color:'+c+'">'+lb+'</b>: '+vnd(o.don)+' đơn '
-        +'<span class="muted">('+vnd(o.chot)+' chốt · '+vnd(o.doanhThu)+'₫)</span></div>';
-      const tong=(d.tiktok.don||0)+(d.shopee.don||0)+(d.thuong.don||0);
-      let h='<div style="padding:6px 2px;">'
-        + '<div style="margin-bottom:4px;font-weight:600">Tổng '+vnd(tong)+' đơn thực tế</div>'
-        + box('TikTok', d.tiktok, '#22d3ee')
-        + box('Shopee', d.shopee, '#fb923c')
-        + box('Đơn thường', d.thuong, '#9DB2FF')
-        + '<div class="muted" style="font-size:11px;margin-top:3px">Đây là SỐ ĐƠN thực tế theo kênh — có thể khác cột “Tổng đơn” (= số contact + đơn Thái).</div>'
-        + '</div>';
-      if(d.truncated) h+='<div class="warn" style="font-size:11.5px">⚠ Khoảng ngày có nhiều đơn ('+vnd(d.totalRecord)+'), chỉ soi được 1000 đơn — thu hẹp ngày để chính xác 100%.</div>';
-      if(d.sources && d.sources.length)
-        h+='<div class="muted" style="font-size:11.5px;margin-top:4px;">Nguồn đơn: '
-          + d.sources.slice(0,12).map(s=>esc(s.name)+' ('+vnd(s.count)+')').join(' · ') + '</div>';
-      cellTd.innerHTML=h;
-    }).catch(()=>{ cellTd.innerHTML='<span class="err">Không tải được chi tiết.</span>'; });
+  const url='/api/marketing/channel-breakdown?since='+since+'&until='+until+'&name='+encodeURIComponent(name);
+  let tries=0;
+  const render=d=>{
+    const box=(lb,o,c)=>'<div style="display:inline-block;min-width:170px;margin:2px 16px 2px 0;">'
+      +'<b style="color:'+c+'">'+lb+'</b>: '+vnd(o.don)+' đơn '
+      +'<span class="muted">('+vnd(o.chot)+' chốt · '+vnd(o.doanhThu)+'₫)</span></div>';
+    const tong=(d.tiktok.don||0)+(d.shopee.don||0)+(d.thuong.don||0);
+    let h='<div style="padding:6px 2px;">'
+      + '<div style="margin-bottom:4px;font-weight:600">Tổng '+vnd(tong)+' đơn thực tế (data về hệ thống trong khoảng ngày)</div>'
+      + box('TikTok', d.tiktok, '#22d3ee')
+      + box('Shopee', d.shopee, '#fb923c')
+      + box('Đơn thường', d.thuong, '#9DB2FF')
+      + '<div class="muted" style="font-size:11px;margin-top:3px">Đếm theo NGÀY DATA VỀ HỆ THỐNG (không phải ngày chốt). Có thể khác cột “Tổng đơn” (= số contact + đơn Thái) vì contact là lead, không phải đơn.</div>'
+      + '</div>';
+    if(d.truncated) h+='<div class="warn" style="font-size:11.5px">⚠ Khoảng ngày có rất nhiều đơn ('+vnd(d.totalRecord)+') — thu hẹp ngày để chính xác 100%.</div>';
+    if(d.sources && d.sources.length)
+      h+='<div class="muted" style="font-size:11.5px;margin-top:4px;">Nguồn đơn: '
+        + d.sources.slice(0,14).map(s=>esc(s.name)+' ('+vnd(s.count)+')').join(' · ') + '</div>';
+    cellTd.innerHTML=h;
+  };
+  const poll=()=>{
+    fetch(url)
+      .then(r=>{ if(r.status===401){location.href='/login';throw 0;} return r.json(); })
+      .then(d=>{
+        if(d.ok){ render(d); return; }
+        if(d.loading && tries<20){ tries++;
+          cellTd.innerHTML='<span class="warn">'+esc(d.message||'Đang tải…')+' <span class="muted">(lần '+tries+')</span></span>';
+          setTimeout(poll, 5000); return;
+        }
+        cellTd.innerHTML='<span class="err">'+(d.loading?'Quá lâu — bấm lại sau.':'Lỗi: '+esc(d.message||''))+'</span>';
+      }).catch(()=>{ cellTd.innerHTML='<span class="err">Không tải được chi tiết.</span>'; });
+  };
+  poll();
 });
 
 // Ẩn link "Sản phẩm" nếu không phải admin
