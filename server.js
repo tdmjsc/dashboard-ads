@@ -1610,13 +1610,17 @@ app.get('/api/marketing/channel-breakdown', async (req, res) => {
         return TIKTOK.test(blob) ? 'tiktok' : SHOPEE.test(blob) ? 'shopee' : 'thuong';
       };
       // 1) Báo cáo lead (nguồn của cột "Số contact")
-      let reportContact = null, reportRowNames = [];
+      let reportContact = null, reportRowNames = [], reportDataKeys = null, adminRowRaw = null;
       try {
         const rp = await sandboxReport(since, until);
         const mp = mapReport(rp.json);
         reportRowNames = mp.rows.map(r => r.name);
         const adminRow = mp.rows.find(r => _normNV(r.name) === 'admin');
         reportContact = { admin: adminRow ? adminRow.contact : null, total: mp.total.contact };
+        const rd = (rp.json && rp.json.data) || {};
+        reportDataKeys = Object.keys(rd);
+        const rawAdmin = (rd.reportLeadByNhanSuMktDtos || []).find(r => _normNV(r.ten || '') === 'admin');
+        adminRowRaw = rawAdmin || null;
       } catch (e) { reportContact = { error: e.message }; }
       // 2) Đơn từ GetOrderByConditions
       const j = await fetchSandboxOrders(since, until);
@@ -1631,6 +1635,7 @@ app.get('/api/marketing/channel-breakdown', async (req, res) => {
       return res.json({
         ok: true, since, until, name: req.query.name || 'admin',
         soContact_baoCao: reportContact,       // <-- con số phải khớp
+        reportDataKeys, adminRowRaw,           // <-- xem báo cáo có tách nguồn không
         tenNhanVien_baoCao: reportRowNames,
         tongDon_APItra_ve: orders.length,
         adminBucket_tongDon: mine.length,
