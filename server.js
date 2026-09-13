@@ -1542,14 +1542,12 @@ const CHBRK = { key: '', at: 0, map: null, totalRecord: 0, truncated: false };
 const _normNV = s => String(s == null ? '' : s).trim().toLowerCase().replace(/\s+/g, ' ');
 function _chBucket() { return { tiktok: { don: 0, chot: 0, doanhThu: 0 }, shopee: { don: 0, chot: 0, doanhThu: 0 }, thuong: { don: 0, chot: 0, doanhThu: 0 }, sources: {} }; }
 
-async function buildChannelBreakdown(since, until) {
+async function fetchSandboxOrders(since, until) {
   const r = await fetch(`${SANDBOX_BASE}/DonHangLogistic/GetOrderByConditions`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${SANDBOX_TOKEN}` },
     body: JSON.stringify({
-      // Lấy theo NGÀY DATA VỀ (sale nhận data) để KHỚP với cột "Số contact" của báo cáo,
-      // KHÔNG phải ngày chốt đơn.
-      idChiNhanh: SANDBOX_BRANCH, kieuNgay: 'SaleNgayNhanData',
+      idChiNhanh: SANDBOX_BRANCH, kieuNgay: 'NgayTao',
       tuNgay: since, denNgay: addDay(until),
       pageInfo: { page: 1, pageSize: 1000 }, sorts: [],
       isIncludeDetail: false, isHistories: false,
@@ -1560,15 +1558,15 @@ async function buildChannelBreakdown(since, until) {
     const msg = String(j.message || j.Message || 'API Sandbox lỗi');
     const err = new Error(msg); err.rateLimited = /chờ|giây|rate|quá nhanh|call api/i.test(msg); throw err;
   }
+  return j;
+}
+
+async function buildChannelBreakdown(since, until) {
+  const j = await fetchSandboxOrders(since, until);
   const orders = j.data || [];
   const TIKTOK = /tik\s*tok|tiktok|tt\s*shop/i, SHOPEE = /shopee|shoppe/i;
   const map = {};
-  let counted = 0;
   for (const o of orders) {
-    // Chốt chặn phía mình: chỉ tính đơn có NGÀY DATA VỀ nằm trong khoảng ngày.
-    const dd = String(o.timeSaleReceivingData || o.createTime || '').slice(0, 10);
-    if (dd && (dd < since || dd > until)) continue;
-    counted++;
     const key = _normNV(o.marketingDisplayName || o.marketingUserName || '') || '(trống)';
     const b = map[key] || (map[key] = _chBucket());
     const blob = [o.sourceName, o.utmSource, o.customerType, o.operationName, o.saleUserName, o.reasonToCreate]
@@ -1592,6 +1590,35 @@ app.get('/api/marketing/channel-breakdown', async (req, res) => {
   const until = req.query.until || since;
   const key = since + '|' + until;
   const FRESH = 5 * 60 * 1000;
+
+  // DEBUG: soi các trường ngày của đơn 1 nhân viên để tìm đúng "ngày data về".
+  //   /api/marketing/channel-breakdown?since=&until=&name=...&debug=1
+  if (req.query.debug) {
+    try {
+      const j = await fetchSandboxOrders(since, until);
+      const orders = j.data || [];
+      const target = _normNV(req.query.name || 'admin');
+      const mine = orders.filter(o => {
+        const k = _normNV(o.marketingDisplayName || o.marketingUserName || '') || '(trống)';
+        return (k === target) || (target === 'admin' && k === '(trống)');
+      });
+      const dOnly = t => (t ? String(t).slice(0, 10) : null);
+      return res.json({
+        ok: true, name: req.query.name, since, until,
+        soDon_theo_NgayTao: mine.length,
+        dateFields: mine.slice(0, 40).map(o => ({
+          createTime: dOnly(o.createTime),
+          timeSaleReceivingData: dOnly(o.timeSaleReceivingData),
+          orderConfirmDate: dOnly(o.orderConfirmDate),
+          timeOrderSubmit: dOnly(o.timeOrderSubmit),
+          updateTime: dOnly(o.updateTime),
+          chot: String(o.orderConfirmId) === '1' ? 1 : 0,
+          sourceName: o.sourceName || null,
+        })),
+      });
+    } catch (e) { return res.json({ ok: false, message: e.message }); }
+  }
+
   try {
     if (!(CHBRK.key === key && CHBRK.map && (Date.now() - CHBRK.at) < FRESH)) {
       const built = await buildChannelBreakdown(since, until);
