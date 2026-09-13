@@ -1547,7 +1547,9 @@ async function buildChannelBreakdown(since, until) {
     method: 'POST',
     headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${SANDBOX_TOKEN}` },
     body: JSON.stringify({
-      idChiNhanh: SANDBOX_BRANCH, kieuNgay: 'NgayTao',
+      // Lấy theo NGÀY DATA VỀ (sale nhận data) để KHỚP với cột "Số contact" của báo cáo,
+      // KHÔNG phải ngày chốt đơn.
+      idChiNhanh: SANDBOX_BRANCH, kieuNgay: 'SaleNgayNhanData',
       tuNgay: since, denNgay: addDay(until),
       pageInfo: { page: 1, pageSize: 1000 }, sorts: [],
       isIncludeDetail: false, isHistories: false,
@@ -1561,7 +1563,12 @@ async function buildChannelBreakdown(since, until) {
   const orders = j.data || [];
   const TIKTOK = /tik\s*tok|tiktok|tt\s*shop/i, SHOPEE = /shopee|shoppe/i;
   const map = {};
+  let counted = 0;
   for (const o of orders) {
+    // Chốt chặn phía mình: chỉ tính đơn có NGÀY DATA VỀ nằm trong khoảng ngày.
+    const dd = String(o.timeSaleReceivingData || o.createTime || '').slice(0, 10);
+    if (dd && (dd < since || dd > until)) continue;
+    counted++;
     const key = _normNV(o.marketingDisplayName || o.marketingUserName || '') || '(trống)';
     const b = map[key] || (map[key] = _chBucket());
     const blob = [o.sourceName, o.utmSource, o.customerType, o.operationName, o.saleUserName, o.reasonToCreate]
