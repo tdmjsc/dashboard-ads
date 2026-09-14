@@ -1781,8 +1781,18 @@ app.get('/api/marketing/channel-breakdown', async (req, res) => {
       if (!sandboxCookie) await sandboxLogin();
       const tuNgay = `${since}T00:00:00.000+07:00`, denNgay = `${until}T23:59:59.998+07:00`;
       const payload = { pageInfo: { page: 1, pageSize: 1000 }, sorts: [], kieuXem: 4, loaiNhanVien: 1, isChietKhau: true, isVat: true, date: [tuNgay, denNgay], tuNgay, denNgay, idChiNhanh: SANDBOX_CHINHANH, kieuNgay: 'NgayTao', typeViewDetail: null, strIdNguonDuLieu: null, idPhongBanSale: null, idNhomNhanVienSale: null, idUserSale: null, idPhongBanMkts: null, idNhomNhanVienMkts: null, idUserMkts: null };
-      const bases = ['https://api.sandbox.com.vn/report/api/Report/', 'https://api.sandbox.com.vn/report/api/report/'];
-      const names = ['BaoCaoMktTheoNguon', 'BaoCaoMktTheoNguonDuLieu', 'BaoCaoMktTheoNguonData', 'BaoCaoMktTheoKenh', 'BaoCaoLeadTheoNguon', 'BaoCaoLeadTheoNguonDuLieu', 'BaoCaoMktTheoNguonSearch', 'BaoCaoMktTheoNguonDuLieuSearch', 'ReportLeadByNguonDuLieuMkt', 'ReportLeadByNguonMkt', 'BaoCaoMktTheoContact', 'BaoCaoMktTheoLead'];
+      const bases = [
+        'https://api.sandbox.com.vn/report/api/report/', 'https://api.sandbox.com.vn/report/api/Report/',
+        'https://api.sandbox.com.vn/partner/api/report/', 'https://api.sandbox.com.vn/partner/api/Report/',
+        'https://api.sandbox.com.vn/report/api/',
+      ];
+      const names = [
+        'ReportLeadByNguonDuLieuSearch', 'ReportLeadByNguonDuLieu', 'ReportLeadByNguonDataSearch',
+        'ReportLeadByDataSourceSearch', 'ReportLeadNguonDuLieuSearch', 'ReportContactByNguonDuLieuSearch',
+        'ReportLeadByNguonSearch', 'ReportLeadBySourceSearch', 'ReportLeadTheoNguonSearch',
+        'BaoCaoLeadTheoNguonDuLieu', 'BaoCaoLeadTheoNguon', 'BaoCaoMktTheoNguonDuLieu', 'BaoCaoMktTheoNguon',
+        'ReportLeadByNguonDuLieuMktSearch', 'ReportContactByNguonSearch', 'ReportDataByNguonSearch',
+      ];
       const cands = [];
       for (const b of bases) for (const n of names) cands.push(b + n);
       const out = [];
