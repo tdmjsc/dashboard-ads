@@ -1277,6 +1277,43 @@ async function sandboxReport(since, until) {
   return { httpStatus: r.status, json: j };
 }
 
+// Báo cáo "Leads theo nguồn" (MarketingDashboard/TimTheoDieuKien) — nhóm theo NGUỒN DỮ LIỆU.
+// Dùng cookie như báo cáo khác (không bị giới hạn tần suất). Payload lấy đúng từ app Sandbox.
+const SANDBOX_SOURCE_REPORT_URL = process.env.SANDBOX_SOURCE_REPORT_URL
+  || 'https://api.sandbox.com.vn/report/api/MarketingDashboard/TimTheoDieuKien';
+async function sandboxSourceReport(since, until) {
+  const tuNgay = `${since}T00:00:00+07:00`, denNgay = `${until}T23:59:59+07:00`;
+  const payload = {
+    idSanPhamCha: null, idSanPham: null, idChiNhanh: SANDBOX_CHINHANH,
+    textTime: '', idDate: null, keyWord: '', loaiNhanVien: 1, kieuXem: 4,
+    idLandingSanPham: null, giaoHangDoiTacMa: null, giaoHangTrangThaiMa: null,
+    idNhomNhanVienMkts: null, idPhongBanMkts: null, idUserMkts: null,
+    isChietKhau: true, isKhachHangCu: null, isSoTrung: null, khoId: null,
+    khongGioiHanNgayChot: null, loaiDoanhSo: null, trangThaiDoiSoat: null,
+    idSanPhamNganhHang: null, idNhomSanPham: null, isChamSoc: null, unitCode: null,
+    isVat: true, maQuocGia: null, kieuNgay: 'NgayTao',
+    date: [`${since}T00:00:00.000+07:00`, `${until}T23:59:59.998+07:00`], tuNgay, denNgay,
+    typeViewDetail: null, idPhongBanSale: null, idNhomNhanVienSale: null, idUserSale: null,
+    lstIdPhongBan: null, lstIdNhom: null, lstIdMarketing: null,
+    pageInfo: { page: 1, pageSize: 1000 }, sorts: [],
+    strIdKenhQuangCao: null, strIdNhomNhanVien: null, strUserId: null,
+    listIdSanPham: null, listIdSanPhamCha: null,
+  };
+  const call = () => fetch(SANDBOX_SOURCE_REPORT_URL, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json', 'Accept': 'application/json, text/plain, */*',
+      'Origin': SANDBOX_ORIGIN, 'Referer': SANDBOX_ORIGIN + '/', 'Cookie': sandboxCookie,
+    },
+    body: JSON.stringify(payload),
+  });
+  if (!sandboxCookie) await sandboxLogin();
+  let r = await call();
+  if (r.status === 401 || r.status === 403) { await sandboxLogin(); r = await call(); }
+  const j = await r.json().catch(() => ({ success: false, message: 'Phản hồi không hợp lệ' }));
+  return { httpStatus: r.status, json: j };
+}
+
 // Chuyển dữ liệu báo cáo -> dạng bảng cho dashboard
 function mapReport(j) {
   const d = (j && j.data) || {};
@@ -1841,6 +1878,23 @@ app.get('/api/marketing/channel-breakdown', async (req, res) => {
         nguon: Object.entries(srcCount).map(([n, c]) => ({ n, c })).sort((a, b) => b.c - a.c),
       });
     } catch (e) { return res.json({ ok: false, message: e.message, rateLimited: !!e.rateLimited }); }
+  }
+
+  // DEBUG=9: gọi báo cáo "Leads theo nguồn" (MarketingDashboard/TimTheoDieuKien) bằng cookie
+  // để xem cấu trúc dữ liệu trả về. /api/marketing/channel-breakdown?since=&until=&debug=9
+  if (String(req.query.debug) === '9') {
+    try {
+      const j = await sandboxSourceReport(since, until);
+      const d = (j.json && j.json.data);
+      let info;
+      if (Array.isArray(d)) info = { dataIsArray: true, len: d.length, sample: d[0] || null };
+      else if (d && typeof d === 'object') {
+        const arrays = {};
+        for (const k of Object.keys(d)) if (Array.isArray(d[k])) arrays[k] = { len: d[k].length, sample: d[k][0] || null };
+        info = { keys: Object.keys(d), arrays };
+      } else info = { raw: d };
+      return res.json({ ok: true, since, until, httpStatus: j.httpStatus, success: j.json && (j.json.success ?? j.json.Success), message: j.json && (j.json.message || j.json.Message) || null, info });
+    } catch (e) { return res.json({ ok: false, message: e.message }); }
   }
 
   // DEBUG kiểm tra 1 URL báo cáo do người dùng cung cấp (lấy từ DevTools của app Sandbox).
