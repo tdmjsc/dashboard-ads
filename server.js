@@ -1281,13 +1281,13 @@ async function sandboxReport(since, until) {
 // Dùng cookie như báo cáo khác (không bị giới hạn tần suất). Payload lấy đúng từ app Sandbox.
 const SANDBOX_SOURCE_REPORT_URL = process.env.SANDBOX_SOURCE_REPORT_URL
   || 'https://api.sandbox.com.vn/report/api/MarketingDashboard/TimTheoDieuKien';
-async function sandboxSourceReport(since, until) {
+async function sandboxSourceReport(since, until, opts = {}) {
   const tuNgay = `${since}T00:00:00+07:00`, denNgay = `${until}T23:59:59+07:00`;
   const payload = {
     idSanPhamCha: null, idSanPham: null, idChiNhanh: SANDBOX_CHINHANH,
     textTime: '', idDate: null, keyWord: '', loaiNhanVien: 1, kieuXem: 4,
     idLandingSanPham: null, giaoHangDoiTacMa: null, giaoHangTrangThaiMa: null,
-    idNhomNhanVienMkts: null, idPhongBanMkts: null, idUserMkts: null,
+    idNhomNhanVienMkts: null, idPhongBanMkts: null, idUserMkts: opts.idUserMkts || null,
     isChietKhau: true, isKhachHangCu: null, isSoTrung: null, khoId: null,
     khongGioiHanNgayChot: null, loaiDoanhSo: null, trangThaiDoiSoat: null,
     idSanPhamNganhHang: null, idNhomSanPham: null, isChamSoc: null, unitCode: null,
@@ -1898,6 +1898,32 @@ app.get('/api/marketing/channel-breakdown', async (req, res) => {
         nguon: Object.entries(srcCount).map(([n, c]) => ({ n, c })).sort((a, b) => b.c - a.c),
       });
     } catch (e) { return res.json({ ok: false, message: e.message, rateLimited: !!e.rateLimited }); }
+  }
+
+  // DEBUG=11: kiểm tra lọc nguồn theo TỪNG NGƯỜI. Truyền &name=<tên nhân viên>.
+  //   /api/marketing/channel-breakdown?since=2026-09-13&until=2026-09-13&debug=11&name=Tạ Quang Trường
+  if (String(req.query.debug) === '11') {
+    try {
+      const name = req.query.name || '';
+      // 1) Tìm marketingUserId theo tên trong báo cáo nhân sự.
+      const rep = await sandboxReport(since, until);
+      const dtos = (rep.json && rep.json.data && rep.json.data.reportLeadByNhanSuMktDtos) || [];
+      const row = dtos.find(r => _normNV(r.ten || '') === _normNV(name));
+      const marketingUserId = row ? row.marketingUserId : null;
+      const contactBaoCao = row ? row.soContact : null;
+      // 2) Gọi báo cáo nguồn lọc theo người đó.
+      const j = await sandboxSourceReport(since, until, { idUserMkts: marketingUserId ? [marketingUserId] : null });
+      const d = (j.json && j.json.data) || {};
+      const rows = Array.isArray(d.tableData) ? d.tableData : [];
+      const nguon = rows.map(r => ({ ten: r.landingTen || r.tenNguon || '', soContact: Number(r.soContact) || 0, soDonGiao: Number(r.lgtTongDonGiao) || 0 }))
+        .filter(x => x.soContact > 0).sort((a, b) => b.soContact - a.soContact);
+      const tongNguon = nguon.reduce((s, x) => s + x.soContact, 0);
+      return res.json({
+        ok: true, since, until, name, marketingUserId, contactBaoCao,
+        tongContactCacNguon: tongNguon, khop: contactBaoCao === tongNguon,
+        soNguonCoDon: nguon.length, nguon,
+      });
+    } catch (e) { return res.json({ ok: false, message: e.message }); }
   }
 
   // DEBUG=9: gọi báo cáo "Leads theo nguồn" (MarketingDashboard/TimTheoDieuKien) bằng cookie
