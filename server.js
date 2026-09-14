@@ -1736,7 +1736,9 @@ async function buildChannelBreakdown(since, until) {
 
 app.get('/api/marketing/channel-breakdown', async (req, res) => {
   const me = req.session.user || {};
-  if (me.role !== 'admin') return res.status(403).json({ ok: false, message: 'Chỉ admin' });
+  const isAdmin = me.role === 'admin';
+  // Công cụ debug chỉ dành cho admin. Luồng chính: nhân viên xem được người trong quyền.
+  if (req.query.debug && !isAdmin) return res.status(403).json({ ok: false, message: 'Chỉ admin' });
   if (!SANDBOX_TOKEN) return res.json({ ok: false, message: 'Chưa khai SANDBOX_TOKEN' });
   const today = new Date().toISOString().slice(0, 10);
   const since = req.query.since || today;
@@ -2042,6 +2044,12 @@ app.get('/api/marketing/channel-breakdown', async (req, res) => {
       CHBRK.byPerson = sourceByPersonAgg(srcJson);
     }
     const target = _normNV(req.query.name || 'admin');
+    // Phân quyền: nhân viên chỉ xem được người trong danh sách được phép (me.employees);
+    // không xem Admin hay người ngoài quyền. Admin xem tất cả.
+    if (!isAdmin) {
+      const allow = new Set((me.employees || []).map(_normNV));
+      if (!allow.has(target)) return res.status(403).json({ ok: false, message: 'Bạn không có quyền xem mục này' });
+    }
     // Nhân viên (không phải Admin) → trả danh sách NGUỒN có đơn của người đó.
     if (target !== 'admin') {
       const p = (CHBRK.byPerson || {})[target];
