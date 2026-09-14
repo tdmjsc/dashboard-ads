@@ -1589,9 +1589,6 @@ app.get('/api/marketing/report', async (req, res) => {
       }));
     }
     res.json({ ok: true, ver: 'mkt-2026-06-23-v13', since, until, rows, total, warnings, lastUpdated: new Date().toISOString() });
-    // Làm nóng sẵn phần tách kênh (TikTok/Shopee/thường) cho admin: dựng ở nền ngay khi
-    // trang vừa tải, để lúc bấm vào dòng đã có sẵn (API đơn hàng bị giới hạn ~62s/lần).
-    if ((req.session.user || {}).role === 'admin') { try { kickChannelBuild(since, until); } catch (e) {} }
   } catch (e) {
     res.json({ ok: false, since, until, message: e.message });
   }
@@ -1982,46 +1979,33 @@ app.get('/api/marketing/channel-breakdown', async (req, res) => {
   }
 
   try {
-    const haveMap = (CHBRK.key === key && CHBRK.map);
-    const fresh = haveMap && (Date.now() - CHBRK.at) < CHBRK_FRESH;
-    // Có bản cũ (stale) → phục vụ NGAY, đồng thời làm mới ở nền (không bắt user chờ).
-    if (haveMap && !fresh) kickChannelBuild(since, until);
-    if (!haveMap) {
-      // Có lỗi ở lần dựng gần nhất cho đúng khoảng ngày này → báo 1 lần rồi xoá.
-      if (CHBRK.buildErrorKey === key && CHBRK.buildError) {
-        const msg = CHBRK.buildError; CHBRK.buildError = null; CHBRK.buildErrorKey = null;
-        return res.json({ ok: false, message: msg });
-      }
-      // Bắt đầu dựng NỀN (nếu chưa) rồi báo "đang tải" ngay; giao diện tự hỏi lại tới khi xong.
-      kickChannelBuild(since, until);
-      if (CHBRK.cooldownUntil && Date.now() < CHBRK.cooldownUntil) {
-        const secs = Math.ceil((CHBRK.cooldownUntil - Date.now()) / 1000);
-        return res.json({ ok: false, loading: true, message: 'Sandbox giới hạn tần suất — tự thử lại sau ~' + secs + 's…' });
-      }
-      return res.json({ ok: false, loading: true, message: 'Đang tải dữ liệu từ Sandbox (có thể mất 30–90s do API giới hạn)…' });
+    // Lấy từ báo cáo "Leads theo nguồn" (cookie, nhanh, không rate-limit). Cache nhẹ theo ngày.
+    if (!(CHBRK.key === key && CHBRK.src && (Date.now() - CHBRK.at) < CHBRK_FRESH)) {
+      const [srcJson, repRes] = await Promise.all([
+        sandboxSourceReport(since, until),
+        sandboxReport(since, until).catch(() => null),
+      ]);
+      const { agg, list } = sourceChannelAgg(srcJson);
+      let adminContact = 0;
+      try { if (repRes) { const rep = mapReport(repRes.json); const a = rep.rows.find(r => _normNV(r.name) === 'admin'); adminContact = a ? (Number(a.contact) || 0) : 0; } } catch (e) {}
+      CHBRK.key = key; CHBRK.at = Date.now(); CHBRK.src = agg;
+      CHBRK.srcList = list; CHBRK.adminContact = adminContact;
     }
-    const target = _normNV(req.query.name || 'admin');
-    // Gộp bucket: nếu là "admin" thì cộng cả đơn không gán nhân viên ("(trống)")
-    const keys = (target === 'admin') ? [target, '(trống)'] : [target];
-    const agg = _chBucket();
-    for (const k of keys) {
-      const b = CHBRK.map[k]; if (!b) continue;
-      for (const ch of ['tiktok', 'shopee', 'thuong']) {
-        agg[ch].don += b[ch].don; agg[ch].chot += b[ch].chot; agg[ch].doanhThu += b[ch].doanhThu;
-      }
-      for (const sn in b.sources) agg.sources[sn] = (agg.sources[sn] || 0) + b.sources[sn];
-    }
-    const srcList = Object.entries(agg.sources).map(([name, count]) => ({ name, count })).sort((a, b) => b.count - a.count);
+    const agg = CHBRK.src;
+    const tiktok = { don: agg.tiktok.soContact, giao: agg.tiktok.soDonGiao };
+    const shopee = { don: agg.shopee.soContact, giao: agg.shopee.soDonGiao };
+    // "Đơn thường" của Admin = số contact Admin (bảng chính) trừ TikTok & Shopee (marketplace).
+    const thuongDon = Math.max(0, (CHBRK.adminContact || 0) - tiktok.don - shopee.don);
     res.json({
       ok: true, since, until, name: req.query.name || 'admin',
-      cached: (Date.now() - CHBRK.at) > 500,
-      stale: (Date.now() - CHBRK.at) >= CHBRK_FRESH,
       builtAt: new Date(CHBRK.at).toISOString(),
-      totalRecord: CHBRK.totalRecord, truncated: CHBRK.truncated,
-      tiktok: agg.tiktok, shopee: agg.shopee, thuong: agg.thuong, sources: srcList,
+      adminContact: CHBRK.adminContact,
+      tiktok, shopee, thuong: { don: thuongDon },
+      nguonTikTok: (CHBRK.srcList.tiktok || []).filter(x => x.soContact > 0),
+      nguonShopee: (CHBRK.srcList.shopee || []).filter(x => x.soContact > 0),
     });
   } catch (e) {
-    res.json({ ok: false, message: e.rateLimited ? ('Sandbox đang giới hạn tần suất — ' + e.message + '. Chờ chút rồi bấm lại.') : e.message });
+    res.json({ ok: false, message: e.message });
   }
 });
 
