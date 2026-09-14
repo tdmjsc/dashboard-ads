@@ -1603,7 +1603,7 @@ async function fetchSandboxOrders(since, until, opts = {}) {
       if (json.success ?? json.Success) break;
       const msg = String(json.message || json.Message || 'API Sandbox lỗi');
       const rl = /chờ|cần chờ|call api|giây|rate|quá nhanh/i.test(msg);
-      if (rl && attempt < 6) { const m = msg.match(/(\d+)\s*s/); attempt++; await sleep(((m ? Number(m[1]) : 60) + 2) * 1000); continue; }
+      if (rl && attempt < (opts.maxRetry ?? 6)) { const m = msg.match(/(\d+)\s*s/); attempt++; await sleep(((m ? Number(m[1]) : 60) + 2) * 1000); continue; }
       const err = new Error(msg); err.rateLimited = rl; throw err;
     }
     const data = json.data || [];
@@ -1798,6 +1798,39 @@ app.get('/api/marketing/channel-breakdown', async (req, res) => {
       }
       return res.json({ ok: true, since, until, ghiChu: 'URL nào success=true + có arrKey/rows là báo cáo Leads theo nguồn', ketqua: out });
     } catch (e) { return res.json({ ok: false, message: e.message }); }
+  }
+
+  // DEBUG so khớp ngày: lấy đơn ADMIN (lọc idUserMkts=GUID0), phân trang, rồi tách kênh
+  // theo TỪNG cách lọc ngày để tìm cách nào ra đúng số của app Sandbox (vd hôm qua TikTok 10, Shopee 9).
+  //   /api/marketing/channel-breakdown?since=2026-09-13&until=2026-09-13&debug=8
+  if (String(req.query.debug) === '8') {
+    try {
+      const dOnly = t => (t ? String(t).slice(0, 10) : null);
+      const inWin = t => { const d = dOnly(t); return d ? (d >= since && d <= until) : false; };
+      const TIKTOK = /tik\s*tok|tiktok|tt\s*shop/i, SHOPEE = /shopee|shoppe/i;
+      const chOf = o => { const blob = [o.sourceName, o.utmSource, o.customerType, o.operationName, o.saleUserName, o.reasonToCreate].map(x => String(x || '')).join(' '); return TIKTOK.test(blob) ? 'tiktok' : SHOPEE.test(blob) ? 'shopee' : 'thuong'; };
+      // Thử lọc server-side theo Admin trước (rẻ). Giới hạn retry để không treo.
+      let j = await fetchSandboxOrders(since, until, { body: { idUserMkts: [ADMIN_MKT_ID] }, maxPages: 8, maxRetry: 2 });
+      let os = (j.data || []);
+      const named = os.filter(o => !_isAdminOrder(o)).length;
+      const filterHonored = os.length > 0 && named === 0;
+      if (!filterHonored) os = os.filter(_isAdminOrder); // lọc phía mình nếu server trả cả người khác
+      const arrival = o => o.timeSaleReceivingData || o.createTime;
+      const split = pred => { const s = { tiktok: 0, shopee: 0, thuong: 0, tong: 0, chot: 0 }; for (const o of os) { if (!pred(o)) continue; s[chOf(o)]++; s.tong++; if (String(o.orderConfirmId) === '1') s.chot++; } return s; };
+      const srcCount = {}; for (const o of os) { const sn = (o.sourceName || '(không nguồn)').trim(); srcCount[sn] = (srcCount[sn] || 0) + 1; }
+      return res.json({
+        ok: true, since, until, filterHonored, adminOrders: os.length, totalRecord: j.totalRecord,
+        cachLoc: {
+          khong_loc:      split(() => true),
+          loc_createTime: split(o => inWin(o.createTime)),
+          loc_saleNhanData: split(o => inWin(o.timeSaleReceivingData)),
+          loc_ngayDataVe: split(o => inWin(arrival(o))),
+          loc_orderConfirmDate: split(o => inWin(o.orderConfirmDate)),
+          loc_updateTime: split(o => inWin(o.updateTime)),
+        },
+        nguon: Object.entries(srcCount).map(([n, c]) => ({ n, c })).sort((a, b) => b.c - a.c),
+      });
+    } catch (e) { return res.json({ ok: false, message: e.message, rateLimited: !!e.rateLimited }); }
   }
 
   // DEBUG kiểm tra 1 URL báo cáo do người dùng cung cấp (lấy từ DevTools của app Sandbox).
