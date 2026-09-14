@@ -1314,6 +1314,29 @@ async function sandboxSourceReport(since, until) {
   return { httpStatus: r.status, json: j };
 }
 
+// Gom báo cáo "Leads theo nguồn" theo KÊNH (TikTok / Shopee / thường) — chỉ cộng phần tử
+// cấp cao nhất của tableData (mỗi phần tử = 1 landing/nguồn; children là chi tiết utm nên
+// KHÔNG cộng để tránh nhân đôi). Phân loại theo tên nguồn (landingTen/tenNguon).
+function sourceChannelAgg(j) {
+  const d = (j && j.json && j.json.data) || {};
+  const rows = Array.isArray(d.tableData) ? d.tableData : [];
+  const TIKTOK = /tik\s*tok|tiktok|tt\s*shop/i, SHOPEE = /shopee|shoppe/i;
+  const mk = () => ({ soContact: 0, soChotDon: 0, soDonGiao: 0, doanhSo: 0 });
+  const agg = { tiktok: mk(), shopee: mk(), thuong: mk() };
+  const list = { tiktok: [], shopee: [] };
+  for (const r of rows) {
+    const ten = String(r.landingTen || r.tenNguon || r.ten || '').trim();
+    const ch = TIKTOK.test(ten) ? 'tiktok' : SHOPEE.test(ten) ? 'shopee' : 'thuong';
+    const contact = Number(r.soContact) || 0;
+    const chot = Number(r.tongSoChotDon || 0) || (Number(r.lgtSoChotDon || 0) + Number(r.offlineSoChotDon || 0));
+    const giao = Number(r.lgtTongDonGiao) || 0;
+    const ds = Number(r.tongDoanhSo || 0) || Number(r.lgtDoanhSo || 0);
+    agg[ch].soContact += contact; agg[ch].soChotDon += chot; agg[ch].soDonGiao += giao; agg[ch].doanhSo += ds;
+    if (ch !== 'thuong') list[ch].push({ ten, soContact: contact, soChotDon: chot, soDonGiao: giao });
+  }
+  return { agg, list, tongNguon: rows.length };
+}
+
 // Chuyển dữ liệu báo cáo -> dạng bảng cho dashboard
 function mapReport(j) {
   const d = (j && j.data) || {};
@@ -1894,6 +1917,16 @@ app.get('/api/marketing/channel-breakdown', async (req, res) => {
         info = { keys: Object.keys(d), arrays };
       } else info = { raw: d };
       return res.json({ ok: true, since, until, httpStatus: j.httpStatus, success: j.json && (j.json.success ?? j.json.Success), message: j.json && (j.json.message || j.json.Message) || null, info });
+    } catch (e) { return res.json({ ok: false, message: e.message }); }
+  }
+
+  // DEBUG=10: gom báo cáo "Leads theo nguồn" theo kênh để xác nhận số (vd TikTok 10, Shopee 9).
+  //   /api/marketing/channel-breakdown?since=2026-09-13&until=2026-09-13&debug=10
+  if (String(req.query.debug) === '10') {
+    try {
+      const j = await sandboxSourceReport(since, until);
+      const { agg, list, tongNguon } = sourceChannelAgg(j);
+      return res.json({ ok: true, since, until, tongNguon, tiktok: agg.tiktok, shopee: agg.shopee, thuong: agg.thuong, nguonTikTok: list.tiktok, nguonShopee: list.shopee });
     } catch (e) { return res.json({ ok: false, message: e.message }); }
   }
 
