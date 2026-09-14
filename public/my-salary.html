@@ -138,10 +138,13 @@ function renderMkt(){
           cells+=`<div class="ch-item"><b>${CH_LABEL[cid]||cid}</b> · DT ${vnd(cd.dt)} · QC ${vnd(cd.qc)} · GV ${vnd(cd.gv)} · Ship ${vnd(cd.ship)}</div>`;
       });
       cells+='</div>';
-      let tb='';
-      if(e.thuongDTT) tb+=`Thưởng DTT: ${vnd(e.thuongDTT)} · `;
-      if(e.thuongTop1) tb+=`Thưởng Top 1: ${vnd(e.thuongTop1)} · `;
-      if(e.thuongNgayTuan) tb+=`Thưởng Ngày/Tuần: ${vnd(e.thuongNgayTuan)}`;
+      const tbParts=[];
+      if(e.thuongDTT) tbParts.push(`Thưởng DTT: ${vnd(e.thuongDTT)}`);
+      if(e.thuongTop1) tbParts.push(`Thưởng Top 1: ${vnd(e.thuongTop1)}`);
+      if(e.thuongNgayTuan) tbParts.push(`Thưởng Ngày/Tuần: ${vnd(e.thuongNgayTuan)}`);
+      if(e.thuongChuyenCan) tbParts.push(`Thưởng chuyên cần: ${vnd(e.thuongChuyenCan)}`);
+      if(e.thuongTop1Mkt) tbParts.push(`Thưởng Top 1 MKT: ${vnd(e.thuongTop1Mkt)}`);
+      const tb=tbParts.join(' · ');
       h+=`<tr class="detail"><td colspan="12"><div class="muted" style="font-size:11px;margin-bottom:6px;">Doanh thu các kênh khác (đã cộng vào tổng):</div>${cells}${tb?`<div class="muted" style="font-size:12px;margin-top:8px;">${tb}</div>`:''}</td></tr>`;
     }
   });
@@ -194,6 +197,12 @@ function renderPtsp(){
         });
         inner+='</tbody></table>';
       }
+      const tbParts=[];
+      if(m.thuongSP) tbParts.push(`Thưởng theo SP: ${vnd(m.thuongSP)}`);
+      if(m.thuongThang) tbParts.push(`Thưởng theo tháng: ${vnd(m.thuongThang)}`);
+      if(m.thuongChuyenCan) tbParts.push(`Thưởng chuyên cần: ${vnd(m.thuongChuyenCan)}`);
+      if(m.thuongTop1Ptsp) tbParts.push(`Thưởng Top 1 PTSP: ${vnd(m.thuongTop1Ptsp)}`);
+      if(tbParts.length) inner+=`<div class="muted" style="font-size:12px;margin-top:8px;">${tbParts.join(' · ')}</div>`;
       h+=`<tr class="detail"><td colspan="15">${inner||'<span class="muted">Không có chi tiết</span>'}</td></tr>`;
     }
   });
