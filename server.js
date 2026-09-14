@@ -1337,6 +1337,29 @@ function sourceChannelAgg(j) {
   return { agg, list, tongNguon: rows.length };
 }
 
+// Gom báo cáo "Leads theo nguồn" theo TỪNG NHÂN VIÊN (dựa mã "TDx-" ở đầu tên nguồn,
+// fallback theo tên ngắn qua detectEmployee). Chỉ giữ nguồn có đơn (soContact > 0).
+// Nguồn không khớp ai (TikTok/Shopee/khách cũ...) → gom vào Admin.
+function sourceByPersonAgg(j) {
+  const d = (j && j.json && j.json.data) || {};
+  const rows = Array.isArray(d.tableData) ? d.tableData : [];
+  const byPerson = {}; // key normalized -> { name, nguon:[...], tongContact, tongGiao }
+  for (const r of rows) {
+    const ten = String(r.landingTen || r.tenNguon || r.ten || '').trim();
+    const contact = Number(r.soContact) || 0;
+    if (contact <= 0) continue;
+    const giao = Number(r.lgtTongDonGiao) || 0;
+    const full = detectEmployee(ten);
+    const isAdmin = (full === 'Chưa xác định');
+    const key = isAdmin ? 'admin' : _normNV(full);
+    if (!byPerson[key]) byPerson[key] = { name: isAdmin ? 'Admin' : full, nguon: [], tongContact: 0, tongGiao: 0 };
+    byPerson[key].nguon.push({ ten, soContact: contact, soDonGiao: giao });
+    byPerson[key].tongContact += contact; byPerson[key].tongGiao += giao;
+  }
+  for (const k in byPerson) byPerson[k].nguon.sort((a, b) => b.soContact - a.soContact);
+  return byPerson;
+}
+
 // Chuyển dữ liệu báo cáo -> dạng bảng cho dashboard
 function mapReport(j) {
   const d = (j && j.data) || {};
@@ -2016,11 +2039,23 @@ app.get('/api/marketing/channel-breakdown', async (req, res) => {
       try { if (repRes) { const rep = mapReport(repRes.json); const a = rep.rows.find(r => _normNV(r.name) === 'admin'); adminContact = a ? (Number(a.contact) || 0) : 0; } } catch (e) {}
       CHBRK.key = key; CHBRK.at = Date.now(); CHBRK.src = agg;
       CHBRK.srcList = list; CHBRK.adminContact = adminContact;
+      CHBRK.byPerson = sourceByPersonAgg(srcJson);
     }
+    const target = _normNV(req.query.name || 'admin');
+    // Nhân viên (không phải Admin) → trả danh sách NGUỒN có đơn của người đó.
+    if (target !== 'admin') {
+      const p = (CHBRK.byPerson || {})[target];
+      return res.json({
+        ok: true, since, until, name: req.query.name || '', theoNguoi: true,
+        builtAt: new Date(CHBRK.at).toISOString(),
+        tongContact: p ? p.tongContact : 0, tongGiao: p ? p.tongGiao : 0,
+        nguon: p ? p.nguon : [],
+      });
+    }
+    // Admin → tách theo kênh TikTok/Shopee/thường (như cũ).
     const agg = CHBRK.src;
     const tiktok = { don: agg.tiktok.soContact, giao: agg.tiktok.soDonGiao };
     const shopee = { don: agg.shopee.soContact, giao: agg.shopee.soDonGiao };
-    // "Đơn thường" của Admin = số contact Admin (bảng chính) trừ TikTok & Shopee (marketplace).
     const thuongDon = Math.max(0, (CHBRK.adminContact || 0) - tiktok.don - shopee.don);
     res.json({
       ok: true, since, until, name: req.query.name || 'admin',

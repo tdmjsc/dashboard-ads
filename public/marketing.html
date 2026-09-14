@@ -177,9 +177,8 @@ function render(d){
   let html='';
   rows.forEach(r=>{
     const isAdmin=String(r.name||'').trim().toLowerCase()==='admin';
-    const nameCell = isAdmin
-      ? `<td class="empname" data-name="${esc(r.name)}" style="cursor:pointer" title="Bấm để xem TikTok / Shopee / đơn thường"><span class="cvx" style="color:#6B7C97;font-size:11px">▸</span> ${esc(r.name)}</td>`
-      : `<td>${esc(r.name)||'<span class="muted">(không tên)</span>'}</td>`;
+    const tip = isAdmin ? 'Bấm để xem TikTok / Shopee / đơn thường' : 'Bấm để xem nguồn dữ liệu có đơn';
+    const nameCell = `<td class="empname" data-name="${esc(r.name)}" style="cursor:pointer" title="${tip}"><span class="cvx" style="color:#6B7C97;font-size:11px">▸</span> ${esc(r.name)||'<span class="muted">(không tên)</span>'}</td>`;
     html += `<tr>
       ${nameCell}
       <td class="num">${vnd(r.contact)}</td>
@@ -272,6 +271,18 @@ $('rows').addEventListener('click', function(e){
   const url='/api/marketing/channel-breakdown?since='+since+'&until='+until+'&name='+encodeURIComponent(name);
   let tries=0;
   const render=d=>{
+    // Nhân viên: hiển thị danh sách NGUỒN có đơn
+    if(d.theoNguoi){
+      if(!d.nguon||!d.nguon.length){ cellTd.innerHTML='<div style="padding:6px 2px" class="muted">Không có nguồn có đơn trong khoảng ngày này.</div>'; return; }
+      let h='<div style="padding:6px 2px;">'
+        + '<div style="margin-bottom:4px;font-weight:600">'+vnd(d.tongContact)+' đơn · '+d.nguon.length+' nguồn</div>'
+        + d.nguon.map(s=>'<div style="margin:1px 0"><span style="color:#9DB2FF">'+esc(s.ten)+'</span>: <b>'+vnd(s.soContact)+'</b> đơn'
+            +(s.soDonGiao?' <span class="muted">(đã giao '+vnd(s.soDonGiao)+')</span>':'')+'</div>').join('')
+        + '<div class="muted" style="font-size:11px;margin-top:3px">Nguồn có đơn (theo Số contact / ngày data về). Gán theo mã “TDx-…” ở đầu tên nguồn.</div>'
+        + (d.builtAt?('<div class="muted" style="font-size:10.5px;margin-top:2px">Số liệu lúc '+new Date(d.builtAt).toLocaleTimeString('vi-VN')+'</div>'):'')
+        + '</div>';
+      cellTd.innerHTML=h; return;
+    }
     const box=(lb,o,c)=>'<div style="display:inline-block;min-width:175px;margin:2px 16px 2px 0;">'
       +'<b style="color:'+c+'">'+lb+'</b>: '+vnd(o.don)+' đơn'
       +(o.giao!=null?' <span class="muted">(đã giao '+vnd(o.giao)+')</span>':'')+'</div>';
