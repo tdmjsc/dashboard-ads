@@ -49,6 +49,7 @@
       thuongNgayTuan: +o.thuongNgayTuan || 0,
       thuongChuyenCan: +o.thuongChuyenCan || 0,
       thuongTop1Mkt: +o.thuongTop1Mkt || 0,
+      thuongKhac: +o.thuongKhac || 0,
       phat: +o.phat || 0,
       bhxh: +o.bhxh || 0,
     };
@@ -119,7 +120,7 @@
 
     // ── Thực nhận ──
     list.forEach(x => {
-      x.thuong = x.thuongDTT + x.thuongTop1 + x.m.thuongNgayTuan + x.m.thuongChuyenCan + x.m.thuongTop1Mkt;
+      x.thuong = x.thuongDTT + x.thuongTop1 + x.m.thuongNgayTuan + x.m.thuongChuyenCan + x.m.thuongTop1Mkt + x.m.thuongKhac;
       x.tn = roundK(x.l2 + x.m.luongCung + x.thuong - x.m.phat - x.m.bhxh + x.hl);
       x.laAdmin = x.key === ADMIN_KEY;
     });
@@ -152,7 +153,7 @@
   function tinhLuongPTSP(managers, manual) {
     const list = (managers || []).map(m => {
       const rec = (manual || {})[normKey(m.manager)] || {};
-      const thuong = (+rec.thuongSP || 0) + (+rec.thuongThang || 0) + (+rec.thuongChuyenCan || 0) + (+rec.thuongTop1Ptsp || 0);
+      const thuong = (+rec.thuongSP || 0) + (+rec.thuongThang || 0) + (+rec.thuongChuyenCan || 0) + (+rec.thuongTop1Ptsp || 0) + (+rec.thuongKhac || 0);
       const bhxh = (+rec.bhxh || 0) || (+m.bhxh || 0);
       const luongCung = +rec.luongCung || 0;
       const phat = +rec.phat || 0;

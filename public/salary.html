@@ -163,6 +163,7 @@ const THUONG_TYPES=[
   {id:'thuongTop1',      label:'Thưởng Top 1',       auto:true,  hint:'Tự động — lương 2% cao nhất'},
   {id:'thuongChuyenCan', label:'Thưởng chuyên cần',  auto:false, hint:'Nhập tay'},
   {id:'thuongTop1Mkt',   label:'Thưởng Top 1 MKT',   auto:false, hint:'Nhập tay'},
+  {id:'thuongKhac',      label:'Thưởng khác',        auto:false, hint:'Nhập tay'},
 ];
 // Lưu thưởng tự động từ server (DTT + Top1) để hiển thị trong popup
 let AUTO_THUONG = {}; // { normKey(name): { thuongDTT, thuongTop1 } }
@@ -171,7 +172,7 @@ function monthRange(m){const [y,mo]=m.split('-').map(Number);const since=`${y}-$
 function blankCh(){return {dt:0,qc:0,gv:0,ship:0};}
 function manOf(name){
   const k=normKey(name); let o=MAN[k]||{};
-  o={name:o.name||name, channels:o.channels||{}, luongCung:+o.luongCung||0, thuong:+o.thuong||0, thuongDTT:+o.thuongDTT||0, thuongNgayTuan:+o.thuongNgayTuan||0, thuongTop1:+o.thuongTop1||0, thuongChuyenCan:+o.thuongChuyenCan||0, thuongTop1Mkt:+o.thuongTop1Mkt||0, phat:+o.phat||0, bhxh:+o.bhxh||0, _hhLeader:+o._hhLeader||0};
+  o={name:o.name||name, channels:o.channels||{}, luongCung:+o.luongCung||0, thuong:+o.thuong||0, thuongDTT:+o.thuongDTT||0, thuongNgayTuan:+o.thuongNgayTuan||0, thuongTop1:+o.thuongTop1||0, thuongChuyenCan:+o.thuongChuyenCan||0, thuongTop1Mkt:+o.thuongTop1Mkt||0, thuongKhac:+o.thuongKhac||0, phat:+o.phat||0, bhxh:+o.bhxh||0, _hhLeader:+o._hhLeader||0};
   CH.forEach(c=>{o.channels[c.id]={...blankCh(),...(o.channels[c.id]||{})};});
   MAN[k]=o; return o;
 }
@@ -196,7 +197,7 @@ async function load(){
     AUTO=d.rows||[]; MAN=mj.data||{}; ROSTER=d.roster||[]; TYLE=d.tyLe||0.02;
     // thuongDTT và thuongTop1 sẽ tính lại phía client trong recomputeAll
     // Chỉ giữ lại thuongNgayTuan (nhập tay) từ manual data
-    Object.values(MAN).forEach(m=>{ m.thuongDTT=0; m.thuongTop1=0; m.thuong=(+m.thuongNgayTuan||0)+(+m.thuongChuyenCan||0)+(+m.thuongTop1Mkt||0); });
+    Object.values(MAN).forEach(m=>{ m.thuongDTT=0; m.thuongTop1=0; m.thuong=(+m.thuongNgayTuan||0)+(+m.thuongChuyenCan||0)+(+m.thuongTop1Mkt||0)+(+m.thuongKhac||0); });
     HHLEAD={}; AUTO_THUONG={}; TEAM_LEAD=(d.teamLead&&Object.keys(d.teamLead).length)?d.teamLead:TEAM_LEAD_DEFAULT;
     (d.rows||[]).forEach(r=>{
       if(r.hoaHongLeader) HHLEAD[normKey(r.name)]=r.hoaHongLeader;
@@ -428,7 +429,7 @@ $('publishBtn').addEventListener('click', async ()=>{
       channels,
       extra:{ hoaHongLeader:m._hhLeader||0, luongCung:m.luongCung||0,
         thuong:m.thuong||0, thuongDTT:m.thuongDTT||0, thuongTop1:m.thuongTop1||0, thuongNgayTuan:m.thuongNgayTuan||0,
-        thuongChuyenCan:m.thuongChuyenCan||0, thuongTop1Mkt:m.thuongTop1Mkt||0,
+        thuongChuyenCan:m.thuongChuyenCan||0, thuongTop1Mkt:m.thuongTop1Mkt||0, thuongKhac:m.thuongKhac||0,
         phat:m.phat||0, bhxh:m.bhxh||0 }
     };
   });
