@@ -210,6 +210,7 @@
     • <b>Tổng ngân sách</b> = chi tiêu thực tế trên Meta trong tháng, đã cộng 11% VAT (không phải mức ngân sách/ngày cài trên Facebook).<br>
     • <b>Lương MKT / Lương SP</b> tính bằng đúng công thức của trang Lương MKT và Lương PTSP (chung file <code>salary-calc.js</code>) nên luôn khớp số với 2 bảng đó. Lương MKT <b>đã trừ phần của Admin</b>.<br>
     • <b>Lương sale / kế toán / kho</b> và <b>các loại chi phí</b> nhập tay, tự lưu theo từng tháng.<br>
+    • <b>Doanh thu đơn chưa ship (85%)</b>: tổng cột cùng tên nhập ở trang <b>Lương MKT</b> (mọi nhân viên). <b>Tick</b> để cộng vào kết quả kinh doanh tháng này; <b>bỏ tick</b> ở các tháng sau khi các đơn đó đã ship thành công (đã được ghi nhận tự động) để tránh cộng trùng.<br>
     • <b>📎 Ảnh giải trình</b>: mỗi loại chi phí đính được tối đa 12 ảnh (hoá đơn, bảng kê các khoản con). Ảnh tự thu nhỏ trước khi tải lên cho nhẹ, bấm vào ảnh để xem to.<br>
     • <b>Thuế</b> = 17% × lợi nhuận trước thuế (lỗ thì thuế = 0).
   </div>
@@ -327,7 +328,8 @@ function computeKQKD(raw){
     const lnTruocThue=doanhThu-nganSach-giaVon-phiShip-luongTong-chiPhi;
     const thueSuat=raw.thueSuat;
     const thue=lnTruocThue>0?Math.round(lnTruocThue*thueSuat):0;
-    return { doanhThu,nganSach,giaVon,phiShip,luong, chiPhiList:[],chiPhi,
+    return { doanhThu,doanhThuShip:doanhThu,doanhThuChuaShip:0,tinhDonChuaShip:false,
+      nganSach,giaVon,phiShip,luong, chiPhiList:[],chiPhi,
       lnTruocThue,thue, lnSauThue:lnTruocThue-thue, thueSuat, mktList:[],ptspList:[], manual:true };
   }
 
@@ -338,10 +340,18 @@ function computeKQKD(raw){
   const chiPhiList=Array.isArray(tay.chiPhiList)?tay.chiPhiList:[];
   const chiPhi=chiPhiList.reduce((s,x)=>s+(+x.soTien||0),0);
 
-  const doanhThu=Math.round(mkt.tong.DT);
+  const doanhThuShip=Math.round(mkt.tong.DT);
   const nganSach=Math.round(mkt.tong.QC);
   const giaVon=Math.round(mkt.tong.GV);
   const phiShip=Math.round(mkt.tong.SHIP);
+
+  // ── Doanh thu đơn CHƯA SHIP (nhập tay 85% ở trang Lương MKT, gộp mọi nhân viên) ──
+  // Chỉ cộng vào kết quả kinh doanh khi ĐƯỢC TICK. Bỏ tick để tránh cộng trùng
+  // khi các tháng sau đơn đã ship thành công và được ghi nhận tự động.
+  const doanhThuChuaShip=Object.values(raw.mktManual||{})
+    .reduce((s,r)=>s+(+((r&&r.donChuaShip))||0),0);
+  const tinhDonChuaShip=!!(+tay.tinhDonChuaShip);
+  const doanhThu=doanhThuShip+(tinhDonChuaShip?doanhThuChuaShip:0);
 
   const luong={
     mkt: mkt.tong.luongKhongAdmin,      // ĐÃ trừ Admin
@@ -354,7 +364,8 @@ function computeKQKD(raw){
   const lnTruocThue=doanhThu-nganSach-giaVon-phiShip-luong.tong-chiPhi;
   const thueSuat=raw.thueSuat;
   const thue=lnTruocThue>0?Math.round(lnTruocThue*thueSuat):0;
-  return {doanhThu,nganSach,giaVon,phiShip,luong,chiPhiList,chiPhi,lnTruocThue,thue,
+  return {doanhThu,doanhThuShip,doanhThuChuaShip,tinhDonChuaShip,
+     nganSach,giaVon,phiShip,luong,chiPhiList,chiPhi,lnTruocThue,thue,
      lnSauThue:lnTruocThue-thue, thueSuat, mktList:mkt.list, ptspList:ptsp.list};
 }
 
@@ -371,7 +382,18 @@ function render(){
 
   const L=S.luong;
   let h='';
-  h+=row('Tổng doanh thu', S.doanhThu, 'plus', true);
+  h+=row('Tổng doanh thu'+(S.manual?'':' (đã ship)'), S.doanhThuShip, 'plus', true);
+  // ── Hàng doanh thu đơn CHƯA SHIP (nhập ở Lương MKT) + ô tick cộng/không cộng ──
+  if(!S.manual && (S.doanhThuChuaShip>0 || S.tinhDonChuaShip)){
+    const on=S.tinhDonChuaShip;
+    h+='<tr class="'+(on?'plus':'')+'"><td class="lbl">'
+      +'<label style="display:inline-flex;align-items:center;gap:8px;cursor:pointer;">'
+      +'<input type="checkbox" id="cbChuaShip"'+(on?' checked':'')+' style="width:15px;height:15px;cursor:pointer;">'
+      +'Doanh thu đơn chưa ship (85%)</label>'
+      +'<span class="tag tag-tay">nhập ở Lương MKT</span></td>'
+      +'<td class="num"'+(on?'':' style="color:#6B7C97;text-decoration:line-through;"')+'>'
+      +(on?'+'+vnd(S.doanhThuChuaShip):vnd(S.doanhThuChuaShip))+'</td></tr>';
+  }
   h+=row('Tổng ngân sách (chi tiêu Meta +11% VAT)', -S.nganSach, 'minus', true);
   h+=row('Tổng giá vốn', -S.giaVon, 'minus', true);
   h+=row('Tổng phí ship', -S.phiShip, 'minus', true);
@@ -435,6 +457,9 @@ function render(){
   ['luongSale','luongKeToan','luongKho'].forEach(function(f){
     const el=$('f-'+f); if(el) el.addEventListener('change',function(){ luuLuong(f,el.value); });
   });
+  // Sự kiện: ô tick doanh thu đơn chưa ship
+  const cbCS=$('cbChuaShip');
+  if(cbCS) cbCS.addEventListener('change',function(){ luuChuaShip(cbCS.checked); });
   // Sự kiện: sửa chi phí đã có
   document.querySelectorAll('[data-cp-ten]').forEach(function(el){
     el.addEventListener('change',function(){ suaChiPhi(+el.dataset.cpTen,{ten:el.value}); });
@@ -493,6 +518,14 @@ async function luuLuong(field,value){
   tinhLai(); veLai();
   try{ await fetch('/api/business-result/manual',{method:'POST',headers:{'Content-Type':'application/json'},
     body:JSON.stringify({month:curMonth, field:field, value:num})}); }catch(e){}
+}
+
+// Bật/tắt cộng doanh thu đơn chưa ship vào kết quả kinh doanh (lưu theo tháng)
+async function luuChuaShip(checked){
+  RAW.tay.tinhDonChuaShip=checked?1:0;
+  tinhLai(); veLai();
+  try{ await fetch('/api/business-result/manual',{method:'POST',headers:{'Content-Type':'application/json'},
+    body:JSON.stringify({month:curMonth, field:'tinhDonChuaShip', value:checked?1:0})}); }catch(e){}
 }
 
 /* ── ẢNH GIẢI TRÌNH CHI PHÍ ─────────────────────────────────────── */

@@ -119,7 +119,7 @@
   <div class="tblwrap">
     <table>
       <thead><tr>
-        <th>Nhân viên</th><th>Doanh thu</th><th>Chi phí QC</th><th>Giá vốn</th><th>Phí ship</th>
+        <th>Nhân viên</th><th>Doanh thu</th><th>Đơn chưa ship (85%)</th><th>Chi phí QC</th><th>Giá vốn</th><th>Phí ship</th>
         <th>Lương 2%</th><th>HH Leader</th><th>Lương cứng</th><th>Thưởng</th><th>Phạt</th><th>BHXH</th><th>Thực nhận</th>
       </tr></thead>
       <tbody id="rows"></tbody>
@@ -171,7 +171,7 @@ function monthRange(m){const [y,mo]=m.split('-').map(Number);const since=`${y}-$
 function blankCh(){return {dt:0,qc:0,gv:0,ship:0};}
 function manOf(name){
   const k=normKey(name); let o=MAN[k]||{};
-  o={name:o.name||name, channels:o.channels||{}, luongCung:+o.luongCung||0, thuong:+o.thuong||0, thuongDTT:+o.thuongDTT||0, thuongNgayTuan:+o.thuongNgayTuan||0, thuongTop1:+o.thuongTop1||0, thuongChuyenCan:+o.thuongChuyenCan||0, thuongTop1Mkt:+o.thuongTop1Mkt||0, phat:+o.phat||0, bhxh:+o.bhxh||0, _hhLeader:+o._hhLeader||0};
+  o={name:o.name||name, channels:o.channels||{}, luongCung:+o.luongCung||0, thuong:+o.thuong||0, thuongDTT:+o.thuongDTT||0, thuongNgayTuan:+o.thuongNgayTuan||0, thuongTop1:+o.thuongTop1||0, thuongChuyenCan:+o.thuongChuyenCan||0, thuongTop1Mkt:+o.thuongTop1Mkt||0, donChuaShip:+o.donChuaShip||0, phat:+o.phat||0, bhxh:+o.bhxh||0, _hhLeader:+o._hhLeader||0};
   CH.forEach(c=>{o.channels[c.id]={...blankCh(),...(o.channels[c.id]||{})};});
   MAN[k]=o; return o;
 }
@@ -207,7 +207,8 @@ async function load(){
     $('status').innerHTML='Cập nhật '+t.toLocaleString('vi-VN')+'  ·  tháng '+mo+'  ·  tỷ lệ '+(TYLE*100)+'%';
     $('note').innerHTML='4 cột đầu = số <b>tự động (TĐ)</b> từ Sandbox/Meta <b>＋ các kênh khác</b> bạn nhập tay (Thái Lan, Pushsale, Sàn TMĐT). '
       +'Bấm nút <b>＋</b> ở mỗi nhân viên để mở ô nhập theo từng kênh; kênh có dữ liệu sẽ hiện nhãn. '
-      +'Lương 2% = (Doanh thu − Chi phí QC − Giá vốn − Phí ship) × 2%. HH Leader = ½ × tổng lương 2% nhân viên trong nhóm. <b>Thực nhận = Lương 2% + Lương cứng + Thưởng − Phạt − BHXH.</b> Nhập xong bấm ra ngoài ô là tự lưu.';
+      +'Lương 2% = (Doanh thu − Chi phí QC − Giá vốn − Phí ship) × 2%. HH Leader = ½ × tổng lương 2% nhân viên trong nhóm. <b>Thực nhận = Lương 2% + Lương cứng + Thưởng − Phạt − BHXH.</b> Nhập xong bấm ra ngoài ô là tự lưu.<br>'
+      +'• <b>Đơn chưa ship (85%)</b>: nhập tay doanh thu (đã lấy 85%) của các đơn tháng này nhưng đến lúc tính lương vẫn chưa ship thành công. Cột này <b>KHÔNG</b> ảnh hưởng công thức lương; nó được tổng hợp sang trang <b>Kết quả kinh doanh</b> để tuỳ chọn cộng vào doanh thu tháng.';
   }catch(e){$('status').innerHTML='<span class="err">Không kết nối được máy chủ: '+esc(e.message)+'</span>';}
   finally{$('refreshBtn').disabled=false;}
 }
@@ -234,18 +235,20 @@ function detailHTML(i,emp){
     +' <span class="badge" id="bd-'+i+'-'+c.id+'" style="display:none">có DL</span></div>'
     +MET.map(mt=>'<div class="frow"><span>'+mt.label+'</span>'+cInp(i,c.id,mt.id,m.channels[c.id][mt.id])+'</div>').join('')
     +'</div>').join('');
-  return '<tr class="drow" id="det-'+i+'" style="display:none"><td colspan="12"><div class="panel">'+cards+'</div></td></tr>';
+  return '<tr class="drow" id="det-'+i+'" style="display:none"><td colspan="13"><div class="panel">'+cards+'</div></td></tr>';
 }
 
 function buildTable(){
   const tb=$('rows');
-  if(!LIST.length){tb.innerHTML='<tr><td colspan="12" class="empty">Không có dữ liệu trong tháng này.</td></tr>';return;}
+  if(!LIST.length){tb.innerHTML='<tr><td colspan="13" class="empty">Không có dữ liệu trong tháng này.</td></tr>';return;}
   let html='';
   LIST.forEach((emp,i)=>{
     const m=manOf(emp.key);
     html+='<tr class="mrow">'
       +'<td class="nm"><div class="nmtop"><button class="exp" data-exp="'+i+'">＋</button>'+esc(emp.name)+'</div><div class="bdg" id="bdg-'+i+'"></div></td>'
-      +'<td class="num" id="dt-'+i+'"></td><td class="num" id="qc-'+i+'"></td><td class="num" id="gv-'+i+'"></td><td class="num" id="ship-'+i+'"></td>'
+      +'<td class="num" id="dt-'+i+'"></td>'
+      +'<td>'+pInp(i,'donChuaShip',m.donChuaShip)+'</td>'
+      +'<td class="num" id="qc-'+i+'"></td><td class="num" id="gv-'+i+'"></td><td class="num" id="ship-'+i+'"></td>'
       +'<td class="luong" id="l2-'+i+'"></td>'
       +'<td class="leader" id="hl-'+i+'">–</td>'
       +'<td>'+pInp(i,'luongCung',m.luongCung)+'</td>'
@@ -269,7 +272,7 @@ function buildTable(){
     html+=detailHTML(i,emp);
   });
   html+='<tr class="total"><td class="nm">Tổng ('+LIST.length+')</td>'
-    +'<td class="num" id="t-dt"></td><td class="num" id="t-qc"></td><td class="num" id="t-gv"></td><td class="num" id="t-ship"></td>'
+    +'<td class="num" id="t-dt"></td><td class="num" id="t-dcs"></td><td class="num" id="t-qc"></td><td class="num" id="t-gv"></td><td class="num" id="t-ship"></td>'
     +'<td class="luong" id="t-l2"></td><td class="leader" id="t-hl"></td><td class="num" id="t-lc"></td><td class="num" id="t-th"></td><td class="num" id="t-ph"></td><td class="num" id="t-bh"></td>'
     +'<td class="thucnhan" id="t-tn"></td></tr>';
   tb.innerHTML=html;
@@ -306,12 +309,12 @@ function recompute(i){
   // Cập nhật nút Thưởng (hiển thị tổng thưởng đã gồm DTT + Top1 + Ngày/Tuần)
   const tbtn=$('tb-'+i);
   if(tbtn){ tbtn.textContent=m.thuong>0?vnd(m.thuong)+' ₫':'–'; tbtn.className='thuong-btn'+(m.thuong>0?' has-data':''); }
-  emp._c={DT,QC,GV,SHIP,l2,hl,lc:m.luongCung,th:x.thuong,ph:m.phat,bh:m.bhxh,tn:tnWithHl};
+  emp._c={DT,QC,GV,SHIP,l2,hl,lc:m.luongCung,th:x.thuong,dcs:m.donChuaShip,ph:m.phat,bh:m.bhxh,tn:tnWithHl};
 }
 function updateTotals(){
-  const T={DT:0,QC:0,GV:0,SHIP:0,l2:0,hl:0,lc:0,th:0,ph:0,bh:0,tn:0};
+  const T={DT:0,dcs:0,QC:0,GV:0,SHIP:0,l2:0,hl:0,lc:0,th:0,ph:0,bh:0,tn:0};
   LIST.forEach(e=>{const c=e._c||{};for(const k in T)T[k]+=c[k]||0;});
-  $('t-dt').textContent=vnd(T.DT);$('t-qc').textContent=vnd(T.QC);$('t-gv').textContent=vnd(T.GV);$('t-ship').textContent=vnd(T.SHIP);
+  $('t-dt').textContent=vnd(T.DT);$('t-dcs').textContent=vnd(T.dcs);$('t-qc').textContent=vnd(T.QC);$('t-gv').textContent=vnd(T.GV);$('t-ship').textContent=vnd(T.SHIP);
   $('t-l2').textContent=vnd(T.l2);$('t-hl').textContent=vnd(T.hl);$('t-lc').textContent=vnd(T.lc);$('t-th').textContent=vnd(T.th);$('t-ph').textContent=vnd(T.ph);$('t-bh').textContent=vnd(T.bh);
   $('t-tn').textContent=vnd(T.tn)+' ₫';
 }

@@ -3535,7 +3535,7 @@ app.post('/api/salary/manual', (req, res) => {
   // Điền BHXH mặc định từ EMPLOYEES nếu tháng này chưa có giá trị
   const empDef = EMPLOYEES.find(e => normProd(e.full) === normProd(name));
   const bhxhDefault = empDef ? (empDef.bhxh || 0) : 0;
-  const out = { name, channels: {}, luongCung: numClean(v.luongCung), thuong: numClean(v.thuong), thuongNgayTuan: numClean(v.thuongNgayTuan), thuongChuyenCan: numClean(v.thuongChuyenCan), thuongTop1Mkt: numClean(v.thuongTop1Mkt), phat: numClean(v.phat), bhxh: v.bhxh != null ? numClean(v.bhxh) : bhxhDefault };
+  const out = { name, channels: {}, luongCung: numClean(v.luongCung), thuong: numClean(v.thuong), thuongNgayTuan: numClean(v.thuongNgayTuan), thuongChuyenCan: numClean(v.thuongChuyenCan), thuongTop1Mkt: numClean(v.thuongTop1Mkt), donChuaShip: numClean(v.donChuaShip), phat: numClean(v.phat), bhxh: v.bhxh != null ? numClean(v.bhxh) : bhxhDefault };
   for (const ch of SALARY_CHANNELS) {
     out.channels[ch] = {};
     const src = (v.channels && v.channels[ch]) || {};
@@ -3851,7 +3851,7 @@ function saveKqkd() {
   try { fs.writeFileSync(KQKD_FILE, JSON.stringify(KQKD_MANUAL)); }
   catch (e) { console.error('[SAVE] ket-qua-kinh-doanh lỗi:', e.message); }
 }
-const KQKD_FIELDS = ['luongSale', 'luongKeToan', 'luongKho'];
+const KQKD_FIELDS = ['luongSale', 'luongKeToan', 'luongKho', 'tinhDonChuaShip'];
 
 // Lấy bản ghi 1 tháng, tự nâng cấp dữ liệu cũ (chiPhi là 1 số) sang danh sách
 function kqkdOf(month) {
