@@ -152,7 +152,7 @@ const normKey = SalaryCalc.normKey;
 const $ = id => document.getElementById(id);
 const esc = s => String(s==null?'':s).replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
 const pct = n => (Number(n)*100).toFixed(1)+'%';
-const manOf = name => { const k=normKey(name); if(!MANUAL[k]) MANUAL[k]={luongCung:0,thuongSP:0,thuongThang:0,thuongChuyenCan:0,thuongTop1Ptsp:0,phat:0,bhxh:0}; return MANUAL[k]; };
+const manOf = name => { const k=normKey(name); if(!MANUAL[k]) MANUAL[k]={luongCung:0,thuongSP:0,thuongThang:0,thuongChuyenCan:0,thuongTop1Ptsp:0,thuongKhac:0,phat:0,bhxh:0}; return MANUAL[k]; };
 
 // Mặc định là THÁNG TRƯỚC (VD: vào ngày 5/6/2025 → hiện tháng 5/2025)
 const now = new Date();
@@ -205,6 +205,7 @@ function render(){
           <div class="tp-r"><span class="tp-l">Thưởng theo tháng</span><input inputmode="numeric" data-mgr="${esc(m.manager)}" data-f="thuongThang" placeholder="0"></div>
           <div class="tp-r"><span class="tp-l">Thưởng chuyên cần</span><input inputmode="numeric" data-mgr="${esc(m.manager)}" data-f="thuongChuyenCan" placeholder="0"></div>
           <div class="tp-r"><span class="tp-l">Thưởng Top 1 PTSP</span><input inputmode="numeric" data-mgr="${esc(m.manager)}" data-f="thuongTop1Ptsp" placeholder="0"></div>
+          <div class="tp-r"><span class="tp-l">Thưởng khác</span><input inputmode="numeric" data-mgr="${esc(m.manager)}" data-f="thuongKhac" placeholder="0"></div>
           <div class="tp-sum" id="twsum-${idx}">Tổng: 0 ₫</div>
         </div></div></td>
       <td class="num"><input class="cell-inp" inputmode="numeric" data-mgr="${esc(m.manager)}" data-f="phat" value="${man.phat?vnd(man.phat):''}" placeholder="0"></td>
@@ -324,7 +325,7 @@ function render(){
   let totThuong=0, totPhat=0, totBhxh=0, totThucNhan=0, totLuongCung=0;
   mgrs.forEach(m=>{
     const man=manOf(m.manager);
-    const tt=(+man.thuongSP||0)+(+man.thuongThang||0)+(+man.thuongChuyenCan||0)+(+man.thuongTop1Ptsp||0);
+    const tt=(+man.thuongSP||0)+(+man.thuongThang||0)+(+man.thuongChuyenCan||0)+(+man.thuongTop1Ptsp||0)+(+man.thuongKhac||0);
     totThuong+=tt; totPhat+=(+man.phat||0); totBhxh+=(+man.bhxh||0); totLuongCung+=(+man.luongCung||0);
     totThucNhan+=SalaryCalc.tinhLuongPTSP([m], MANUAL).list[0].tn;
   });
@@ -397,7 +398,7 @@ function toggleThuong(idx, mgr){
 }
 function updateThuongSum(idx, mgr){
   const man = manOf(mgr);
-  const tot = (+man.thuongSP||0) + (+man.thuongThang||0) + (+man.thuongChuyenCan||0) + (+man.thuongTop1Ptsp||0);
+  const tot = (+man.thuongSP||0) + (+man.thuongThang||0) + (+man.thuongChuyenCan||0) + (+man.thuongTop1Ptsp||0) + (+man.thuongKhac||0);
   const sumEl = $('twsum-'+idx); if(sumEl) sumEl.textContent = 'Tổng: '+vnd(tot)+' ₫';
 }
 document.addEventListener('click', e=>{
@@ -704,7 +705,8 @@ $('publishBtn').addEventListener('click', async ()=>{
     const thuongThang = +man.thuongThang || 0;
     const thuongChuyenCan = +man.thuongChuyenCan || 0;
     const thuongTop1Ptsp = +man.thuongTop1Ptsp || 0;
-    const thuong = thuongSP + thuongThang + thuongChuyenCan + thuongTop1Ptsp;
+    const thuongKhac = +man.thuongKhac || 0;
+    const thuong = thuongSP + thuongThang + thuongChuyenCan + thuongTop1Ptsp + thuongKhac;
     // Danh sách SP của người này (để nhân viên bấm + xem chi tiết)
     const products=(DATA.products||[]).filter(p=>(p.manager||"(chưa gán)")===m.manager)
       .map(p=>({product:p.product,ngayDang:p.ngayDang,loai:p.loai,soDon:p.soDon,soLuongSP:p.soLuongSP,
@@ -717,7 +719,7 @@ $('publishBtn').addEventListener('click', async ()=>{
       doanhThu:m.doanhThu, giaVon:m.giaVon, phiShip:m.phiShip, doanhThuTong:m.doanhThuTong, giaVonTong:m.giaVonTong, phiShipTong:m.phiShipTong,
       hoaHong:m.hoaHong, hoaHongSandbox:m.hoaHongSandbox, hoaHongKhac:m.hoaHongKhac,
       channels:m.channels||{}, dtKhac:m.dtKhac||0, gvKhac:m.gvKhac||0, shipKhac:m.shipKhac||0,
-      luongCung:(+man.luongCung||0), thuong, thuongSP, thuongThang, thuongChuyenCan, thuongTop1Ptsp, phat:(+man.phat||0), bhxh:(+man.bhxh||0),
+      luongCung:(+man.luongCung||0), thuong, thuongSP, thuongThang, thuongChuyenCan, thuongTop1Ptsp, thuongKhac, phat:(+man.phat||0), bhxh:(+man.bhxh||0),
       products
     };
   });

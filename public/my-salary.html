@@ -144,6 +144,7 @@ function renderMkt(){
       if(e.thuongNgayTuan) tbParts.push(`Thưởng Ngày/Tuần: ${vnd(e.thuongNgayTuan)}`);
       if(e.thuongChuyenCan) tbParts.push(`Thưởng chuyên cần: ${vnd(e.thuongChuyenCan)}`);
       if(e.thuongTop1Mkt) tbParts.push(`Thưởng Top 1 MKT: ${vnd(e.thuongTop1Mkt)}`);
+      if(e.thuongKhac) tbParts.push(`Thưởng khác: ${vnd(e.thuongKhac)}`);
       const tb=tbParts.join(' · ');
       h+=`<tr class="detail"><td colspan="12"><div class="muted" style="font-size:11px;margin-bottom:6px;">Doanh thu các kênh khác (đã cộng vào tổng):</div>${cells}${tb?`<div class="muted" style="font-size:12px;margin-top:8px;">${tb}</div>`:''}</td></tr>`;
     }
@@ -202,6 +203,7 @@ function renderPtsp(){
       if(m.thuongThang) tbParts.push(`Thưởng theo tháng: ${vnd(m.thuongThang)}`);
       if(m.thuongChuyenCan) tbParts.push(`Thưởng chuyên cần: ${vnd(m.thuongChuyenCan)}`);
       if(m.thuongTop1Ptsp) tbParts.push(`Thưởng Top 1 PTSP: ${vnd(m.thuongTop1Ptsp)}`);
+      if(m.thuongKhac) tbParts.push(`Thưởng khác: ${vnd(m.thuongKhac)}`);
       if(tbParts.length) inner+=`<div class="muted" style="font-size:12px;margin-top:8px;">${tbParts.join(' · ')}</div>`;
       h+=`<tr class="detail"><td colspan="15">${inner||'<span class="muted">Không có chi tiết</span>'}</td></tr>`;
     }

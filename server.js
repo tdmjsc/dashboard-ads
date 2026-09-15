@@ -3535,7 +3535,7 @@ app.post('/api/salary/manual', (req, res) => {
   // Điền BHXH mặc định từ EMPLOYEES nếu tháng này chưa có giá trị
   const empDef = EMPLOYEES.find(e => normProd(e.full) === normProd(name));
   const bhxhDefault = empDef ? (empDef.bhxh || 0) : 0;
-  const out = { name, channels: {}, luongCung: numClean(v.luongCung), thuong: numClean(v.thuong), thuongNgayTuan: numClean(v.thuongNgayTuan), thuongChuyenCan: numClean(v.thuongChuyenCan), thuongTop1Mkt: numClean(v.thuongTop1Mkt), phat: numClean(v.phat), bhxh: v.bhxh != null ? numClean(v.bhxh) : bhxhDefault };
+  const out = { name, channels: {}, luongCung: numClean(v.luongCung), thuong: numClean(v.thuong), thuongNgayTuan: numClean(v.thuongNgayTuan), thuongChuyenCan: numClean(v.thuongChuyenCan), thuongTop1Mkt: numClean(v.thuongTop1Mkt), thuongKhac: numClean(v.thuongKhac), phat: numClean(v.phat), bhxh: v.bhxh != null ? numClean(v.bhxh) : bhxhDefault };
   for (const ch of SALARY_CHANNELS) {
     out.channels[ch] = {};
     const src = (v.channels && v.channels[ch]) || {};
