@@ -385,7 +385,8 @@ function render(){
   let h='';
   h+=row('Tổng doanh thu'+(S.manual?'':' (đã ship)'), S.doanhThuShip, 'plus', true);
   // ── Hàng doanh thu đơn CHƯA SHIP (nhập ở Lương MKT) + ô tick cộng/không cộng ──
-  if(!S.manual && (S.doanhThuChuaShip>0 || S.tinhDonChuaShip)){
+  // LUÔN hiện ở tháng tự động (kể cả khi = 0) để còn thấy ô tick mà bật/tắt.
+  if(!S.manual){
     const on=S.tinhDonChuaShip;
     h+='<tr class="'+(on?'plus':'')+'"><td class="lbl">'
       +'<label style="display:inline-flex;align-items:center;gap:8px;cursor:pointer;">'
