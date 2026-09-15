@@ -340,18 +340,19 @@ function computeKQKD(raw){
   const chiPhiList=Array.isArray(tay.chiPhiList)?tay.chiPhiList:[];
   const chiPhi=chiPhiList.reduce((s,x)=>s+(+x.soTien||0),0);
 
-  const doanhThuShip=Math.round(mkt.tong.DT);
   const nganSach=Math.round(mkt.tong.QC);
   const giaVon=Math.round(mkt.tong.GV);
   const phiShip=Math.round(mkt.tong.SHIP);
 
-  // ── Doanh thu đơn CHƯA SHIP (nhập tay 85% ở trang Lương MKT, gộp mọi nhân viên) ──
-  // Chỉ cộng vào kết quả kinh doanh khi ĐƯỢC TICK. Bỏ tick để tránh cộng trùng
-  // khi các tháng sau đơn đã ship thành công và được ghi nhận tự động.
-  const doanhThuChuaShip=Object.values(raw.mktManual||{})
-    .reduce((s,r)=>s+(+((r&&r.donChuaShip))||0),0);
+  // ── Doanh thu đơn CHƯA SHIP = tổng kênh 'donchuaship' (nhập ở Lương MKT) ──
+  // Kênh này ĐÃ nằm trong mkt.tong.DT (nên đã tính vào lương 2%). Ở kết quả kinh
+  // doanh, chỉ GIỮ phần này khi ĐƯỢC TICK; bỏ tick thì trừ ra khỏi doanh thu để
+  // tránh cộng trùng khi các tháng sau đơn đã ship và được ghi nhận tự động.
+  const doanhThuChuaShip=Math.round(mkt.list.reduce((s,x)=>
+    s+(+(((x.m.channels||{}).donchuaship||{}).dt)||0),0));
   const tinhDonChuaShip=!!(+tay.tinhDonChuaShip);
-  const doanhThu=doanhThuShip+(tinhDonChuaShip?doanhThuChuaShip:0);
+  const doanhThuShip=Math.round(mkt.tong.DT)-doanhThuChuaShip;   // doanh thu KHÔNG gồm đơn chưa ship
+  const doanhThu=tinhDonChuaShip?Math.round(mkt.tong.DT):doanhThuShip;
 
   const luong={
     mkt: mkt.tong.luongKhongAdmin,      // ĐÃ trừ Admin

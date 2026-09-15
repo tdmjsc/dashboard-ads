@@ -71,7 +71,7 @@ const $=id=>document.getElementById(id);
 const vnd=n=>(Math.round(Number(n)||0)).toLocaleString('vi-VN');
 const esc=s=>String(s==null?'':s).replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
 let MONTHS=[], CUR=null, expanded={};
-const CH_LABEL={thailan:'Thái Lan',pushsale:'Pushsale',shopee:'Shopee',san:'Sàn TMĐT'};
+const CH_LABEL={thailan:'Thái Lan',pushsale:'Pushsale',shopee:'Shopee',san:'Sàn TMĐT',donchuaship:'Đơn chưa ship (85%)'};
 
 async function loadMonths(){
   try{

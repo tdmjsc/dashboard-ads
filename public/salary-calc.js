@@ -17,7 +17,9 @@
 
   /* ── LƯƠNG MARKETING ───────────────────────────────────────────── */
 
-  const CH_MKT = ['thailan', 'pushsale', 'san'];   // 'san' = Sàn TMĐT (Shopee)
+  // 'san' = Sàn TMĐT (Shopee); 'donchuaship' = doanh thu (85%) đơn tháng này
+  // nhưng lúc tính lương chưa ship — vẫn cộng vào doanh thu + lương 2% như các kênh khác.
+  const CH_MKT = ['thailan', 'pushsale', 'san', 'donchuaship'];
   const AUTOFIELD = { dt: 'doanhthu', qc: 'chiPhiQC', gv: 'giaVon', ship: 'phiShip' };
 
   // Thưởng DTT theo bậc thang. DTT = Doanh thu − Giá vốn − Phí ship (KHÔNG trừ QC)
