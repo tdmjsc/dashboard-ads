@@ -1570,6 +1570,30 @@ app.get('/api/marketing/report', async (req, res) => {
       return { ...r, doanhthu, chiTieu, giaContact, donThai, doanhThuThai, tongDon, cpa };
     });
 
+    // ── Loại doanh thu TikTok & Shopee khỏi tổng + % QC/Doanh số ──
+    // 2 kênh này KHÔNG có dữ liệu chi phí quảng cáo (Meta) nên để trong doanh thu sẽ
+    // làm sai lệch % Chi phí QC / Doanh số. Đơn TikTok/Shopee đều nằm trong dòng "Admin"
+    // (đơn không gán nhân viên) → trừ doanh thu 2 kênh này khỏi dòng Admin.
+    try {
+      const chKey = since + '|' + until;
+      const fresh = CHBRK.key === chKey && CHBRK.map && (Date.now() - CHBRK.at) < CHBRK_FRESH;
+      if (!fresh) {
+        kickChannelBuild(since, until);
+        // Chờ kết quả tối đa ~8s để tổng chính xác; quá thì bỏ qua lần này (lần sau cache sẵn)
+        if (CHBRK.inflight && CHBRK.inflightKey === chKey) {
+          await Promise.race([CHBRK.inflight.catch(() => {}), new Promise(r => setTimeout(r, 8000))]);
+        }
+      }
+      if (CHBRK.key === chKey && CHBRK.map && CHBRK.map.admin) {
+        const ab = CHBRK.map.admin;
+        const dtLoai = ((ab.tiktok && ab.tiktok.doanhThu) || 0) + ((ab.shopee && ab.shopee.doanhThu) || 0);
+        if (dtLoai > 0) {
+          const adminRow = rows.find(r => norm(r.name) === 'admin');
+          if (adminRow) adminRow.doanhthu = Math.max(0, (adminRow.doanhthu || 0) - dtLoai);
+        }
+      }
+    } catch (e) {}
+
     // Lọc theo quyền
     const me = req.session.user || {};
     if (me.role !== 'admin') {
