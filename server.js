@@ -1562,8 +1562,9 @@ app.get('/api/marketing/report', async (req, res) => {
       const giaContact = (chiTieu > 0 && r.contact > 0) ? Math.round(chiTieu / r.contact) : 0;
       const thai = thaiCounts[norm(r.name)] || {};
       const donThai = Number(thai.soDon) || 0;
-      const doanhThuThai = Math.round((Number(thai.doanhThuThb) || 0) * THB_RATE); // THB → VND
-      const doanhthu = (Number(r.doanhthu) || 0) + doanhThuThai;                    // DT Sandbox + DT Thái
+      // Doanh thu Thái trừ 15% phí hậu cần (bên hậu cần thu 15%) trước khi quy đổi THB → VND
+      const doanhThuThai = Math.round((Number(thai.doanhThuThb) || 0) * (1 - 0.15) * THB_RATE);
+      const doanhthu = (Number(r.doanhthu) || 0) + doanhThuThai;                    // DT Sandbox + DT Thái (đã trừ 15% HC)
       const tongDon = (Number(r.contact) || 0) + donThai;  // TỔNG ĐƠN = số contact + đơn Thái
       const cpa = (chiTieu > 0 && tongDon > 0) ? Math.round(chiTieu / tongDon) : 0;  // CPA = chi tiêu / (contact + đơn Thái)
       return { ...r, doanhthu, chiTieu, giaContact, donThai, doanhThuThai, tongDon, cpa };
