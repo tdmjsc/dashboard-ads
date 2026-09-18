@@ -747,6 +747,10 @@ export function mountThailand(app, { mysql, requireLogin, express, getCampaigns,
     // Lọc theo quyền: nhân viên chỉ thấy mình
     if (!isAdmin) rows = rows.filter(r => norm(r.name) === norm(myName));
 
+    // Trừ 15% phí hậu cần khỏi doanh thu (bên hậu cần thu 15% doanh thu Thái)
+    const LOGISTICS_FEE = 0.15;
+    rows.forEach(r => { r.doanhThu = Math.round((r.doanhThu || 0) * (1 - LOGISTICS_FEE)); });
+
     // Tính giá đơn (chi tiêu / số đơn) cho mỗi người
     rows.forEach(r => { r.giaDon = r.soDon > 0 ? Math.round(r.chiTieu / r.soDon) : 0; });
     rows.sort((a, b) => (b.doanhThu || 0) - (a.doanhThu || 0));
