@@ -1540,7 +1540,7 @@ app.get('/api/marketing/report', async (req, res) => {
   const until = req.query.until || since;
   try {
     // Chạy song song: Sandbox report + Meta spend + đơn Thái
-    const [rp, metaSpend, thaiCounts, srcAgg] = await Promise.all([
+    const [rp, metaSpend, thaiCounts, chRev] = await Promise.all([
       sandboxReport(since, until),
       (async () => {
         try {
@@ -1563,12 +1563,9 @@ app.get('/api/marketing/report', async (req, res) => {
         try { return (typeof global.__thaiOrderCounts === 'function') ? await global.__thaiOrderCounts(since, until) : {}; }
         catch (e) { return {}; }
       })(),
-      // Doanh số theo kênh (TikTok/Shopee) lấy từ báo cáo "Leads theo nguồn"
-      // (cookie, nhanh, KHÔNG bị giới hạn tần suất) — để loại khỏi tổng doanh số.
-      (async () => {
-        try { return sourceChannelAgg(await sandboxSourceReport(since, until)).agg; }
-        catch (e) { return null; }
-      })(),
+      // Doanh thu TikTok/Shopee của Admin — tính từ đơn hàng gốc (giá từng đơn), vì báo
+      // cáo "Leads theo nguồn" không có doanh thu. Có cache ~5 phút + fallback (null).
+      getAdminChannelRevenue(since, until).catch(() => null),
     ]);
 
     if (!(rp.json && (rp.json.success ?? rp.json.Success)))
@@ -1600,9 +1597,8 @@ app.get('/api/marketing/report', async (req, res) => {
     // 2 kênh này KHÔNG có dữ liệu chi phí quảng cáo (Meta) nên để trong doanh thu sẽ
     // làm sai lệch % Chi phí QC / Doanh số. Nguồn TikTok/Shopee đều thuộc dòng "Admin"
     // (đơn không gán nhân viên) → trừ doanh số 2 kênh này khỏi dòng Admin.
-    if (srcAgg) {
-      const dtLoai = (Number(srcAgg.tiktok && srcAgg.tiktok.doanhSo) || 0)
-                   + (Number(srcAgg.shopee && srcAgg.shopee.doanhSo) || 0);
+    if (chRev) {
+      const dtLoai = (Number(chRev.tiktok) || 0) + (Number(chRev.shopee) || 0);
       if (dtLoai > 0) {
         const adminRow = rows.find(r => norm(r.name) === 'admin');
         if (adminRow) adminRow.doanhthu = Math.max(0, (adminRow.doanhthu || 0) - dtLoai);
@@ -1772,6 +1768,31 @@ async function buildChannelBreakdown(since, until) {
     b.sources[sn] = (b.sources[sn] || 0) + 1;
   }
   return { map: { admin: b }, totalRecord: orders.length, truncated: false };
+}
+
+// Doanh thu TikTok/Shopee của Admin, tính từ đơn hàng gốc (tổng giá đơn đã chốt theo kênh).
+// Cache ~5 phút theo khoảng ngày để hạn chế gọi API đơn hàng (dễ bị giới hạn tần suất).
+// Không bao giờ reject: lỗi → dùng cache cũ nếu còn, nếu không trả null (khi đó không trừ).
+const ADMIN_CHREV = { key: '', at: 0, data: null, inflight: null, inflightKey: '' };
+async function getAdminChannelRevenue(since, until) {
+  const key = since + '|' + until;
+  if (ADMIN_CHREV.key === key && ADMIN_CHREV.data && (Date.now() - ADMIN_CHREV.at) < CHBRK_FRESH) return ADMIN_CHREV.data;
+  if (ADMIN_CHREV.inflight && ADMIN_CHREV.inflightKey === key) return ADMIN_CHREV.inflight;
+  const p = (async () => {
+    try {
+      const built = await buildChannelBreakdown(since, until);
+      const ab = (built && built.map && built.map.admin) || _chBucket();
+      const data = { tiktok: ab.tiktok.doanhThu || 0, shopee: ab.shopee.doanhThu || 0 };
+      ADMIN_CHREV.key = key; ADMIN_CHREV.at = Date.now(); ADMIN_CHREV.data = data;
+      return data;
+    } catch (e) {
+      return (ADMIN_CHREV.key === key ? ADMIN_CHREV.data : null) || null;
+    } finally {
+      if (ADMIN_CHREV.inflight === p) { ADMIN_CHREV.inflight = null; ADMIN_CHREV.inflightKey = ''; }
+    }
+  })();
+  ADMIN_CHREV.inflight = p; ADMIN_CHREV.inflightKey = key;
+  return p;
 }
 
 app.get('/api/marketing/channel-breakdown', async (req, res) => {
@@ -2102,8 +2123,10 @@ app.get('/api/marketing/channel-breakdown', async (req, res) => {
     }
     // Admin → tách theo kênh TikTok/Shopee/thường (như cũ).
     const agg = CHBRK.src;
-    const tiktok = { don: agg.tiktok.soContact, giao: agg.tiktok.soDonGiao, doanhSo: agg.tiktok.doanhSo };
-    const shopee = { don: agg.shopee.soContact, giao: agg.shopee.soDonGiao, doanhSo: agg.shopee.doanhSo };
+    // Doanh thu thật của 2 kênh lấy từ đơn gốc (báo cáo nguồn không có doanh thu).
+    let chRev = null; try { chRev = await getAdminChannelRevenue(since, until); } catch (e) {}
+    const tiktok = { don: agg.tiktok.soContact, giao: agg.tiktok.soDonGiao, doanhSo: chRev ? chRev.tiktok : 0 };
+    const shopee = { don: agg.shopee.soContact, giao: agg.shopee.soDonGiao, doanhSo: chRev ? chRev.shopee : 0 };
     const thuongDon = Math.max(0, (CHBRK.adminContact || 0) - tiktok.don - shopee.don);
     res.json({
       ok: true, since, until, name: req.query.name || 'admin',
