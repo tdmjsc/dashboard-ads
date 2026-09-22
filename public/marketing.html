@@ -285,7 +285,8 @@ $('rows').addEventListener('click', function(e){
     }
     const box=(lb,o,c)=>'<div style="display:inline-block;min-width:175px;margin:2px 16px 2px 0;">'
       +'<b style="color:'+c+'">'+lb+'</b>: '+vnd(o.don)+' đơn'
-      +(o.giao!=null?' <span class="muted">(đã giao '+vnd(o.giao)+')</span>':'')+'</div>';
+      +(o.giao!=null?' <span class="muted">(đã giao '+vnd(o.giao)+')</span>':'')
+      +(o.doanhSo?' <span class="muted">· DT '+vnd(o.doanhSo)+'đ</span>':'')+'</div>';
     const tong=(d.tiktok.don||0)+(d.shopee.don||0)+(d.thuong.don||0);
     const srcLine=(arr,lb)=>(arr&&arr.length)?('<div class="muted" style="font-size:11px;margin-top:2px">'+lb+': '
         + arr.map(s=>esc(s.ten)+' ('+vnd(s.soContact)+')').join(' · ')+'</div>'):'';

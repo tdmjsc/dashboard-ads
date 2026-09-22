@@ -1314,6 +1314,26 @@ async function sandboxSourceReport(since, until, opts = {}) {
   return { httpStatus: r.status, json: j };
 }
 
+// Lấy doanh số của 1 dòng nguồn — báo cáo "Leads theo nguồn" đặt tên field không cố định
+// (tongDoanhSo / lgtTongDoanhSo / lgtDoanhSo + offlineDoanhSo…). Thử lần lượt rồi fallback
+// quét mọi key chứa "doanhSo"/"doanhThu" (ưu tiên field "tong").
+function pickDoanhSoRow(r) {
+  for (const k of ['tongDoanhSo', 'lgtTongDoanhSo']) {
+    const v = Number(r[k]); if (v) return v;
+  }
+  const lgtOff = (Number(r.lgtDoanhSo) || 0) + (Number(r.offlineDoanhSo) || 0);
+  if (lgtOff) return lgtOff;
+  const alt = Number(r.doanhSo); if (alt) return alt;
+  let best = 0, bestTong = 0;
+  for (const k in r) {
+    if (!/doanh\s*(so|thu)/i.test(k)) continue;
+    const v = Number(r[k]); if (!v) continue;
+    if (/tong/i.test(k)) { if (!bestTong) bestTong = v; }
+    else if (!best) best = v;
+  }
+  return bestTong || best || 0;
+}
+
 // Gom báo cáo "Leads theo nguồn" theo KÊNH (TikTok / Shopee / thường) — chỉ cộng phần tử
 // cấp cao nhất của tableData (mỗi phần tử = 1 landing/nguồn; children là chi tiết utm nên
 // KHÔNG cộng để tránh nhân đôi). Phân loại theo tên nguồn (landingTen/tenNguon).
@@ -1330,9 +1350,9 @@ function sourceChannelAgg(j) {
     const contact = Number(r.soContact) || 0;
     const chot = Number(r.tongSoChotDon || 0) || (Number(r.lgtSoChotDon || 0) + Number(r.offlineSoChotDon || 0));
     const giao = Number(r.lgtTongDonGiao) || 0;
-    const ds = Number(r.tongDoanhSo || 0) || Number(r.lgtDoanhSo || 0);
+    const ds = pickDoanhSoRow(r);
     agg[ch].soContact += contact; agg[ch].soChotDon += chot; agg[ch].soDonGiao += giao; agg[ch].doanhSo += ds;
-    if (ch !== 'thuong') list[ch].push({ ten, soContact: contact, soChotDon: chot, soDonGiao: giao });
+    if (ch !== 'thuong') list[ch].push({ ten, soContact: contact, soChotDon: chot, soDonGiao: giao, doanhSo: ds });
   }
   return { agg, list, tongNguon: rows.length };
 }
@@ -2082,8 +2102,8 @@ app.get('/api/marketing/channel-breakdown', async (req, res) => {
     }
     // Admin → tách theo kênh TikTok/Shopee/thường (như cũ).
     const agg = CHBRK.src;
-    const tiktok = { don: agg.tiktok.soContact, giao: agg.tiktok.soDonGiao };
-    const shopee = { don: agg.shopee.soContact, giao: agg.shopee.soDonGiao };
+    const tiktok = { don: agg.tiktok.soContact, giao: agg.tiktok.soDonGiao, doanhSo: agg.tiktok.doanhSo };
+    const shopee = { don: agg.shopee.soContact, giao: agg.shopee.soDonGiao, doanhSo: agg.shopee.doanhSo };
     const thuongDon = Math.max(0, (CHBRK.adminContact || 0) - tiktok.don - shopee.don);
     res.json({
       ok: true, since, until, name: req.query.name || 'admin',
