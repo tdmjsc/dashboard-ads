@@ -1594,6 +1594,14 @@ app.get('/api/marketing/report', async (req, res) => {
       donThai:  a.donThai  + (+r.donThai  || 0),
     }), { contact: 0, chot: 0, soSP: 0, doanhthu: 0, doanhthuQC: 0, chiTieu: 0, donThai: 0 });
 
+    // Mẫu số cho Giá/contact & CPA: loại contact/đơn của Admin (đơn không gán NV, chi tiêu QC=0)
+    // để 2 chỉ số này không bị "rẻ giả tạo" do đơn Admin không tốn chi phí QC.
+    const admRow = rows.find(r => norm(r.name) === 'admin');
+    const admContact = admRow ? (Number(admRow.contact) || 0) : 0;
+    const admTongDon = admRow ? (Number(admRow.tongDon) || 0) : 0;
+    const contactQC = Math.max(0, s.contact - admContact);
+    const tongDonQC = Math.max(0, (s.contact + s.donThai) - admTongDon);
+
     const total = {
       contact:    s.contact,
       chot:       s.chot,
@@ -1604,8 +1612,8 @@ app.get('/api/marketing/report', async (req, res) => {
       donThai:    s.donThai,
       tongDon:    s.contact + s.donThai,
       tyLe:       s.contact ? (s.chot / s.contact * 100) : 0,
-      giaContact: s.contact ? Math.round(s.chiTieu / s.contact) : 0,
-      cpa:        (s.contact + s.donThai) ? Math.round(s.chiTieu / (s.contact + s.donThai)) : 0,
+      giaContact: contactQC ? Math.round(s.chiTieu / contactQC) : 0,
+      cpa:        tongDonQC ? Math.round(s.chiTieu / tongDonQC) : 0,
     };
 
     rows.sort((a, b) => (b.doanhthu || 0) - (a.doanhthu || 0));
