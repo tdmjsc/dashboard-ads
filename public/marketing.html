@@ -51,7 +51,7 @@
   <div class="top">
     <div style="flex:1;min-width:180px;">
       <h1>Marketing · Lead theo nhân viên</h1>
-      <p class="sub">Theo NGÀY LEAD VỀ (ngày tạo) — đồng bộ với báo cáo Sandbox · Doanh số & %QC đã loại doanh thu TikTok/Shopee (không có dữ liệu chi phí QC)</p>
+      <p class="sub">Theo NGÀY LEAD VỀ (ngày tạo) — đồng bộ với báo cáo Sandbox · Riêng cột %QC/Doanh số đã loại doanh thu TikTok/Shopee (dòng Admin) vì 2 kênh này không có dữ liệu chi phí QC</p>
     </div>
     <div class="quick">
       <button data-range="today">Hôm nay</button>
@@ -166,9 +166,10 @@ function render(d){
     contact:  a.contact  + (+r.contact  ||0),
     soSP:     a.soSP     + (+r.soSP     ||0),
     doanhthu: a.doanhthu + (+r.doanhthu ||0),
+    doanhthuQC: a.doanhthuQC + (+(r.doanhthuQC ?? r.doanhthu) ||0),
     chiTieu:  a.chiTieu  + (+r.chiTieu  ||0),
     donThai:  a.donThai  + (+r.donThai  ||0),
-  }),{contact:0,soSP:0,doanhthu:0,chiTieu:0,donThai:0});
+  }),{contact:0,soSP:0,doanhthu:0,doanhthuQC:0,chiTieu:0,donThai:0});
   filteredTotal.tongDon   = filteredTotal.contact + filteredTotal.donThai;
   filteredTotal.giaContact= filteredTotal.contact ? Math.round(filteredTotal.chiTieu/filteredTotal.contact) : 0;
   filteredTotal.cpa       = filteredTotal.tongDon  ? Math.round(filteredTotal.chiTieu/filteredTotal.tongDon)  : 0;
@@ -189,7 +190,7 @@ function render(d){
       <td class="num">${vnd(r.soSP)}</td>
       <td class="num">${vnd(r.chiTieu)}</td>
       <td class="num rev">${vnd(r.doanhthu)}</td>
-      <td class="num ${pctClass(r.chiTieu, r.doanhthu)}">${pctQC(r.chiTieu, r.doanhthu)}</td>
+      <td class="num ${pctClass(r.chiTieu, r.doanhthuQC ?? r.doanhthu)}">${pctQC(r.chiTieu, r.doanhthuQC ?? r.doanhthu)}</td>
     </tr>`;
   });
   const t = total;
@@ -203,7 +204,7 @@ function render(d){
     <td class="num">${vnd(t.soSP)}</td>
     <td class="num">${vnd(t.chiTieu)}</td>
     <td class="num rev">${vnd(t.doanhthu)}</td>
-    <td class="num ${pctClass(t.chiTieu, t.doanhthu)}">${pctQC(t.chiTieu, t.doanhthu)}</td>
+    <td class="num ${pctClass(t.chiTieu, t.doanhthuQC ?? t.doanhthu)}">${pctQC(t.chiTieu, t.doanhthuQC ?? t.doanhthu)}</td>
   </tr>`;
   tb.innerHTML = html;
 }
@@ -285,8 +286,7 @@ $('rows').addEventListener('click', function(e){
     }
     const box=(lb,o,c)=>'<div style="display:inline-block;min-width:175px;margin:2px 16px 2px 0;">'
       +'<b style="color:'+c+'">'+lb+'</b>: '+vnd(o.don)+' đơn'
-      +(o.giao!=null?' <span class="muted">(đã giao '+vnd(o.giao)+')</span>':'')
-      +(o.doanhSo?' <span class="muted">· DT '+vnd(o.doanhSo)+'đ</span>':'')+'</div>';
+      +(o.giao!=null?' <span class="muted">(đã giao '+vnd(o.giao)+')</span>':'')+'</div>';
     const tong=(d.tiktok.don||0)+(d.shopee.don||0)+(d.thuong.don||0);
     const srcLine=(arr,lb)=>(arr&&arr.length)?('<div class="muted" style="font-size:11px;margin-top:2px">'+lb+': '
         + arr.map(s=>esc(s.ten)+' ('+vnd(s.soContact)+')').join(' · ')+'</div>'):'';
