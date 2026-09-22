@@ -1314,34 +1314,15 @@ async function sandboxSourceReport(since, until, opts = {}) {
   return { httpStatus: r.status, json: j };
 }
 
-// Lấy doanh số của 1 dòng nguồn — báo cáo "Leads theo nguồn" đặt tên field không cố định
-// (tongDoanhSo / lgtTongDoanhSo / lgtDoanhSo + offlineDoanhSo…). Thử lần lượt rồi fallback
-// quét mọi key chứa "doanhSo"/"doanhThu" (ưu tiên field "tong").
-function pickDoanhSoRow(r) {
-  for (const k of ['tongDoanhSo', 'lgtTongDoanhSo']) {
-    const v = Number(r[k]); if (v) return v;
-  }
-  const lgtOff = (Number(r.lgtDoanhSo) || 0) + (Number(r.offlineDoanhSo) || 0);
-  if (lgtOff) return lgtOff;
-  const alt = Number(r.doanhSo); if (alt) return alt;
-  let best = 0, bestTong = 0;
-  for (const k in r) {
-    if (!/doanh\s*(so|thu)/i.test(k)) continue;
-    const v = Number(r[k]); if (!v) continue;
-    if (/tong/i.test(k)) { if (!bestTong) bestTong = v; }
-    else if (!best) best = v;
-  }
-  return bestTong || best || 0;
-}
-
 // Gom báo cáo "Leads theo nguồn" theo KÊNH (TikTok / Shopee / thường) — chỉ cộng phần tử
 // cấp cao nhất của tableData (mỗi phần tử = 1 landing/nguồn; children là chi tiết utm nên
 // KHÔNG cộng để tránh nhân đôi). Phân loại theo tên nguồn (landingTen/tenNguon).
+// (Báo cáo này KHÔNG có doanh thu → doanh thu kênh lấy từ đơn gốc: getAdminChannelRevenue.)
 function sourceChannelAgg(j) {
   const d = (j && j.json && j.json.data) || {};
   const rows = Array.isArray(d.tableData) ? d.tableData : [];
   const TIKTOK = /tik\s*tok|tiktok|tt\s*shop/i, SHOPEE = /shopee|shoppe/i;
-  const mk = () => ({ soContact: 0, soChotDon: 0, soDonGiao: 0, doanhSo: 0 });
+  const mk = () => ({ soContact: 0, soChotDon: 0, soDonGiao: 0 });
   const agg = { tiktok: mk(), shopee: mk(), thuong: mk() };
   const list = { tiktok: [], shopee: [] };
   for (const r of rows) {
@@ -1350,9 +1331,8 @@ function sourceChannelAgg(j) {
     const contact = Number(r.soContact) || 0;
     const chot = Number(r.tongSoChotDon || 0) || (Number(r.lgtSoChotDon || 0) + Number(r.offlineSoChotDon || 0));
     const giao = Number(r.lgtTongDonGiao) || 0;
-    const ds = pickDoanhSoRow(r);
-    agg[ch].soContact += contact; agg[ch].soChotDon += chot; agg[ch].soDonGiao += giao; agg[ch].doanhSo += ds;
-    if (ch !== 'thuong') list[ch].push({ ten, soContact: contact, soChotDon: chot, soDonGiao: giao, doanhSo: ds });
+    agg[ch].soContact += contact; agg[ch].soChotDon += chot; agg[ch].soDonGiao += giao;
+    if (ch !== 'thuong') list[ch].push({ ten, soContact: contact, soChotDon: chot, soDonGiao: giao });
   }
   return { agg, list, tongNguon: rows.length };
 }
@@ -1540,7 +1520,7 @@ app.get('/api/marketing/report', async (req, res) => {
   const until = req.query.until || since;
   try {
     // Chạy song song: Sandbox report + Meta spend + đơn Thái
-    const [rp, metaSpend, thaiCounts, chRev] = await Promise.all([
+    const [rp, metaSpend, thaiCounts] = await Promise.all([
       sandboxReport(since, until),
       (async () => {
         try {
@@ -1563,9 +1543,6 @@ app.get('/api/marketing/report', async (req, res) => {
         try { return (typeof global.__thaiOrderCounts === 'function') ? await global.__thaiOrderCounts(since, until) : {}; }
         catch (e) { return {}; }
       })(),
-      // Doanh thu TikTok/Shopee của Admin — tính từ đơn hàng gốc (giá từng đơn), vì báo
-      // cáo "Leads theo nguồn" không có doanh thu. Có cache ~5 phút + fallback (null).
-      getAdminChannelRevenue(since, until).catch(() => null),
     ]);
 
     if (!(rp.json && (rp.json.success ?? rp.json.Success)))
@@ -1597,6 +1574,7 @@ app.get('/api/marketing/report', async (req, res) => {
     // 2 kênh này KHÔNG có dữ liệu chi phí quảng cáo (Meta) nên để trong doanh thu sẽ
     // làm sai lệch % Chi phí QC / Doanh số. Nguồn TikTok/Shopee đều thuộc dòng "Admin"
     // (đơn không gán nhân viên) → trừ doanh số 2 kênh này khỏi dòng Admin.
+    const chRev = adminChannelRevenueCached(since, until); // đọc cache, KHÔNG chặn báo cáo
     if (chRev) {
       const dtLoai = (Number(chRev.tiktok) || 0) + (Number(chRev.shopee) || 0);
       if (dtLoai > 0) {
@@ -1657,39 +1635,12 @@ app.get('/api/marketing/report', async (req, res) => {
 //   /api/marketing/channel-breakdown?since=&until=&name=admin
 // LẤY ĐƠN 1 LẦN cho cả khoảng ngày, tính sẵn cho MỌI nhân viên rồi cache ~5 phút
 // → bấm nhiều dòng liên tiếp không gọi lại Sandbox (tránh lỗi giới hạn tần suất).
-const CHBRK = { key: '', at: 0, map: null, totalRecord: 0, truncated: false, cooldownUntil: 0, inflight: null, inflightKey: '', buildError: null, buildErrorKey: null };
+// Cache báo cáo "Leads theo nguồn" theo kênh (dùng cho popup bung dòng Admin).
+const CHBRK = { key: '', at: 0, src: null, srcList: null, adminContact: 0, byPerson: null };
 const CHBRK_FRESH = 5 * 60 * 1000;
 // Admin (không gán nhân viên marketing) = GUID toàn số 0 trong báo cáo Sandbox.
 const ADMIN_MKT_ID = '00000000-0000-0000-0000-000000000000';
 const _normNV = s => String(s == null ? '' : s).trim().toLowerCase().replace(/\s+/g, ' ');
-function _chBucket() { return { tiktok: { don: 0, chot: 0, doanhThu: 0 }, shopee: { don: 0, chot: 0, doanhThu: 0 }, thuong: { don: 0, chot: 0, doanhThu: 0 }, sources: {} }; }
-
-// Bắt đầu dựng breakdown ở NỀN (không chặn). An toàn khi gọi nhiều lần: tự bỏ qua nếu
-// đã có cache tươi / đang dựng / đang trong thời gian chờ do Sandbox giới hạn.
-function kickChannelBuild(since, until) {
-  if (!SANDBOX_TOKEN) return;
-  const key = since + '|' + until;
-  if (CHBRK.key === key && CHBRK.map && (Date.now() - CHBRK.at) < CHBRK_FRESH) return; // còn tươi
-  if (CHBRK.cooldownUntil && Date.now() < CHBRK.cooldownUntil) return;                 // đang chờ
-  if (CHBRK.inflight && CHBRK.inflightKey === key) return;                             // đang dựng
-  CHBRK.inflightKey = key;
-  CHBRK.inflight = buildChannelBreakdown(since, until)
-    .then(built => {
-      CHBRK.key = key; CHBRK.at = Date.now(); CHBRK.map = built.map;
-      CHBRK.totalRecord = built.totalRecord; CHBRK.truncated = built.truncated;
-      CHBRK.cooldownUntil = 0; CHBRK.buildError = null; CHBRK.buildErrorKey = null;
-      return built;
-    })
-    .catch(err => {
-      if (err.rateLimited) {
-        const m = String(err.message || '').match(/(\d+)\s*s/);
-        CHBRK.cooldownUntil = Date.now() + (((m ? Number(m[1]) : 60)) + 2) * 1000;
-      } else {
-        CHBRK.buildError = err.message || 'Lỗi khi tải dữ liệu'; CHBRK.buildErrorKey = key;
-      }
-    })
-    .finally(() => { CHBRK.inflight = null; });
-}
 
 // Lấy TẤT CẢ đơn theo kiểu ngày "NgayTao" = ngày data về hệ thống.
 // API chặn mỗi trang tối đa 100 bản ghi (dù xin pageSize lớn) nên phải phân trang;
@@ -1738,41 +1689,27 @@ async function fetchSandboxOrders(since, until, opts = {}) {
 
 const _isAdminOrder = o => { const k = _normNV(o.marketingDisplayName || o.marketingUserName || ''); return k === '' || k === 'admin' || k === '(trống)'; };
 
-// CHỈ dựng breakdown cho ADMIN (đơn không gán nhân viên marketing — nơi gom TikTok/Shopee).
-// Trước tiên thử lọc server-side theo idUserMkts = GUID-0 để CHỈ tải đơn Admin (rất ít,
-// tránh giới hạn tần suất). Nếu API không tôn trọng bộ lọc (trả cả đơn có tên NV) thì
-// quét toàn bộ rồi tự lọc Admin — không bao giờ báo nhầm 0.
-async function buildChannelBreakdown(since, until) {
-  let orders = null, totalRec = 0;
-  try {
-    const jf = await fetchSandboxOrders(since, until, { body: { idUserMkts: [ADMIN_MKT_ID] } });
-    const os = jf.data || [];
-    const named = os.filter(o => !_isAdminOrder(o)).length;
-    if (os.length > 0 && named === 0) { orders = os; totalRec = Number(jf.totalRecord || os.length); } // lọc sạch
-  } catch (e) { if (e.rateLimited) throw e; /* bộ lọc lỗi → quét toàn bộ */ }
-  if (!orders) {
-    const j = await fetchSandboxOrders(since, until);
-    orders = (j.data || []).filter(_isAdminOrder);
-    totalRec = Number(j.totalRecord || orders.length);
-  }
-  const TIKTOK = /tik\s*tok|tiktok|tt\s*shop/i, SHOPEE = /shopee|shoppe/i;
-  const b = _chBucket();
+// Doanh thu TikTok/Shopee của Admin — tính từ đơn hàng gốc (tổng giá đơn đã chốt theo kênh).
+// CHỈ lấy đơn Admin qua bộ lọc idUserMkts = GUID-0 (rất ít đơn) và GIỚI HẠN số trang để
+// KHÔNG bao giờ làm chậm/treo. Nếu API không tôn trọng bộ lọc → tự lọc Admin trong số
+// trang đã tải (đủ dùng vì đơn Admin thường rất ít). Chạy ở NỀN + cache, không chặn báo cáo.
+const ADMIN_CHREV_TIKTOK = /tik\s*tok|tiktok|tt\s*shop/i, ADMIN_CHREV_SHOPEE = /shopee|shoppe/i;
+async function computeAdminChannelRevenue(since, until) {
+  const jf = await fetchSandboxOrders(since, until, { maxPages: 5, maxRetry: 1, body: { idUserMkts: [ADMIN_MKT_ID] } });
+  const orders = (jf.data || []).filter(_isAdminOrder);
+  let tiktok = 0, shopee = 0;
   for (const o of orders) {
-    // API đã lọc theo NgayTao = ngày data về hệ thống, nên KHÔNG lọc lại theo createTime.
+    if (String(o.orderConfirmId) !== '1') continue; // chỉ tính đơn đã chốt
     const blob = [o.sourceName, o.utmSource, o.customerType, o.operationName, o.saleUserName, o.reasonToCreate]
       .map(x => String(x || '')).join(' ');
-    const ch = TIKTOK.test(blob) ? 'tiktok' : SHOPEE.test(blob) ? 'shopee' : 'thuong';
-    b[ch].don += 1;
-    if (String(o.orderConfirmId) === '1') { b[ch].chot += 1; b[ch].doanhThu += Number(o.totalPrice || 0); }
-    const sn = (o.sourceName || '(không nguồn)').trim();
-    b.sources[sn] = (b.sources[sn] || 0) + 1;
+    const price = Number(o.totalPrice) || 0;
+    if (ADMIN_CHREV_TIKTOK.test(blob)) tiktok += price;
+    else if (ADMIN_CHREV_SHOPEE.test(blob)) shopee += price;
   }
-  return { map: { admin: b }, totalRecord: orders.length, truncated: false };
+  return { tiktok, shopee };
 }
 
-// Doanh thu TikTok/Shopee của Admin, tính từ đơn hàng gốc (tổng giá đơn đã chốt theo kênh).
-// Cache ~5 phút theo khoảng ngày để hạn chế gọi API đơn hàng (dễ bị giới hạn tần suất).
-// Không bao giờ reject: lỗi → dùng cache cũ nếu còn, nếu không trả null (khi đó không trừ).
+// Cache ~5 phút + gộp lời gọi trùng. Không bao giờ reject: lỗi → giữ cache cũ (nếu có).
 const ADMIN_CHREV = { key: '', at: 0, data: null, inflight: null, inflightKey: '' };
 async function getAdminChannelRevenue(since, until) {
   const key = since + '|' + until;
@@ -1780,9 +1717,7 @@ async function getAdminChannelRevenue(since, until) {
   if (ADMIN_CHREV.inflight && ADMIN_CHREV.inflightKey === key) return ADMIN_CHREV.inflight;
   const p = (async () => {
     try {
-      const built = await buildChannelBreakdown(since, until);
-      const ab = (built && built.map && built.map.admin) || _chBucket();
-      const data = { tiktok: ab.tiktok.doanhThu || 0, shopee: ab.shopee.doanhThu || 0 };
+      const data = await computeAdminChannelRevenue(since, until);
       ADMIN_CHREV.key = key; ADMIN_CHREV.at = Date.now(); ADMIN_CHREV.data = data;
       return data;
     } catch (e) {
@@ -1793,6 +1728,15 @@ async function getAdminChannelRevenue(since, until) {
   })();
   ADMIN_CHREV.inflight = p; ADMIN_CHREV.inflightKey = key;
   return p;
+}
+
+// Đọc ĐỒNG BỘ (không chặn): trả doanh thu kênh Admin từ cache nếu có; đồng thời kích tính
+// ở nền cho lần sau. Dùng trong báo cáo để KHÔNG bao giờ chờ API đơn hàng (chậm/rate-limit).
+function adminChannelRevenueCached(since, until) {
+  const key = since + '|' + until;
+  if (ADMIN_CHREV.key === key && ADMIN_CHREV.data && (Date.now() - ADMIN_CHREV.at) < CHBRK_FRESH) return ADMIN_CHREV.data;
+  getAdminChannelRevenue(since, until).catch(() => {}); // tính ở nền, không await
+  return (ADMIN_CHREV.key === key) ? ADMIN_CHREV.data : null; // dùng cache cùng ngày nếu có
 }
 
 app.get('/api/marketing/channel-breakdown', async (req, res) => {
@@ -2123,8 +2067,9 @@ app.get('/api/marketing/channel-breakdown', async (req, res) => {
     }
     // Admin → tách theo kênh TikTok/Shopee/thường (như cũ).
     const agg = CHBRK.src;
-    // Doanh thu thật của 2 kênh lấy từ đơn gốc (báo cáo nguồn không có doanh thu).
-    let chRev = null; try { chRev = await getAdminChannelRevenue(since, until); } catch (e) {}
+    // Doanh thu thật của 2 kênh lấy từ đơn gốc (báo cáo nguồn không có doanh thu) — đọc cache,
+    // không chặn; nếu chưa có sẽ tính ở nền cho lần sau.
+    const chRev = adminChannelRevenueCached(since, until);
     const tiktok = { don: agg.tiktok.soContact, giao: agg.tiktok.soDonGiao, doanhSo: chRev ? chRev.tiktok : 0 };
     const shopee = { don: agg.shopee.soContact, giao: agg.shopee.soDonGiao, doanhSo: chRev ? chRev.shopee : 0 };
     const thuongDon = Math.max(0, (CHBRK.adminContact || 0) - tiktok.don - shopee.don);
