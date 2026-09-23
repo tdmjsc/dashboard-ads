@@ -54,6 +54,7 @@ const EMP_FILE = path.join(DATA_DIR, 'employees.json');
 
 // Dữ liệu mặc định (seed lần đầu nếu chưa có file)
 const EMPLOYEES_DEFAULT = [
+  { code: 'TD0',  short: 'Thắng',  full: 'Nguyễn Sỹ Thắng',   bhxh: 0, aliases: [], team: '', isLead: true, active: true },
   { code: 'TD1',  short: 'Trường',  full: 'Tạ Quang Trường',   bhxh: 598500, aliases: [], team: '', isLead: true, active: true },
   { code: 'TD2',  short: 'Phương',  full: 'Trịnh Đức Phương',  bhxh: 598500, aliases: [], team: '', isLead: true, active: true },
   { code: 'TD3',  short: 'Hiếu',    full: 'Nguyễn Trung Hiếu', bhxh: 577500, aliases: [], team: '', isLead: false, active: true },
