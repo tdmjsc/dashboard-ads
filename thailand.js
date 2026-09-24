@@ -521,7 +521,10 @@ export function mountThailand(app, { mysql, requireLogin, express, getCampaigns,
           'Mã bưu chính': '',
           'Sale khách hàng': '',
           'Nguồn data': '',
-          'Marketing': o.nhan_vien || '',
+          // KHÔNG đẩy tên marketing sang hậu cần: hậu cần không cần field này và sẽ báo lỗi
+          // "Customer marketing ... is not valid." nếu tên không khớp danh sách của họ.
+          // Tên marketing chỉ dùng để theo dõi nội bộ trên ads.tdmjsc.com.
+          'Marketing': '',
           'Sale chốt đơn': '',
           'Mã vận đơn khách hàng': '',
           'Link nhãn vận đơn': '',
