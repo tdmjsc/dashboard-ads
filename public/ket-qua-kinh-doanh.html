@@ -342,7 +342,9 @@ function computeKQKD(raw){
 
   const nganSach=Math.round(mkt.tong.QC);
   const giaVon=Math.round(mkt.tong.GV);
-  const phiShip=Math.round(mkt.tong.SHIP);
+  // Bỏ tổng phí ship TỰ ĐỘNG khỏi trang Kết quả kinh doanh: không lấy từ ads nữa,
+  // không trừ vào lợi nhuận và không hiển thị dòng. (Phí ship nhập tay tháng cũ vẫn giữ.)
+  const phiShip=0;
 
   // ── Doanh thu đơn CHƯA SHIP = tổng kênh 'donchuaship' (nhập ở Lương MKT) ──
   // Kênh này ĐÃ nằm trong mkt.tong.DT (nên đã tính vào lương 2%). Ở kết quả kinh
@@ -398,7 +400,7 @@ function render(){
   }
   h+=row('Tổng ngân sách (chi tiêu Meta +11% VAT)', -S.nganSach, 'minus', true);
   h+=row('Tổng giá vốn', -S.giaVon, 'minus', true);
-  h+=row('Tổng phí ship', -S.phiShip, 'minus', true);
+  if(S.phiShip) h+=row('Tổng phí ship', -S.phiShip, 'minus', true);
 
   if(S.manual){
     // Tháng nhập tay: hiện gọn, sửa ở mục "Nhập số liệu tháng cũ" bên dưới
