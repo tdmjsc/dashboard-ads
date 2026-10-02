@@ -723,12 +723,14 @@ app.use((req, res, next) => {
       '/salary-product.html',      // Lương Phát triển sản phẩm
       '/ket-qua-kinh-doanh.html',  // Kết quả kinh doanh
       '/attribution.html',         // Đơn theo chiến dịch / nguồn
+      '/ton-kho.html',             // Tồn kho (MISA AMIS)
     ];
     const API_CHI_ADMIN =
          p.startsWith('/api/attribution')       // Đơn theo chiến dịch / nguồn
       || p.startsWith('/api/salary')            // gồm cả /api/salary-product/*
       || p.startsWith('/api/business-result')   // Kết quả kinh doanh
       || p.startsWith('/api/bank-accounts')     // STK nhân viên (chuyển lương)
+      || p.startsWith('/api/ton-kho')           // Tồn kho (MISA AMIS)
       || p.startsWith('/api/meta-cache')        // ghim / xoá / nạp lại cache
       || p.startsWith('/api/admin/');
     if (TRANG_CHI_ADMIN.includes(p) || API_CHI_ADMIN) {
@@ -4172,6 +4174,18 @@ app.post('/api/cash-flow/note', express.json(), (req, res) => {
   saveCashflow();
   res.json({ ok: true });
 });
+
+// ===================================================================
+//  MODULE TỒN KHO (MISA AMIS) — lỗi ở đây KHÔNG làm sập app chính
+// ===================================================================
+(async () => {
+  try {
+    const { mountTonKho } = await import('./tonkho.js');
+    mountTonKho(app, { express, DATA_DIR, fetchWithTimeout });
+  } catch (e) {
+    console.error('[TONKHO] KHÔNG gắn được module (app chính vẫn chạy bình thường):', e.message);
+  }
+})();
 
 app.use(express.static(path.join(__dirname, 'public')));
 const PORT = process.env.PORT || 3000;

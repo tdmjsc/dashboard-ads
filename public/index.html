@@ -229,7 +229,7 @@
 </style>
 <style>
 /* Ẩn sẵn menu admin để tránh hiện nhấp nháy với nhân viên; JS sẽ hiện lại nếu là admin */
-#navProducts, #navSalary, #navSalaryProduct, #navKQKD, #navEmployees, #navDongTien { display: none; }
+#navProducts, #navSalary, #navSalaryProduct, #navKQKD, #navEmployees, #navDongTien, #navTonKho { display: none; }
 #navMySalary { display: none; }
 </style>
 </head>
@@ -258,6 +258,7 @@
         <a href="/salary-product.html" class="logout" id="navSalaryProduct">Lương PTSP</a>
         <a href="/ket-qua-kinh-doanh.html" class="logout" id="navKQKD">📊 KQ Kinh doanh</a>
         <a href="/dong-tien.html" class="logout" id="navDongTien">💰 Dòng tiền</a>
+        <a href="/ton-kho.html" class="logout" id="navTonKho">📦 Tồn kho</a>
         <a href="/employees.html" class="logout" id="navEmployees">👥 Nhân viên</a>
         <a href="/my-salary.html" class="logout" id="navMySalary">Lương của tôi</a>
         <a href="/thailand" class="logout" id="navThailand">🇹🇭 Đơn Thái Lan</a>
@@ -422,7 +423,7 @@ async function loadData(opts){
       const ub=document.getElementById('userBadge'); if(ub&&data.me.displayName) ub.textContent='👤 '+data.me.displayName;
       const isAdmin=data.me.role==='admin';
       // Menu admin: chỉ hiện khi là admin (mặc định CSS đã ẩn)
-      ['navProducts','navSalary','navSalaryProduct','navKQKD','navEmployees'].forEach(id=>{
+      ['navProducts','navSalary','navSalaryProduct','navKQKD','navEmployees','navTonKho'].forEach(id=>{
         const el=document.getElementById(id); if(el) el.style.display = isAdmin ? 'inline-block' : 'none';
       });
       // Dòng tiền: CHỈ admin thật (ẩn với kế toán khongBoGhim)
@@ -743,7 +744,7 @@ async function setupMenu(){
     if(!me) return;
     const isAdmin = me.role==='admin';
     window.NO_UNPIN = !!me.khongBoGhim;   // kế toán: được ghim nhưng KHÔNG được bỏ ghim
-    ['navProducts','navSalary','navSalaryProduct','navKQKD','navEmployees'].forEach(id=>{
+    ['navProducts','navSalary','navSalaryProduct','navKQKD','navEmployees','navTonKho'].forEach(id=>{
       const el=document.getElementById(id); if(el) el.style.display = isAdmin ? 'inline-block' : 'none';
     });
     // Dòng tiền: CHỈ admin thật (ẩn với kế toán khongBoGhim)

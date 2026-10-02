@@ -1,0 +1,497 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Tồn kho — TDMJSC</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&family=Space+Grotesk:wght@500;600;700&display=swap" rel="stylesheet">
+<style>
+  :root{
+    --ink:#10192B; --ink-soft:#1C2A42; --paper:#EEF1F5; --card:#FFFFFF;
+    --line:#E2E6EC; --line-soft:#EFF2F6; --text:#1A2436; --muted:#697587; --faint:#9AA4B2;
+    --teal:#0E8C76; --teal-bg:#E2F4F0; --amber:#B7791F; --amber-bg:#FBF1DD;
+    --red:#C2412D; --red-bg:#FBE7E2; --accent:#3D5AFE;
+    --shadow:0 1px 2px rgba(16,25,43,.04), 0 6px 24px rgba(16,25,43,.05); --radius:14px;
+  }
+  *{box-sizing:border-box;margin:0;padding:0}
+  body{font-family:'Inter',system-ui,sans-serif;background:var(--paper);color:var(--text);
+    -webkit-font-smoothing:antialiased;font-variant-numeric:tabular-nums;line-height:1.45;}
+  .num{font-family:'Space Grotesk',sans-serif;font-variant-numeric:tabular-nums;}
+  .wrap{max-width:1280px;margin:0 auto;padding:0 20px 64px;}
+
+  header.topbar{background:var(--ink);color:#fff;}
+  .topbar-inner{max-width:1280px;margin:0 auto;padding:15px 20px;display:flex;align-items:center;justify-content:space-between;gap:14px;flex-wrap:wrap;}
+  .brand{display:flex;align-items:center;gap:11px;}
+  .brand .mark{width:36px;height:36px;border-radius:10px;background:#22314f;display:grid;place-items:center;flex:none;font-size:18px;}
+  .brand h1{font-family:'Space Grotesk';font-size:16px;font-weight:600;letter-spacing:.2px;}
+  .brand p{font-size:12px;color:#9FB0C8;margin-top:1px;}
+  .topbar .right{display:flex;align-items:center;gap:10px;flex-wrap:wrap;}
+  .back{color:#C4D0E2;font-size:13px;text-decoration:none;border:1px solid rgba(255,255,255,.14);padding:7px 12px;border-radius:9px;white-space:nowrap;background:transparent;cursor:pointer;font-family:'Inter',system-ui,sans-serif;}
+  .back:hover{background:rgba(255,255,255,.08);color:#fff;}
+  .back.primary{background:var(--teal);border-color:var(--teal);color:#fff;font-weight:600;}
+  .back.primary:hover{background:#0b7764;}
+  .back:disabled{opacity:.6;cursor:wait;}
+
+  .summary{background:var(--ink);padding:4px 0 26px;}
+  .summary-inner{max-width:1280px;margin:0 auto;padding:0 20px;}
+  .kpis{display:grid;grid-template-columns:repeat(4,1fr);gap:1px;background:rgba(255,255,255,.07);border-radius:14px;overflow:hidden;border:1px solid rgba(255,255,255,.07);}
+  .kpi{background:var(--ink-soft);padding:16px 18px;}
+  .kpi .label{font-size:11.5px;color:#9FB0C8;letter-spacing:.3px;text-transform:uppercase;font-weight:500;}
+  .kpi .val{font-family:'Space Grotesk';font-size:22px;font-weight:600;color:#fff;margin-top:6px;letter-spacing:-.5px;white-space:nowrap;}
+  .kpi .sub{font-size:12px;margin-top:5px;color:#8C9BB4;}
+  .kpi.warn .val{color:#F6C26B;}
+  .status{font-size:12.5px;color:#9FB0C8;margin-top:12px;display:flex;gap:14px;flex-wrap:wrap;}
+  .status b{color:#DCE5F2;font-weight:600;}
+  .status .bad{color:#F2A79B;}
+
+  .panel{background:var(--card);border:1px solid var(--line);border-radius:var(--radius);margin-top:16px;box-shadow:var(--shadow);overflow:hidden;}
+  .panel-head{padding:14px 18px;border-bottom:1px solid var(--line-soft);display:flex;justify-content:space-between;align-items:center;gap:12px;flex-wrap:wrap;}
+  .panel-head h2{font-family:'Space Grotesk';font-size:15px;font-weight:600;}
+  .panel-body{padding:16px 18px;}
+  .hint{font-size:12.5px;color:var(--muted);line-height:1.55;}
+  .hint code{background:#F0F3F8;padding:1px 5px;border-radius:5px;font-size:12px;}
+
+  .filters{display:flex;gap:10px;flex-wrap:wrap;align-items:center;}
+  .filters input,.filters select,.form input,.form select,.mapgrid select{font-family:'Inter',system-ui,sans-serif;font-size:13.5px;color:var(--text);border:1px solid var(--line);background:#fff;border-radius:9px;padding:8px 10px;outline:none;}
+  .filters input:focus,.form input:focus{border-color:var(--teal);box-shadow:0 0 0 3px var(--teal-bg);}
+  .filters input[type=search]{min-width:220px;}
+  .btn{font-family:'Inter',system-ui,sans-serif;font-size:13px;font-weight:600;border:1px solid var(--line);background:#fff;color:var(--text);padding:8px 13px;border-radius:9px;cursor:pointer;}
+  .btn:hover{background:#F4F6FB;}
+  .btn.primary{background:var(--teal);border-color:var(--teal);color:#fff;}
+  .btn.primary:hover{background:#0b7764;}
+  .btn:disabled{opacity:.6;cursor:wait;}
+
+  .tablescroll{overflow-x:auto;}
+  table{width:100%;border-collapse:collapse;min-width:1050px;}
+  thead th{text-align:right;font-size:11.5px;font-weight:600;color:var(--faint);text-transform:uppercase;letter-spacing:.4px;padding:11px 12px;border-bottom:1px solid var(--line-soft);white-space:nowrap;background:#FBFCFD;cursor:pointer;user-select:none;}
+  thead th.l{text-align:left;}
+  thead th.sorted{color:var(--text);}
+  tbody td{padding:10px 12px;border-bottom:1px solid var(--line-soft);font-size:13.5px;text-align:right;white-space:nowrap;}
+  tbody td.l{text-align:left;}
+  tbody td.name{white-space:normal;min-width:220px;font-weight:500;}
+  tbody td.name small{display:block;color:var(--faint);font-weight:400;font-size:11.5px;margin-top:2px;}
+  tbody tr:hover{background:#FAFBFC;}
+  .mono{font-family:'Space Grotesk';font-weight:500;}
+  .tag{font-size:12px;font-weight:600;padding:3px 9px;border-radius:7px;display:inline-block;white-space:nowrap;}
+  .tag.het{background:var(--red-bg);color:var(--red);}
+  .tag.sap-het{background:var(--amber-bg);color:var(--amber);}
+  .tag.theo-doi{background:#EAF0FF;color:var(--accent);}
+  .tag.ok{background:var(--teal-bg);color:var(--teal);}
+  .tag.khong-ban{background:#F0F3F8;color:var(--muted);}
+  td input.cell{width:80px;text-align:right;font-family:'Space Grotesk';font-size:13px;border:1px solid transparent;background:transparent;border-radius:7px;padding:5px 7px;outline:none;}
+  td input.cell.alias{width:170px;text-align:left;font-family:'Inter',system-ui,sans-serif;}
+  td input.cell:hover{border-color:var(--line);}
+  td input.cell:focus{border-color:var(--teal);background:#fff;}
+  .empty{padding:36px 18px;text-align:center;color:var(--muted);font-size:14px;}
+
+  .form{display:grid;grid-template-columns:repeat(auto-fill,minmax(230px,1fr));gap:12px 16px;}
+  .form label{display:block;font-size:12px;color:var(--muted);margin-bottom:5px;font-weight:500;}
+  .form input,.form select{width:100%;}
+  .actions{display:flex;gap:10px;flex-wrap:wrap;margin-top:14px;align-items:center;}
+  .msg{font-size:12.5px;color:var(--muted);}
+  .msg.ok{color:var(--teal);} .msg.bad{color:var(--red);}
+  pre.raw{margin-top:12px;background:#0F1726;color:#CFE0F5;font-size:12px;padding:12px;border-radius:10px;max-height:340px;overflow:auto;white-space:pre-wrap;word-break:break-all;}
+  textarea.paste{width:100%;min-height:140px;font-family:ui-monospace,Menlo,monospace;font-size:12px;border:1px solid var(--line);border-radius:10px;padding:10px;outline:none;resize:vertical;}
+  .mapgrid{display:grid;grid-template-columns:repeat(auto-fill,minmax(190px,1fr));gap:10px;margin-top:12px;}
+  .mapgrid label{display:block;font-size:12px;color:var(--muted);margin-bottom:4px;}
+  .mapgrid select{width:100%;}
+  .hidden{display:none !important;}
+  @media(max-width:720px){
+    .kpis{grid-template-columns:repeat(2,1fr);}
+    .wrap,.summary-inner,.topbar-inner{padding-left:16px;padding-right:16px;}
+    .filters input[type=search]{min-width:0;flex:1;}
+  }
+</style>
+</head>
+<body>
+
+<header class="topbar">
+  <div class="topbar-inner">
+    <div class="brand">
+      <div class="mark">📦</div>
+      <div><h1>Tồn kho</h1><p>Số liệu từ MISA AMIS · ghép tốc độ bán OMS</p></div>
+    </div>
+    <div class="right">
+      <button class="back primary" id="btnSync">⟳ Đồng bộ MISA</button>
+      <button class="back" id="btnShowImport">⇪ Dán từ Excel</button>
+      <button class="back" id="btnShowConfig">⚙ Cấu hình MISA</button>
+      <a href="/" class="back">← Dashboard</a>
+    </div>
+  </div>
+</header>
+
+<div class="summary">
+  <div class="summary-inner">
+    <div class="kpis">
+      <div class="kpi"><div class="label">Mã hàng</div><div class="val num" id="kItems">—</div><div class="sub" id="kItemsSub"></div></div>
+      <div class="kpi"><div class="label">Tổng số lượng tồn</div><div class="val num" id="kQty">—</div><div class="sub" id="kQtySub"></div></div>
+      <div class="kpi"><div class="label">Giá trị tồn</div><div class="val num" id="kAmount">—</div><div class="sub" id="kAmountSub"></div></div>
+      <div class="kpi warn"><div class="label">Hết / sắp hết</div><div class="val num" id="kWarn">—</div><div class="sub" id="kWarnSub"></div></div>
+    </div>
+    <div class="status" id="status"></div>
+  </div>
+</div>
+
+<div class="wrap">
+
+  <!-- Cấu hình MISA -->
+  <div class="panel hidden" id="pConfig">
+    <div class="panel-head"><h2>Kết nối MISA AMIS Kế toán</h2><button class="btn" data-close="pConfig">Đóng</button></div>
+    <div class="panel-body">
+      <p class="hint">Lấy <b>Mã kết nối</b> trong AMIS Kế toán: <b>Tiện ích → Kết nối ứng dụng → Kết nối API</b>. <b>App ID</b> do MISA cấp khi đăng ký đối tác Open API (liên hệ tổng đài MISA). <b>Mã công ty</b> do mình tự đặt (vd <code>tdmjsc</code>) và giữ cố định.</p>
+      <div class="form" style="margin-top:14px">
+        <div><label>App ID</label><input id="cAppId" autocomplete="off"></div>
+        <div><label>Mã kết nối (access_code)</label><input id="cAccessCode" autocomplete="off" placeholder="Nhập để thay mã mới"></div>
+        <div><label>Mã công ty (org_company_code)</label><input id="cOrg" autocomplete="off"></div>
+        <div><label>API URL</label><input id="cApiUrl"></div>
+        <div><label>Chi nhánh (branch_id, để trống = tất cả)</label><input id="cBranch"></div>
+        <div><label>Tự đồng bộ mỗi (phút, 0 = tắt)</label><input id="cAuto" type="number" min="0"></div>
+        <div><label>Tính tốc độ bán theo (ngày)</label><input id="cDays" type="number" min="1" max="180"></div>
+        <div><label>data_type danh mục Hàng hoá / Kho</label>
+          <div style="display:flex;gap:8px"><input id="cDictItem" type="number" min="0"><input id="cDictStock" type="number" min="0"></div></div>
+      </div>
+      <div class="actions">
+        <button class="btn primary" id="btnSaveCfg">Lưu cấu hình</button>
+        <button class="btn" id="btnTest">Kiểm tra kết nối &amp; xem dữ liệu gốc</button>
+        <span class="msg" id="cfgMsg"></span>
+      </div>
+      <pre class="raw hidden" id="rawOut"></pre>
+    </div>
+  </div>
+
+  <!-- Dán từ Excel -->
+  <div class="panel hidden" id="pImport">
+    <div class="panel-head"><h2>Nhập tồn kho từ báo cáo MISA (Excel)</h2><button class="btn" data-close="pImport">Đóng</button></div>
+    <div class="panel-body">
+      <p class="hint">Trong AMIS mở báo cáo <b>Kho → Tổng hợp tồn kho</b>, xuất Excel, bôi đen cả bảng (gồm dòng tiêu đề) rồi <b>Copy → dán vào ô dưới</b>. Hoặc chọn file <code>.csv</code>. Hệ thống tự đoán cột, bạn kiểm tra lại rồi bấm Nhập.</p>
+      <div class="actions" style="margin-top:10px"><input type="file" id="fileCsv" accept=".csv,.txt,.tsv"></div>
+      <textarea class="paste" id="pasteBox" placeholder="Dán bảng tồn kho vào đây…" style="margin-top:10px"></textarea>
+      <div class="mapgrid" id="mapGrid"></div>
+      <div class="actions">
+        <button class="btn primary" id="btnImport" disabled>Nhập dữ liệu</button>
+        <span class="msg" id="impMsg"></span>
+      </div>
+    </div>
+  </div>
+
+  <!-- Bảng tồn kho -->
+  <div class="panel">
+    <div class="panel-head">
+      <div class="filters">
+        <input type="search" id="q" placeholder="Tìm mã / tên hàng…">
+        <select id="fLevel">
+          <option value="">Tất cả trạng thái</option>
+          <option value="het">Hết hàng</option>
+          <option value="sap-het">Sắp hết</option>
+          <option value="theo-doi">Theo dõi</option>
+          <option value="ok">Đủ hàng</option>
+          <option value="khong-ban">Không có đơn</option>
+        </select>
+        <select id="fDays">
+          <option value="7">Bán 7 ngày</option>
+          <option value="14">Bán 14 ngày</option>
+          <option value="30">Bán 30 ngày</option>
+          <option value="60">Bán 60 ngày</option>
+          <option value="90">Bán 90 ngày</option>
+        </select>
+      </div>
+      <span class="hint" id="countHint"></span>
+    </div>
+    <div class="tablescroll">
+      <table>
+        <thead><tr id="thead"></tr></thead>
+        <tbody id="tbody"></tbody>
+      </table>
+    </div>
+    <div class="empty hidden" id="empty">Chưa có dữ liệu tồn kho. Bấm <b>⚙ Cấu hình MISA</b> để kết nối, hoặc <b>⇪ Dán từ Excel</b> để nhập ngay.</div>
+  </div>
+
+  <p class="hint" style="margin-top:14px">
+    <b>Cách tính:</b> TB/ngày = tổng số lượng đơn OMS (Đã chốt, Đang ship, Ship thành công) trong số ngày đã chọn ÷ số ngày.
+    Còn đủ bán = tồn ÷ TB/ngày. <b>Sắp hết</b> khi dưới 7 ngày hoặc dưới mức tối thiểu; <b>Theo dõi</b> khi dưới 14 ngày.
+    Cột <b>Tên SP bên OMS</b>: điền tên sản phẩm như trong đơn OMS (nhiều tên cách nhau dấu phẩy) nếu tên trong MISA khác.
+  </p>
+</div>
+
+<script>
+const $ = id => document.getElementById(id);
+const fmt = n => (Math.round(n) || 0).toLocaleString('vi-VN');
+const fmt1 = n => n >= 10 ? fmt(n) : (Math.round(n * 10) / 10).toLocaleString('vi-VN');
+const money = n => {
+  const a = Math.abs(n);
+  if (a >= 1e9) return (n / 1e9).toLocaleString('vi-VN', { maximumFractionDigits: 2 }) + ' tỷ';
+  if (a >= 1e6) return (n / 1e6).toLocaleString('vi-VN', { maximumFractionDigits: 1 }) + ' tr';
+  return fmt(n) + ' đ';
+};
+const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+const dt = s => s ? new Date(s).toLocaleString('vi-VN', { hour: '2-digit', minute: '2-digit', day: '2-digit', month: '2-digit' }) : '—';
+const LEVEL = { 'het': 'Hết hàng', 'sap-het': 'Sắp hết', 'theo-doi': 'Theo dõi', 'ok': 'Đủ hàng', 'khong-ban': 'Không có đơn' };
+const LEVEL_ORDER = { 'het': 0, 'sap-het': 1, 'theo-doi': 2, 'ok': 3, 'khong-ban': 4 };
+
+async function api(url, opts = {}) {
+  const r = await fetch(url, { headers: { 'Content-Type': 'application/json' }, ...opts });
+  if (r.status === 401) { location.href = '/login'; throw new Error('Chưa đăng nhập'); }
+  if (r.status === 403) { location.href = '/'; throw new Error('Không có quyền'); }
+  return r.json();
+}
+
+let DATA = null;
+let sortKey = 'level', sortDir = 1;
+try { const d = localStorage.getItem('tonkho.days'); if (d) $('fDays').value = d; } catch {}
+
+const COLS = [
+  { k: 'name', t: 'Hàng hoá', l: 1 },
+  { k: 'unit', t: 'ĐVT', l: 1 },
+  { k: 'qty', t: 'Tồn' },
+  { k: 'amount', t: 'Giá trị' },
+  { k: 'sold', t: 'Đã bán' },
+  { k: 'perDay', t: 'TB/ngày' },
+  { k: 'daysLeft', t: 'Còn đủ bán' },
+  { k: 'level', t: 'Trạng thái', l: 1 },
+  { k: 'min', t: 'Tồn tối thiểu' },
+  { k: 'alias', t: 'Tên SP bên OMS', l: 1 },
+];
+
+function renderHead() {
+  $('thead').innerHTML = COLS.map(c =>
+    `<th class="${c.l ? 'l' : ''} ${sortKey === c.k ? 'sorted' : ''}" data-k="${c.k}">${c.t}${sortKey === c.k ? (sortDir > 0 ? ' ↑' : ' ↓') : ''}</th>`).join('');
+}
+$('thead').addEventListener('click', e => {
+  const k = e.target.closest('th')?.dataset.k; if (!k) return;
+  if (sortKey === k) sortDir = -sortDir; else { sortKey = k; sortDir = ['qty', 'amount', 'sold', 'perDay'].includes(k) ? -1 : 1; }
+  render();
+});
+
+function render() {
+  renderHead();
+  const items = DATA?.items || [];
+  const q = $('q').value.trim().toLowerCase();
+  const lv = $('fLevel').value;
+  let rows = items.filter(x => (!lv || x.level === lv) &&
+    (!q || (x.name + ' ' + x.code).toLowerCase().includes(q)));
+  const val = (x, k) => k === 'level' ? LEVEL_ORDER[x.level] * 1e6 + (x.daysLeft ?? 9e5)
+    : k === 'daysLeft' ? (x.daysLeft ?? Infinity)
+    : (typeof x[k] === 'string' ? x[k].toLowerCase() : x[k]);
+  rows.sort((a, b) => { const va = val(a, sortKey), vb = val(b, sortKey); return (va > vb ? 1 : va < vb ? -1 : 0) * sortDir; });
+
+  $('empty').classList.toggle('hidden', items.length > 0);
+  $('countHint').textContent = items.length ? `${rows.length} / ${items.length} mã hàng` : '';
+  $('tbody').innerHTML = rows.map(x => {
+    const stocks = x.stocks.length > 1 ? x.stocks.map(s => `${s.name || s.code}: ${fmt(s.qty)}`).join(' · ')
+      : (x.stocks[0] ? (x.stocks[0].name || x.stocks[0].code) : '');
+    return `<tr>
+      <td class="l name">${esc(x.name)}<small>${esc(x.code)}${stocks ? ' · ' + esc(stocks) : ''}</small></td>
+      <td class="l">${esc(x.unit)}</td>
+      <td class="mono">${fmt(x.qty)}</td>
+      <td class="mono">${x.amount ? money(x.amount) : '—'}</td>
+      <td class="mono">${DATA.omsOk ? fmt(x.sold) : '—'}</td>
+      <td class="mono">${DATA.omsOk ? fmt1(x.perDay) : '—'}</td>
+      <td class="mono">${x.daysLeft === null ? '—' : fmt(x.daysLeft) + ' ngày'}</td>
+      <td class="l"><span class="tag ${x.level}">${LEVEL[x.level]}</span></td>
+      <td><input class="cell" data-key="${esc(x.key)}" data-f="min" value="${x.min || ''}" placeholder="—" inputmode="numeric"></td>
+      <td class="l"><input class="cell alias" data-key="${esc(x.key)}" data-f="alias" value="${esc(x.alias)}" placeholder="${esc(x.name)}"></td>
+    </tr>`;
+  }).join('');
+}
+$('q').addEventListener('input', render);
+$('fLevel').addEventListener('change', render);
+$('fDays').addEventListener('change', () => { try { localStorage.setItem('tonkho.days', $('fDays').value); } catch {} load(); });
+
+// Lưu mức tối thiểu / tên OMS khi rời ô
+$('tbody').addEventListener('change', async e => {
+  const el = e.target; if (!el.dataset.key) return;
+  const body = { key: el.dataset.key, [el.dataset.f]: el.value };
+  const r = await api('/api/ton-kho/setting', { method: 'POST', body: JSON.stringify(body) });
+  if (r.ok) load();
+});
+
+function renderSummary() {
+  const items = DATA.items;
+  const qty = items.reduce((s, x) => s + x.qty, 0);
+  const amount = items.reduce((s, x) => s + x.amount, 0);
+  const het = items.filter(x => x.level === 'het').length;
+  const sap = items.filter(x => x.level === 'sap-het').length;
+  $('kItems').textContent = fmt(items.length);
+  $('kItemsSub').textContent = items.filter(x => x.qty > 0).length + ' mã còn hàng';
+  $('kQty').textContent = fmt(qty);
+  $('kAmount').textContent = amount ? money(amount) : '—';
+  $('kWarn').textContent = `${het} / ${sap}`;
+  $('kWarnSub').textContent = 'hết hàng / sắp hết';
+  const h = DATA.history || [];
+  if (h.length >= 2) {
+    const d = h[h.length - 1].totalQty - h[h.length - 2].totalQty;
+    $('kQtySub').textContent = `${d >= 0 ? '+' : ''}${fmt(d)} so với lần trước (${dt(h[h.length - 2].at)})`;
+  } else $('kQtySub').textContent = '';
+
+  const s = DATA.snapshot, ls = DATA.lastSync;
+  const parts = [];
+  parts.push(s ? `Dữ liệu: <b>${s.source === 'misa' ? 'MISA AMIS' : 'Excel'}</b> lúc <b>${dt(s.at)}</b>` : 'Chưa có dữ liệu');
+  if (ls) parts.push(ls.ok ? `Đồng bộ MISA gần nhất: ${dt(ls.at)} (${fmt(ls.n)} dòng)` : `<span class="bad">Đồng bộ MISA lỗi ${dt(ls.at)}: ${esc(ls.message)}</span>`);
+  if (!DATA.configured) parts.push('Chưa kết nối MISA');
+  parts.push(DATA.omsOk ? `Tốc độ bán: OMS ${DATA.days} ngày` : `<span class="bad">Không đọc được OMS${DATA.omsMessage ? ': ' + esc(DATA.omsMessage) : ''}</span>`);
+  $('status').innerHTML = parts.map(p => `<span>${p}</span>`).join('');
+}
+
+async function load() {
+  try {
+    DATA = await api('/api/ton-kho?days=' + $('fDays').value);
+    if (!DATA.ok) throw new Error(DATA.message);
+    renderSummary(); render();
+  } catch (e) { $('status').innerHTML = `<span class="bad">Lỗi tải dữ liệu: ${esc(e.message)}</span>`; }
+}
+
+// ---------- Đồng bộ ----------
+$('btnSync').addEventListener('click', async () => {
+  const b = $('btnSync'); b.disabled = true; b.textContent = '⟳ Đang đồng bộ…';
+  try {
+    const r = await api('/api/ton-kho/sync', { method: 'POST' });
+    if (!r.ok) alert('Đồng bộ lỗi: ' + r.message);
+  } catch (e) { alert(e.message); }
+  b.disabled = false; b.textContent = '⟳ Đồng bộ MISA';
+  load();
+});
+
+// ---------- Panels ----------
+const toggle = id => $(id).classList.toggle('hidden');
+$('btnShowConfig').addEventListener('click', () => { toggle('pConfig'); if (!$('pConfig').classList.contains('hidden')) loadCfg(); });
+$('btnShowImport').addEventListener('click', () => toggle('pImport'));
+document.querySelectorAll('[data-close]').forEach(b => b.addEventListener('click', () => $(b.dataset.close).classList.add('hidden')));
+
+// ---------- Cấu hình ----------
+async function loadCfg() {
+  const r = await api('/api/ton-kho/config');
+  const c = r.config || {};
+  $('cAppId').value = c.appId || ''; $('cAccessCode').value = c.accessCode || '';
+  $('cOrg').value = c.orgCompanyCode || ''; $('cApiUrl').value = c.apiUrl || '';
+  $('cBranch').value = c.branchId || ''; $('cAuto').value = c.autoMinutes ?? 30;
+  $('cDays').value = c.salesDays ?? 30; $('cDictItem').value = c.dictItemType ?? 2; $('cDictStock').value = c.dictStockType ?? 3;
+}
+const setMsg = (id, t, cls = '') => { $(id).textContent = t; $(id).className = 'msg ' + cls; };
+$('btnSaveCfg').addEventListener('click', async () => {
+  const body = {
+    appId: $('cAppId').value, accessCode: $('cAccessCode').value, orgCompanyCode: $('cOrg').value,
+    apiUrl: $('cApiUrl').value, branchId: $('cBranch').value, autoMinutes: $('cAuto').value,
+    salesDays: $('cDays').value, dictItemType: $('cDictItem').value, dictStockType: $('cDictStock').value,
+  };
+  const r = await api('/api/ton-kho/config', { method: 'POST', body: JSON.stringify(body) });
+  setMsg('cfgMsg', r.ok ? 'Đã lưu.' : r.message, r.ok ? 'ok' : 'bad');
+  if (r.ok) { loadCfg(); load(); }
+});
+$('btnTest').addEventListener('click', async () => {
+  setMsg('cfgMsg', 'Đang kết nối MISA…');
+  const r = await api('/api/ton-kho/misa-raw');
+  setMsg('cfgMsg', r.ok ? 'Kết nối thành công. Dữ liệu mẫu bên dưới.' : 'Lỗi: ' + r.message, r.ok ? 'ok' : 'bad');
+  $('rawOut').classList.remove('hidden');
+  $('rawOut').textContent = JSON.stringify(r, null, 2);
+});
+
+// ---------- Nhập từ Excel ----------
+let PARSED = null; // { header:[], rows:[[]] }
+const FIELDS = [
+  { k: 'code', t: 'Mã hàng', re: /^ma (hang|vat tu|vthh|sp|san pham)|^ma$/ },
+  { k: 'name', t: 'Tên hàng', re: /^ten (hang|vat tu|vthh|sp|san pham)|^ten$/ },
+  { k: 'unit', t: 'ĐVT', re: /dvt|don vi/ },
+  { k: 'stockCode', t: 'Mã kho', re: /^ma kho/ },
+  { k: 'stockName', t: 'Tên kho', re: /^(ten )?kho$/ },
+  { k: 'qty', t: 'Số lượng tồn', re: /so luong|sl/, last: true },
+  { k: 'amount', t: 'Giá trị tồn', re: /gia tri|thanh tien/, last: true },
+];
+const norm = s => String(s || '').normalize('NFD').replace(/[̀-ͯ]/g, '').replace(/đ/gi, 'd').toLowerCase().replace(/\s+/g, ' ').trim();
+
+function splitLine(line, sep) {
+  if (sep === '\t') return line.split('\t');
+  const out = []; let cur = '', q = false;
+  for (let i = 0; i < line.length; i++) {
+    const ch = line[i];
+    if (q) { if (ch === '"' && line[i + 1] === '"') { cur += '"'; i++; } else if (ch === '"') q = false; else cur += ch; }
+    else if (ch === '"') q = true; else if (ch === sep) { out.push(cur); cur = ''; } else cur += ch;
+  }
+  out.push(cur); return out;
+}
+
+function parseTable(text) {
+  const lines = text.replace(/\r/g, '').split('\n').filter(l => l.trim());
+  if (!lines.length) return null;
+  // Đoán dấu phân cách theo cả bảng (dòng đầu thường là tiêu đề báo cáo, không có cột)
+  const cnt = ch => lines.reduce((n, l) => n + l.split(ch).length - 1, 0);
+  const sep = cnt('\t') ? '\t' : (cnt(';') > cnt(',') ? ';' : ',');
+  const all = lines.map(l => splitLine(l, sep).map(c => c.trim()));
+  // Dòng tiêu đề = dòng đầu tiên có chữ "mã hàng" hoặc "tên hàng"; báo cáo MISA hay có 2 dòng tiêu đề (vd "Cuối kỳ" / "Số lượng")
+  let hi = all.findIndex(r => r.some(c => /^(ma|ten) (hang|vat tu|vthh)/.test(norm(c))));
+  if (hi < 0) hi = 0;
+  let labels = all[hi].slice();
+  let start = hi + 1;
+  const next = all[hi + 1];
+  if (next && next.some(c => /^(so luong|gia tri|sl)$/.test(norm(c)))) {
+    let group = '';
+    labels = labels.map((h, i) => { if (h) group = h; const sub = next[i] || ''; return sub ? (group + ' – ' + sub) : h; });
+    start = hi + 2;
+  }
+  const rows = all.slice(start).filter(r => r.some(c => c) && !/^(tong|cong)/.test(norm(r[0]) + norm(r[1])));
+  return { header: labels.map(norm), labels, rows };
+}
+
+function guessMap(header) {
+  const map = {};
+  for (const f of FIELDS) {
+    let idx = -1;
+    header.forEach((h, i) => {
+      if (!f.re.test(h)) return;
+      if (f.last) { if (/cuoi ky|ton/.test(h) || idx < 0 || i > idx) idx = i; }
+      else if (idx < 0) idx = i;
+    });
+    // Ưu tiên cột có chữ "cuối kỳ" cho số lượng/giá trị
+    if (f.last) { const ck = header.findIndex(h => f.re.test(h) && /cuoi ky/.test(h)); if (ck >= 0) idx = ck; }
+    map[f.k] = idx;
+  }
+  return map;
+}
+
+function renderMap() {
+  if (!PARSED) { $('mapGrid').innerHTML = ''; $('btnImport').disabled = true; return; }
+  const m = guessMap(PARSED.header);
+  const opts = sel => `<option value="-1">— không có —</option>` +
+    PARSED.header.map((h, i) => `<option value="${i}" ${i === sel ? 'selected' : ''}>${esc(PARSED.labels[i] || 'Cột ' + (i + 1))}</option>`).join('');
+  $('mapGrid').innerHTML = FIELDS.map(f => `<div><label>${f.t}</label><select data-f="${f.k}">${opts(m[f.k])}</select></div>`).join('');
+  $('btnImport').disabled = false;
+  setMsg('impMsg', `Đọc được ${PARSED.rows.length} dòng. Kiểm tra lại cột rồi bấm Nhập.`);
+}
+
+function onText(text) { PARSED = parseTable(text); renderMap(); }
+$('pasteBox').addEventListener('input', e => onText(e.target.value));
+$('fileCsv').addEventListener('change', async e => {
+  const f = e.target.files[0]; if (!f) return;
+  const text = await f.text(); $('pasteBox').value = text; onText(text);
+});
+
+const toNum = s => {
+  let t = String(s || '').replace(/\s/g, '');
+  if (!t) return 0;
+  // Số kiểu VN "1.234,5" → 1234.5 ; kiểu "1,234.5" → 1234.5
+  if (/^-?\(?\d{1,3}(\.\d{3})+\)?$/.test(t)) t = t.replace(/\./g, ''); // "6.000.000" → 6000000
+  else if (/,\d{1,2}$/.test(t) || (t.includes('.') && t.includes(',') && t.lastIndexOf(',') > t.lastIndexOf('.'))) t = t.replace(/\./g, '').replace(',', '.');
+  else t = t.replace(/,/g, '');
+  const neg = /^\(.*\)$/.test(t); t = t.replace(/[()]/g, '');
+  const n = Number(t); return Number.isFinite(n) ? (neg ? -n : n) : 0;
+};
+
+$('btnImport').addEventListener('click', async () => {
+  const m = {}; $('mapGrid').querySelectorAll('select').forEach(s => m[s.dataset.f] = Number(s.value));
+  if (m.qty < 0 || (m.code < 0 && m.name < 0)) return setMsg('impMsg', 'Cần chọn cột Số lượng tồn và Mã hàng hoặc Tên hàng.', 'bad');
+  const g = (r, k) => m[k] >= 0 ? (r[m[k]] || '') : '';
+  const items = PARSED.rows.map(r => ({
+    code: g(r, 'code'), name: g(r, 'name'), unit: g(r, 'unit'),
+    stockCode: g(r, 'stockCode'), stockName: g(r, 'stockName'),
+    qty: toNum(g(r, 'qty')), amount: toNum(g(r, 'amount')),
+  })).filter(x => x.code || x.name);
+  const r = await api('/api/ton-kho/import', { method: 'POST', body: JSON.stringify({ items }) });
+  setMsg('impMsg', r.ok ? `Đã nhập ${r.n} dòng.` : r.message, r.ok ? 'ok' : 'bad');
+  if (r.ok) load();
+});
+
+load();
+</script>
+</body>
+</html>

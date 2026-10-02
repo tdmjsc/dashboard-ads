@@ -299,6 +299,12 @@ export function mountOMS(app, { mysql, express }) {
     return rows;
   }
 
+  // Cho module Tồn kho đọc số lượng đã bán theo sản phẩm (tính số ngày đủ bán)
+  global.__omsSalesByProduct = (days, trangThai) => db(
+    `SELECT san_pham, SUM(so_luong) AS qty, COUNT(*) AS don FROM oms_orders
+     WHERE ngay_ve >= DATE_SUB(NOW(), INTERVAL ? DAY) AND trang_thai IN (?)
+     GROUP BY san_pham`, [days, trangThai]);
+
   // ---- Wrap route an toàn ----
   const wrap = fn => async (req, res) => {
     try { await fn(req, res); }
