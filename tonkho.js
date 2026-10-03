@@ -1,12 +1,14 @@
 // =====================================================================
 //  MODULE TỒN KHO — tonkho.js
-//  Lấy số lượng tồn từ MISA AMIS Kế toán (ACT Open API) hoặc dán từ Excel,
+//  Lấy số lượng tồn từ MISA AMIS Hộ kinh doanh (request nội bộ, xem misa-tonkho.js),
+//  MISA AMIS Kế toán (ACT Open API) hoặc dán từ Excel,
 //  ghép với tốc độ bán từ OMS để tính "số ngày còn đủ bán".
 //  Mount vào server.js: mountTonKho(app, { express, DATA_DIR, fetchWithTimeout })
 //  Dữ liệu lưu ở DATA_DIR/ton-kho.json (ngoài project, không mất khi deploy).
 // =====================================================================
 import fs from 'node:fs';
 import path from 'node:path';
+import { parsePastedRequest, fetchInventory, tokenExpiry } from './misa-tonkho.js';
 
 // Các trạng thái OMS được tính là "đã bán" khi đo tốc độ bán
 const TRANG_THAI_BAN = ['Đã chốt', 'Đang ship', 'Ship thành công'];
@@ -79,10 +81,11 @@ export function normalizeMisaRow(r, itemDict = {}, stockDict = {}) {
 
 export function mountTonKho(app, { express, DATA_DIR, fetchWithTimeout }) {
   const FILE = path.join(DATA_DIR, 'ton-kho.json');
-  let STORE = { config: {}, token: null, snapshot: null, history: [], settings: {}, lastSync: null };
+  let STORE = { config: {}, token: null, hkd: null, snapshot: null, history: [], settings: {}, lastSync: null };
   try { STORE = { ...STORE, ...JSON.parse(fs.readFileSync(FILE, 'utf8')) }; } catch {}
   const save = () => {
-    try { fs.writeFileSync(FILE, JSON.stringify(STORE, null, 1)); }
+    // File chứa mã kết nối / token đăng nhập MISA → chỉ chủ tài khoản hosting đọc được
+    try { fs.writeFileSync(FILE, JSON.stringify(STORE, null, 1), { mode: 0o600 }); fs.chmodSync(FILE, 0o600); }
     catch (e) { console.error('[TONKHO] lưu file lỗi:', e.message); }
   };
   const cfg = () => ({ ...DEFAULT_CONFIG, ...STORE.config });
@@ -217,13 +220,39 @@ export function mountTonKho(app, { express, DATA_DIR, fetchWithTimeout }) {
     return syncing;
   }
 
+  // ===================== MISA AMIS HỘ KINH DOANH (request nội bộ) =====================
+  // STORE.hkd = { url, headers, body, savedAt, savedBy } — do admin dán "Copy as cURL".
+  async function syncFromHkd() {
+    if (syncing) return syncing;
+    syncing = (async () => {
+      try {
+        const r = await fetchInventory(STORE.hkd, fetchWithTimeout);
+        const items = r.items.filter(x => x.code || x.name);
+        setSnapshot(items, 'misa-hkd');
+        STORE.lastSync = { at: new Date().toISOString(), ok: true, n: items.length };
+        save();
+        return STORE.lastSync;
+      } catch (e) {
+        // kind === 'auth' → phiên MISA hết hạn, cần dán lại request
+        STORE.lastSync = { at: new Date().toISOString(), ok: false, message: e.message, kind: e.kind || '' };
+        save();
+        throw e;
+      } finally { syncing = null; }
+    })();
+    return syncing;
+  }
+  // Đã dán request Hộ kinh doanh thì ưu tiên nguồn đó, không thì dùng Open API
+  const syncNow = () => (STORE.hkd ? syncFromHkd() : syncFromMisa());
+
   // Tự đồng bộ định kỳ (kiểm tra mỗi phút, chạy khi tới hạn)
   setInterval(() => {
     const c = cfg();
-    if (!c.autoMinutes || !c.appId || !c.accessCode) return;
+    if (!c.autoMinutes) return;
+    if (STORE.hkd) { if (STORE.lastSync?.kind === 'auth') return; } // hết phiên: chờ admin dán lại
+    else if (!c.appId || !c.accessCode) return;
     const last = STORE.lastSync ? Date.parse(STORE.lastSync.at) : 0;
     if (Date.now() - last < c.autoMinutes * 60 * 1000) return;
-    syncFromMisa().catch(e => console.warn('[TONKHO] tự đồng bộ lỗi:', e.message));
+    syncNow().catch(e => console.warn('[TONKHO] tự đồng bộ lỗi:', e.message));
   }, 60 * 1000).unref?.();
 
   // ===================== TỐC ĐỘ BÁN TỪ OMS =====================
@@ -278,7 +307,10 @@ export function mountTonKho(app, { express, DATA_DIR, fetchWithTimeout }) {
       lastSync: STORE.lastSync, days, omsOk: sales.ok, omsMessage: sales.message || '',
       items: buildReport(sales.rows, days),
       history: STORE.history || [],
-      configured: !!(c.appId && c.accessCode && c.orgCompanyCode),
+      configured: !!STORE.hkd || !!(c.appId && c.accessCode && c.orgCompanyCode),
+      // Không bao giờ trả header/token của request đã dán về trình duyệt
+      hkd: STORE.hkd ? { savedAt: STORE.hkd.savedAt, savedBy: STORE.hkd.savedBy, tokenExp: tokenExpiry(STORE.hkd.headers) } : null,
+      autoMinutes: c.autoMinutes,
     });
   }));
 
@@ -306,9 +338,25 @@ export function mountTonKho(app, { express, DATA_DIR, fetchWithTimeout }) {
   });
 
   app.post('/api/ton-kho/sync', guard, wrap(async (req, res) => {
-    const r = await syncFromMisa();
+    const r = await syncNow();
     res.json({ ok: true, ...r });
   }));
+
+  // MISA Hộ kinh doanh: dán request "paging_filter" chép từ trình duyệt, lưu rồi đồng bộ thử ngay
+  app.post('/api/ton-kho/hkd-config', guard, json, async (req, res) => {
+    let parsed;
+    try { parsed = parsePastedRequest(req.body?.raw); }
+    catch (e) { return res.json({ ok: false, message: e.message }); }
+    STORE.hkd = { ...parsed, savedAt: new Date().toISOString(), savedBy: req.session?.user?.user || '' };
+    save();
+    try { const r = await syncFromHkd(); res.json({ ok: true, n: r.n }); }
+    catch (e) { res.json({ ok: false, saved: true, message: e.message }); }
+  });
+  app.post('/api/ton-kho/hkd-config/delete', guard, (req, res) => {
+    STORE.hkd = null;
+    save();
+    res.json({ ok: true });
+  });
 
   // Kiểm tra kết nối + xem vài dòng dữ liệu gốc (để chỉnh lại tên field nếu MISA trả khác)
   app.get('/api/ton-kho/misa-raw', guard, wrap(async (req, res) => {

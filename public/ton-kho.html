@@ -138,8 +138,24 @@
 
   <!-- Cấu hình MISA -->
   <div class="panel hidden" id="pConfig">
-    <div class="panel-head"><h2>Kết nối MISA AMIS Kế toán</h2><button class="btn" data-close="pConfig">Đóng</button></div>
+    <div class="panel-head"><h2>Kết nối MISA</h2><button class="btn" data-close="pConfig">Đóng</button></div>
     <div class="panel-body">
+      <h3 style="font-size:14px;margin-bottom:6px">MISA AMIS Hộ kinh doanh <span class="msg" id="hkdState"></span></h3>
+      <p class="hint">Bản Hộ kinh doanh không có mã kết nối API. Máy chủ lấy tồn kho bằng phiên đăng nhập MISA bạn dán vào đây; khi phiên hết hạn cần dán lại.</p>
+      <ol class="hint" style="margin:8px 0 10px 20px">
+        <li>Mở MISA bằng Chrome, vào <b>Báo cáo → Tổng hợp tồn kho</b>.</li>
+        <li>Nhấn <b>F12</b>, chọn tab <b>Network</b>, rồi bấm <b>Xem báo cáo</b> trên MISA.</li>
+        <li>Bấm chuột phải vào dòng <b>paging_filter</b> cuối cùng → <b>Copy → Copy as cURL (bash)</b>.</li>
+        <li>Dán vào ô dưới đây rồi bấm <b>Lưu và kiểm tra</b>.</li>
+      </ol>
+      <textarea class="paste" id="hkdRaw" spellcheck="false" autocomplete="off" placeholder="curl 'https://amisapp.misa.vn/hkd/g1/api/report/v1/report/dynamic/v2/paging_filter' …"></textarea>
+      <div class="actions">
+        <button class="btn primary" id="btnHkdSave">Lưu và kiểm tra</button>
+        <button class="btn hidden" id="btnHkdDel">Ngắt kết nối</button>
+        <span class="msg" id="hkdMsg">Nội dung dán chứa mã đăng nhập MISA, chỉ dán ở trang này.</span>
+      </div>
+      <hr style="border:none;border-top:1px solid var(--line);margin:18px 0">
+      <h3 style="font-size:14px;margin-bottom:6px">MISA AMIS Kế toán Doanh nghiệp (Open API)</h3>
       <p class="hint">Lấy <b>Mã kết nối</b> trong AMIS Kế toán: <b>Tiện ích → Kết nối ứng dụng → Kết nối API</b>. <b>App ID</b> do MISA cấp khi đăng ký đối tác Open API (liên hệ tổng đài MISA). <b>Mã công ty</b> do mình tự đặt (vd <code>tdmjsc</code>) và giữ cố định.</p>
       <div class="form" style="margin-top:14px">
         <div><label>App ID</label><input id="cAppId" autocomplete="off"></div>
@@ -327,8 +343,8 @@ function renderSummary() {
 
   const s = DATA.snapshot, ls = DATA.lastSync;
   const parts = [];
-  parts.push(s ? `Dữ liệu: <b>${s.source === 'misa' ? 'MISA AMIS' : 'Excel'}</b> lúc <b>${dt(s.at)}</b>` : 'Chưa có dữ liệu');
-  if (ls) parts.push(ls.ok ? `Đồng bộ MISA gần nhất: ${dt(ls.at)} (${fmt(ls.n)} dòng)` : `<span class="bad">Đồng bộ MISA lỗi ${dt(ls.at)}: ${esc(ls.message)}</span>`);
+  parts.push(s ? `Dữ liệu: <b>${{ misa: 'MISA AMIS', 'misa-hkd': 'MISA Hộ kinh doanh' }[s.source] || 'Excel'}</b> lúc <b>${dt(s.at)}</b>` : 'Chưa có dữ liệu');
+  if (ls) parts.push(ls.ok ? `Đồng bộ MISA gần nhất: ${dt(ls.at)} (${fmt(ls.n)} dòng)` : `<span class="bad">Đồng bộ MISA lỗi ${dt(ls.at)}: ${esc(ls.message)}${ls.kind === 'auth' ? ' Số liệu đang hiển thị là bản cũ.' : ''}</span>`);
   if (!DATA.configured) parts.push('Chưa kết nối MISA');
   parts.push(DATA.omsOk ? `Tốc độ bán: OMS ${DATA.days} ngày` : `<span class="bad">Không đọc được OMS${DATA.omsMessage ? ': ' + esc(DATA.omsMessage) : ''}</span>`);
   $('status').innerHTML = parts.map(p => `<span>${p}</span>`).join('');
@@ -359,8 +375,34 @@ $('btnShowConfig').addEventListener('click', () => { toggle('pConfig'); if (!$('
 $('btnShowImport').addEventListener('click', () => toggle('pImport'));
 document.querySelectorAll('[data-close]').forEach(b => b.addEventListener('click', () => $(b.dataset.close).classList.add('hidden')));
 
+// ---------- MISA Hộ kinh doanh: dán request ----------
+function renderHkd() {
+  const h = DATA && DATA.hkd;
+  $('hkdState').textContent = h ? `· đã kết nối từ ${dt(h.savedAt)}${h.tokenExp ? ', mã đăng nhập hết hạn ' + dt(h.tokenExp) : ''}` : '· chưa kết nối';
+  $('btnHkdDel').classList.toggle('hidden', !h);
+}
+$('btnHkdSave').addEventListener('click', async () => {
+  const raw = $('hkdRaw').value;
+  if (!raw.trim()) return setMsg('hkdMsg', 'Chưa dán nội dung request.', 'bad');
+  const b = $('btnHkdSave'); b.disabled = true; setMsg('hkdMsg', 'Đang kết nối MISA…');
+  try {
+    const r = await api('/api/ton-kho/hkd-config', { method: 'POST', body: JSON.stringify({ raw }) });
+    if (r.ok || r.saved) $('hkdRaw').value = '';
+    setMsg('hkdMsg', r.ok ? `Đã kết nối và lấy ${fmt(r.n)} dòng tồn kho.` : r.message, r.ok ? 'ok' : 'bad');
+  } catch (e) { setMsg('hkdMsg', e.message, 'bad'); }
+  b.disabled = false;
+  await load(); renderHkd();
+});
+$('btnHkdDel').addEventListener('click', async () => {
+  if (!confirm('Ngắt kết nối MISA Hộ kinh doanh? Số liệu đã lấy vẫn được giữ, nhưng sẽ không tự cập nhật nữa.')) return;
+  await api('/api/ton-kho/hkd-config/delete', { method: 'POST' });
+  setMsg('hkdMsg', 'Đã ngắt kết nối.');
+  await load(); renderHkd();
+});
+
 // ---------- Cấu hình ----------
 async function loadCfg() {
+  renderHkd();
   const r = await api('/api/ton-kho/config');
   const c = r.config || {};
   $('cAppId').value = c.appId || ''; $('cAccessCode').value = c.accessCode || '';
