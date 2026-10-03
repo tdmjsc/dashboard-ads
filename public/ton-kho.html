@@ -111,7 +111,7 @@
   <div class="topbar-inner">
     <div class="brand">
       <div class="mark">📦</div>
-      <div><h1>Tồn kho</h1><p>Số liệu từ MISA AMIS · ghép tốc độ bán OMS</p></div>
+      <div><h1>Tồn kho</h1><p>Tồn MISA trừ đơn đang đi bên Sandbox</p></div>
     </div>
     <div class="right">
       <button class="back primary" id="btnSync">⟳ Đồng bộ MISA</button>
@@ -153,6 +153,19 @@
         <button class="btn primary" id="btnHkdSave">Lưu và kiểm tra</button>
         <button class="btn hidden" id="btnHkdDel">Ngắt kết nối</button>
         <span class="msg" id="hkdMsg">Nội dung dán chứa mã đăng nhập MISA, chỉ dán ở trang này.</span>
+      </div>
+      <hr style="border:none;border-top:1px solid var(--line);margin:18px 0">
+      <h3 style="font-size:14px;margin-bottom:6px">Cảnh báo sắp hết hàng qua Telegram</h3>
+      <p class="hint">Gửi tin khi một sản phẩm có đơn đang đi bên Sandbox và <b>tồn MISA − đơn đang đi</b> xuống dưới ngưỡng. Mỗi sản phẩm chỉ báo một lần cho tới khi lên lại trên ngưỡng. Để lấy Chat ID: nhắn một tin bất kỳ cho bot của công ty, rồi nhắn <code>/start</code> cho <b>@userinfobot</b> để xem ID của bạn.</p>
+      <div class="form" style="margin-top:12px">
+        <div><label>Chat ID Telegram nhận cảnh báo</label><input id="cChat" autocomplete="off" inputmode="numeric" placeholder="Để trống = không gửi"></div>
+        <div><label>Ngưỡng cảnh báo (còn lại dưới)</label><input id="cThreshold" type="number" min="1"></div>
+        <div><label>Xét đơn Sandbox trong (ngày)</label><input id="cTransitDays" type="number" min="7" max="365"></div>
+      </div>
+      <div class="actions">
+        <button class="btn primary" id="btnSaveAlert">Lưu</button>
+        <button class="btn" id="btnAlertTest">Gửi tin thử</button>
+        <span class="msg" id="alertMsg"></span>
       </div>
       <hr style="border:none;border-top:1px solid var(--line);margin:18px 0">
       <h3 style="font-size:14px;margin-bottom:6px">MISA AMIS Kế toán Doanh nghiệp (Open API)</h3>
@@ -201,11 +214,9 @@
           <option value="">Tất cả trạng thái</option>
           <option value="het">Hết hàng</option>
           <option value="sap-het">Sắp hết</option>
-          <option value="theo-doi">Theo dõi</option>
           <option value="ok">Đủ hàng</option>
-          <option value="khong-ban">Không có đơn</option>
         </select>
-        <select id="fDays">
+        <select id="fDays" class="hidden">
           <option value="7">Bán 7 ngày</option>
           <option value="14">Bán 14 ngày</option>
           <option value="30">Bán 30 ngày</option>
@@ -224,10 +235,18 @@
     <div class="empty hidden" id="empty">Chưa có dữ liệu tồn kho. Bấm <b>⚙ Cấu hình MISA</b> để kết nối, hoặc <b>⇪ Dán từ Excel</b> để nhập ngay.</div>
   </div>
 
+  <div class="panel hidden" id="pUnmatched">
+    <div class="panel-head"><h2>Sản phẩm Sandbox chưa ghép với mã hàng MISA</h2></div>
+    <div class="panel-body">
+      <p class="hint">Các sản phẩm dưới đây có đơn đang đi bên Sandbox nhưng tên không trùng mã hàng nào của MISA, nên chưa được trừ vào tồn. Chép tên vào cột <b>Tên SP bên Sandbox</b> của mã hàng tương ứng.</p>
+      <div id="unmatchedList" style="margin-top:10px;font-size:13.5px;line-height:1.9"></div>
+    </div>
+  </div>
+
   <p class="hint" style="margin-top:14px">
-    <b>Cách tính:</b> TB/ngày = tổng số lượng đơn OMS (Đã chốt, Đang ship, Ship thành công) trong số ngày đã chọn ÷ số ngày.
-    Còn đủ bán = tồn ÷ TB/ngày. <b>Sắp hết</b> khi dưới 7 ngày hoặc dưới mức tối thiểu; <b>Theo dõi</b> khi dưới 14 ngày.
-    Cột <b>Tên SP bên OMS</b>: điền tên sản phẩm như trong đơn OMS (nhiều tên cách nhau dấu phẩy) nếu tên trong MISA khác.
+    <b>Cách tính:</b> Đơn đang đi = tổng số lượng trong các đơn Sandbox (trang Vận đơn) ở trạng thái Đã đăng, Đã lấy hàng, Đang giao hàng, Không giao được.
+    Còn lại = tồn MISA − đơn đang đi. <b>Sắp hết</b> khi sản phẩm có đơn đang đi và còn lại dưới ngưỡng cảnh báo, hoặc tồn dưới mức tối thiểu.
+    Cột <b>Tên SP bên Sandbox</b>: điền tên sản phẩm đúng như bên Sandbox (nhiều tên cách nhau dấu phẩy) nếu khác tên trong MISA.
   </p>
 </div>
 
@@ -262,12 +281,11 @@ const COLS = [
   { k: 'unit', t: 'ĐVT', l: 1 },
   { k: 'qty', t: 'Tồn' },
   { k: 'amount', t: 'Giá trị' },
-  { k: 'sold', t: 'Đã bán' },
-  { k: 'perDay', t: 'TB/ngày' },
-  { k: 'daysLeft', t: 'Còn đủ bán' },
+  { k: 'transit', t: 'Đơn đang đi' },
+  { k: 'remain', t: 'Còn lại' },
   { k: 'level', t: 'Trạng thái', l: 1 },
   { k: 'min', t: 'Tồn tối thiểu' },
-  { k: 'alias', t: 'Tên SP bên OMS', l: 1 },
+  { k: 'alias', t: 'Tên SP bên Sandbox', l: 1 },
 ];
 
 function renderHead() {
@@ -276,7 +294,7 @@ function renderHead() {
 }
 $('thead').addEventListener('click', e => {
   const k = e.target.closest('th')?.dataset.k; if (!k) return;
-  if (sortKey === k) sortDir = -sortDir; else { sortKey = k; sortDir = ['qty', 'amount', 'sold', 'perDay'].includes(k) ? -1 : 1; }
+  if (sortKey === k) sortDir = -sortDir; else { sortKey = k; sortDir = ['qty', 'amount', 'transit'].includes(k) ? -1 : 1; }
   render();
 });
 
@@ -287,8 +305,7 @@ function render() {
   const lv = $('fLevel').value;
   let rows = items.filter(x => (!lv || x.level === lv) &&
     (!q || (x.name + ' ' + x.code).toLowerCase().includes(q)));
-  const val = (x, k) => k === 'level' ? LEVEL_ORDER[x.level] * 1e6 + (x.daysLeft ?? 9e5)
-    : k === 'daysLeft' ? (x.daysLeft ?? Infinity)
+  const val = (x, k) => k === 'level' ? LEVEL_ORDER[x.level] * 1e9 + x.remain
     : (typeof x[k] === 'string' ? x[k].toLowerCase() : x[k]);
   rows.sort((a, b) => { const va = val(a, sortKey), vb = val(b, sortKey); return (va > vb ? 1 : va < vb ? -1 : 0) * sortDir; });
 
@@ -302,9 +319,8 @@ function render() {
       <td class="l">${esc(x.unit)}</td>
       <td class="mono">${fmt(x.qty)}</td>
       <td class="mono">${x.amount ? money(x.amount) : '—'}</td>
-      <td class="mono">${DATA.omsOk ? fmt(x.sold) : '—'}</td>
-      <td class="mono">${DATA.omsOk ? fmt1(x.perDay) : '—'}</td>
-      <td class="mono">${x.daysLeft === null ? '—' : fmt(x.daysLeft) + ' ngày'}</td>
+      <td class="mono" title="${esc(Object.entries(x.transitBy || {}).map(([k, v]) => (DATA.transitStatus[k] || k) + ': ' + fmt(v)).join(' · '))}">${x.transit ? fmt(x.transit) : '—'}</td>
+      <td class="mono">${fmt(x.remain)}</td>
       <td class="l"><span class="tag ${x.level}">${LEVEL[x.level]}</span></td>
       <td><input class="cell" data-key="${esc(x.key)}" data-f="min" value="${x.min || ''}" placeholder="—" inputmode="numeric"></td>
       <td class="l"><input class="cell alias" data-key="${esc(x.key)}" data-f="alias" value="${esc(x.alias)}" placeholder="${esc(x.name)}"></td>
@@ -315,7 +331,7 @@ $('q').addEventListener('input', render);
 $('fLevel').addEventListener('change', render);
 $('fDays').addEventListener('change', () => { try { localStorage.setItem('tonkho.days', $('fDays').value); } catch {} load(); });
 
-// Lưu mức tối thiểu / tên OMS khi rời ô
+// Lưu mức tối thiểu / tên bên Sandbox khi rời ô
 $('tbody').addEventListener('change', async e => {
   const el = e.target; if (!el.dataset.key) return;
   const body = { key: el.dataset.key, [el.dataset.f]: el.value };
@@ -346,7 +362,17 @@ function renderSummary() {
   parts.push(s ? `Dữ liệu: <b>${{ misa: 'MISA AMIS', 'misa-hkd': 'MISA Hộ kinh doanh' }[s.source] || 'Excel'}</b> lúc <b>${dt(s.at)}</b>` : 'Chưa có dữ liệu');
   if (ls) parts.push(ls.ok ? `Đồng bộ MISA gần nhất: ${dt(ls.at)} (${fmt(ls.n)} dòng)` : `<span class="bad">Đồng bộ MISA lỗi ${dt(ls.at)}: ${esc(ls.message)}${ls.kind === 'auth' ? ' Số liệu đang hiển thị là bản cũ.' : ''}</span>`);
   if (!DATA.configured) parts.push('Chưa kết nối MISA');
-  parts.push(DATA.omsOk ? `Tốc độ bán: OMS ${DATA.days} ngày` : `<span class="bad">Không đọc được OMS${DATA.omsMessage ? ': ' + esc(DATA.omsMessage) : ''}</span>`);
+  const tr = DATA.transit;
+  parts.push(!tr ? 'Đang nạp đơn đang đi từ Sandbox…'
+    : tr.ok ? `Đơn đang đi (Sandbox): ${dt(tr.at)}`
+    : `<span class="bad">Không đọc được đơn Sandbox: ${esc(tr.message)}${tr.at ? ' (đang dùng số lúc ' + dt(tr.at) + ')' : ''}</span>`);
+  const al = DATA.alert || {};
+  parts.push(!al.hasChat ? 'Cảnh báo Telegram: chưa bật'
+    : al.last && !al.last.ok ? `<span class="bad">Gửi Telegram lỗi ${dt(al.last.at)}: ${esc(al.last.message)}</span>`
+    : `Cảnh báo Telegram: bật, dưới ${DATA.alertThreshold}` + (al.last ? ` · gửi gần nhất ${dt(al.last.at)}` : ''));
+  const um = DATA.unmatched || [];
+  $('pUnmatched').classList.toggle('hidden', !um.length);
+  $('unmatchedList').innerHTML = um.map(u => `<div><b>${esc(u.ten)}</b> · đơn đang đi ${fmt(u.qty)}</div>`).join('');
   $('status').innerHTML = parts.map(p => `<span>${p}</span>`).join('');
 }
 
@@ -409,6 +435,7 @@ async function loadCfg() {
   $('cOrg').value = c.orgCompanyCode || ''; $('cApiUrl').value = c.apiUrl || '';
   $('cBranch').value = c.branchId || ''; $('cAuto').value = c.autoMinutes ?? 30;
   $('cDays').value = c.salesDays ?? 30; $('cDictItem').value = c.dictItemType ?? 2; $('cDictStock').value = c.dictStockType ?? 3;
+  $('cChat').value = c.telegramChatId || ''; $('cThreshold').value = c.alertThreshold ?? 10; $('cTransitDays').value = c.transitDays ?? 120;
 }
 const setMsg = (id, t, cls = '') => { $(id).textContent = t; $(id).className = 'msg ' + cls; };
 $('btnSaveCfg').addEventListener('click', async () => {
@@ -420,6 +447,22 @@ $('btnSaveCfg').addEventListener('click', async () => {
   const r = await api('/api/ton-kho/config', { method: 'POST', body: JSON.stringify(body) });
   setMsg('cfgMsg', r.ok ? 'Đã lưu.' : r.message, r.ok ? 'ok' : 'bad');
   if (r.ok) { loadCfg(); load(); }
+});
+async function saveAlertCfg() {
+  const body = { telegramChatId: $('cChat').value, alertThreshold: $('cThreshold').value, transitDays: $('cTransitDays').value };
+  const r = await api('/api/ton-kho/config', { method: 'POST', body: JSON.stringify(body) });
+  setMsg('alertMsg', r.ok ? 'Đã lưu.' : r.message, r.ok ? 'ok' : 'bad');
+  if (r.ok) load();
+  return r.ok;
+}
+$('btnSaveAlert').addEventListener('click', saveAlertCfg);
+$('btnAlertTest').addEventListener('click', async () => {
+  if (!(await saveAlertCfg())) return;
+  setMsg('alertMsg', 'Đang gửi…');
+  try {
+    const r = await api('/api/ton-kho/alert-test', { method: 'POST' });
+    setMsg('alertMsg', r.ok ? 'Đã gửi tin thử, kiểm tra Telegram.' : r.message, r.ok ? 'ok' : 'bad');
+  } catch (e) { setMsg('alertMsg', e.message, 'bad'); }
 });
 $('btnTest').addEventListener('click', async () => {
   setMsg('cfgMsg', 'Đang kết nối MISA…');
