@@ -33,7 +33,7 @@ jobs:
             TS=$(date +%Y%m%d_%H%M%S)
             BK="$BACKUPS/$TS"
             mkdir -p "$BK"
-            for f in server.js thailand.js oms.js package.json \
+            for f in server.js thailand.js oms.js tonkho.js misa-tonkho.js package.json \
                      index.html salary.html salary-product.html my-salary.html \
                      marketing-thailand.html products.html; do
               [ -f "$f" ] && cp "$f" "$BK/"
@@ -57,7 +57,7 @@ jobs:
             fi
             if [ -n "$NODE_BIN" ]; then
               echo "Dùng node: $NODE_BIN"
-              for f in server.js thailand.js oms.js; do
+              for f in server.js thailand.js oms.js tonkho.js misa-tonkho.js; do
                 if [ -f "$f" ]; then
                   "$NODE_BIN" --check "$f" 2>/dev/null || {
                     echo "SYNTAX ERROR: $f — rollback!"
