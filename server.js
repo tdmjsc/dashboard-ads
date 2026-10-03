@@ -4178,10 +4178,64 @@ app.post('/api/cash-flow/note', express.json(), (req, res) => {
 // ===================================================================
 //  MODULE TỒN KHO (MISA AMIS) — lỗi ở đây KHÔNG làm sập app chính
 // ===================================================================
+
+// Đơn đang "trên đường" theo sản phẩm — lấy từ trang Vận đơn (Thủ kho tác nghiệp) của Sandbox.
+// Dùng chung phiên đăng nhập web Sandbox của máy chủ (SANDBOX_WEB_USER / SANDBOX_WEB_PASS).
+// statuses: mã trạng thái giao hàng của Sandbox (20 Đã đăng, 21 Đã lấy hàng, 30 Đang giao hàng,
+// 33 Không giao được). Trả về [{ ten, ma, status, qty, don }].
+const SANDBOX_THUKHO_URL = process.env.SANDBOX_THUKHO_URL
+  || 'https://api.sandbox.com.vn/orderlogistic/api/ThuKhoTacNghiep/TimTheoDieuKien';
+async function sandboxInTransitByProduct(statuses, days) {
+  const vnDate = d => new Date(d.getTime() + 7 * 3600e3).toISOString().slice(0, 10);
+  const tuNgay = `${vnDate(new Date(Date.now() - days * 86400e3))}T00:00:00+07:00`;
+  const denNgay = `${vnDate(new Date())}T23:59:59+07:00`;
+  const PAGE = 100;
+  const acc = new Map();
+  if (!sandboxCookie) await sandboxLogin();
+  for (const ma of statuses) {
+    for (let page = 1; page <= 30; page++) {
+      const payload = {
+        keyWord: '', tuNgay, denNgay, date: [tuNgay, denNgay], kieuNgay: '-1', chkHideNoCount: '1', loaiTuKhoa: '1',
+        listIdCombo: null, isGetIdOnly: 0, giaoHangTrangThaiMa: ma, unitCode: null, ecommerceId: null,
+        thoiHanGuiHang: null, isDaTaoPhieuNhat: null, idChiNhanhTaoDon: null, isDaNhanDonHoan: null,
+        ListTMDTIdGianHang: null, trangThaiPhanBoUserCareDon: null, trangThaiPhanBoNhomCareDon: null,
+        isSuDungCungBoLoc: null, boQuaNgayKhiTimKiem: true, doiTacSanSangDangDon: null, maQuocGia: null,
+        listMaTinh: [], isDatCoc: null, pageInfo: { page, pageSize: PAGE }, sorts: [],
+        idSanPham: null, idSanPhamCha: null, giaTriDonHangTu: null, giaTriDonHangDen: null,
+      };
+      const call = () => fetchWithTimeout(SANDBOX_THUKHO_URL, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'Accept': 'application/json, text/plain, */*', 'Origin': SANDBOX_ORIGIN, 'Referer': SANDBOX_ORIGIN + '/', 'Cookie': sandboxCookie },
+        body: JSON.stringify(payload),
+      });
+      let r = await call();
+      if (r.status === 401 || r.status === 403) { await sandboxLogin(); r = await call(); }
+      const j = await r.json().catch(() => null);
+      if (!j || !j.success) throw new Error('Sandbox không trả được danh sách vận đơn (HTTP ' + r.status + (j && j.message ? ': ' + j.message : '') + ')');
+      const list = (j.data && j.data.listThuKhoTacNghiep) || [];
+      for (const o of list) {
+        if (Number(o.giaoHangTrangThaiMa) !== Number(ma)) continue; // phòng khi Sandbox bỏ qua bộ lọc
+        for (const sp of (o.donHangSanPhamInfos || [])) {
+          const ten = String(sp.tenSanPham || '').trim();
+          if (!ten) continue;
+          const k = ma + '|' + ten;
+          if (!acc.has(k)) acc.set(k, { ten, ma: String(sp.maSanPham || ''), status: Number(ma), qty: 0, don: 0 });
+          const a = acc.get(k);
+          a.qty += Number(sp.soLuongTruKho || sp.soLuong || 0) || 0; a.don += 1;
+        }
+      }
+      if (list.length < PAGE) break;
+    }
+  }
+  return [...acc.values()];
+}
+
 (async () => {
   try {
     const { mountTonKho } = await import('./tonkho.js');
-    mountTonKho(app, { express, DATA_DIR, fetchWithTimeout });
+    mountTonKho(app, { express, DATA_DIR, fetchWithTimeout,
+      getInTransit: sandboxInTransitByProduct,
+      sendTelegram: (chatId, text) => sendTelegram(chatId, text) });
   } catch (e) {
     console.error('[TONKHO] KHÔNG gắn được module (app chính vẫn chạy bình thường):', e.message);
   }
