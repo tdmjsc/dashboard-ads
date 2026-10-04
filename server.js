@@ -4185,6 +4185,13 @@ app.post('/api/cash-flow/note', express.json(), (req, res) => {
   } catch (e) {
     console.error('[TONKHO] KHÔNG gắn được module (app chính vẫn chạy bình thường):', e.message);
   }
+  // BOT TELEGRAM NHÓM KHO — gửi thông báo vào nhóm nhân viên kho (xem telegram-kho.js)
+  try {
+    const { mountKhoBot } = await import('./telegram-kho.js');
+    mountKhoBot(app, { express, DATA_DIR, fetchWithTimeout });
+  } catch (e) {
+    console.error('[KHOBOT] KHÔNG gắn được module (app chính vẫn chạy bình thường):', e.message);
+  }
 })();
 
 app.use(express.static(path.join(__dirname, 'public')));

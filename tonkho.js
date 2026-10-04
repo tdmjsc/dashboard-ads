@@ -21,6 +21,7 @@ const DEFAULT_CONFIG = {
   branchId: '',         // Để trống = tất cả chi nhánh
   autoMinutes: 30,      // Tự đồng bộ mỗi N phút (0 = tắt)
   salesDays: 30,        // Số ngày gần nhất dùng để tính tốc độ bán
+  alertThreshold: 10,   // Nhắn Telegram nhóm kho khi tồn MISA của một mã hàng xuống dưới số này
   dictItemType: 2,      // data_type của danh mục Vật tư hàng hoá trong get_dictionary
   dictStockType: 3,     // data_type của danh mục Kho trong get_dictionary
 };
@@ -81,7 +82,7 @@ export function normalizeMisaRow(r, itemDict = {}, stockDict = {}) {
 
 export function mountTonKho(app, { express, DATA_DIR, fetchWithTimeout }) {
   const FILE = path.join(DATA_DIR, 'ton-kho.json');
-  let STORE = { config: {}, token: null, hkd: null, snapshot: null, history: [], settings: {}, lastSync: null };
+  let STORE = { config: {}, token: null, hkd: null, snapshot: null, history: [], settings: {}, lastSync: null, alerted: {}, lastAlert: null, authAlertAt: '' };
   try { STORE = { ...STORE, ...JSON.parse(fs.readFileSync(FILE, 'utf8')) }; } catch {}
   const save = () => {
     // File chứa mã kết nối / token đăng nhập MISA → chỉ chủ tài khoản hosting đọc được
@@ -194,6 +195,71 @@ export function mountTonKho(app, { express, DATA_DIR, fetchWithTimeout }) {
     STORE.history = [...(STORE.history || []), { at, source, totalQty, totalAmount, n: items.length }].slice(-200);
   }
 
+  // ===================== CẢNH BÁO TỒN THẤP QUA TELEGRAM (bot nhóm kho) =====================
+  // Quy tắc: tồn MISA của một mã hàng (cộng các kho) DƯỚI ngưỡng chung (mặc định 10) thì nhắn
+  // vào nhóm kho. Mã hàng có "Tồn tối thiểu" riêng thì báo khi tồn ≤ mức đó.
+  // Mỗi mã chỉ báo 1 lần; tồn lên lại trên ngưỡng rồi tụt xuống mới báo lần nữa.
+  const notify = text => (typeof global.__khoNotify === 'function'
+    ? global.__khoNotify(text) : Promise.resolve({ ok: false, error: 'Chưa có bot nhóm kho.' }));
+  const alertTh = () => num(cfg().alertThreshold) || 10;
+  const isLow = (qty, min, th) => (min ? qty <= min : qty < th);
+  const tgEsc = s => String(s ?? '').replace(/[&<>]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;' }[c]));
+  const fmtN = n => (Math.round(n * 100) / 100).toLocaleString('vi-VN');
+  const vnTime = iso => new Date(iso).toLocaleString('vi-VN', { timeZone: 'Asia/Ho_Chi_Minh', hour: '2-digit', minute: '2-digit', day: '2-digit', month: '2-digit' });
+
+  function lowItems() {
+    const th = alertTh(), settings = STORE.settings || {}, byKey = new Map();
+    for (const it of STORE.snapshot?.items || []) {
+      const key = it.code || normName(it.name);
+      if (!byKey.has(key)) byKey.set(key, { key, code: it.code, name: it.name, unit: it.unit, qty: 0 });
+      byKey.get(key).qty += it.qty;
+    }
+    return [...byKey.values()].map(g => ({ ...g, min: num((settings[g.key] || {}).min) }))
+      .filter(g => isLow(g.qty, g.min, th)).sort((a, b) => a.qty - b.qty);
+  }
+  function alertText(title, list) {
+    const MAX = 40;
+    const lines = list.slice(0, MAX).map(g => `• <b>${tgEsc(g.name)}</b>${g.code ? ' (' + tgEsc(g.code) + ')' : ''}: `
+      + (g.qty <= 0 ? '<b>hết hàng</b>' : `còn <b>${fmtN(g.qty)}</b> ${tgEsc(g.unit)}`) + (g.min ? ` (mức tối thiểu ${fmtN(g.min)})` : ''));
+    if (list.length > MAX) lines.push(`… và ${list.length - MAX} mã hàng khác`);
+    return `${title}\n${lines.join('\n')}\n\nTồn MISA lúc ${vnTime(STORE.snapshot.at)}.`;
+  }
+  let alerting = null;
+  async function checkLowStock() {
+    if (alerting) return alerting;
+    // .finally chạy sau khi đã gán `alerting`, kể cả khi thân hàm không chờ gì (không có mã mới để báo)
+    alerting = (async () => {
+      {
+        if (!STORE.snapshot) return;
+        const low = lowItems(), lowKeys = new Set(low.map(g => g.key));
+        const alerted = STORE.alerted || {};
+        for (const k of Object.keys(alerted)) if (!lowKeys.has(k)) delete alerted[k];
+        STORE.alerted = alerted;
+        const fresh = low.filter(g => !alerted[g.key]);
+        if (fresh.length) {
+          const r = await notify(alertText(`⚠️ <b>Tồn kho thấp</b> (dưới ${alertTh()})`, fresh));
+          const at = new Date().toISOString();
+          // Gửi không được (chưa chọn nhóm, lỗi mạng…) thì KHÔNG đánh dấu → lần đồng bộ sau thử lại
+          if (r && r.ok) { for (const g of fresh) alerted[g.key] = { at, qty: g.qty }; STORE.lastAlert = { at, ok: true, n: fresh.length }; }
+          else STORE.lastAlert = { at, ok: false, message: (r && r.error) || 'Không gửi được Telegram' };
+        }
+        save();
+      }
+    })().finally(() => { alerting = null; });
+    return alerting;
+  }
+  // Số tồn vừa đổi (đồng bộ MISA hoặc nhập Excel): xoá cờ hết phiên và kiểm tra tồn thấp, chạy ngầm
+  function afterSnapshot() {
+    if (STORE.authAlertAt) { STORE.authAlertAt = ''; save(); }
+    checkLowStock().catch(e => console.warn('[TONKHO] cảnh báo tồn thấp lỗi:', e.message));
+  }
+  // Phiên MISA hết hạn thì số tồn đứng yên và cảnh báo ngừng hoạt động → báo 1 lần
+  async function alertAuthExpired() {
+    if (STORE.lastSync?.kind !== 'auth' || STORE.authAlertAt) return;
+    const r = await notify('🔑 <b>Phiên MISA đã hết hạn</b>\nSố tồn kho đang đứng yên nên cảnh báo tồn thấp tạm ngừng. Quản trị viên vào Tồn kho → Cấu hình MISA và dán lại request paging_filter.');
+    if (r && r.ok) { STORE.authAlertAt = new Date().toISOString(); save(); }
+  }
+
   let syncing = null;
   async function syncFromMisa() {
     if (syncing) return syncing;
@@ -210,6 +276,7 @@ export function mountTonKho(app, { express, DATA_DIR, fetchWithTimeout }) {
         setSnapshot(items, 'misa');
         STORE.lastSync = { at: new Date().toISOString(), ok: true, n: items.length };
         save();
+        afterSnapshot();
         return STORE.lastSync;
       } catch (e) {
         STORE.lastSync = { at: new Date().toISOString(), ok: false, message: e.message };
@@ -231,11 +298,13 @@ export function mountTonKho(app, { express, DATA_DIR, fetchWithTimeout }) {
         setSnapshot(items, 'misa-hkd');
         STORE.lastSync = { at: new Date().toISOString(), ok: true, n: items.length };
         save();
+        afterSnapshot();
         return STORE.lastSync;
       } catch (e) {
         // kind === 'auth' → phiên MISA hết hạn, cần dán lại request
         STORE.lastSync = { at: new Date().toISOString(), ok: false, message: e.message, kind: e.kind || '' };
         save();
+        alertAuthExpired().catch(() => {});
         throw e;
       } finally { syncing = null; }
     })();
@@ -275,6 +344,7 @@ export function mountTonKho(app, { express, DATA_DIR, fetchWithTimeout }) {
       if (it.stockCode || it.stockName) g.stocks.push({ code: it.stockCode, name: it.stockName, qty: it.qty });
     }
     const saleRows = sales.map(s => ({ n: normName(s.san_pham), qty: num(s.qty) })).filter(s => s.n);
+    const th = alertTh();
     return [...byKey.values()].map(g => {
       const st = settings[g.key] || {};
       // Tên dùng để so với cột "Sản phẩm" bên OMS: alias do người dùng đặt, mặc định là tên + mã hàng
@@ -287,7 +357,7 @@ export function mountTonKho(app, { express, DATA_DIR, fetchWithTimeout }) {
       const min = num(st.min);
       let level = 'ok';
       if (g.qty <= 0) level = 'het';
-      else if ((min && g.qty <= min) || (daysLeft !== null && daysLeft < 7)) level = 'sap-het';
+      else if (isLow(g.qty, min, th) || (daysLeft !== null && daysLeft < 7)) level = 'sap-het';
       else if (daysLeft !== null && daysLeft < 14) level = 'theo-doi';
       else if (perDay === 0) level = 'khong-ban';
       return { ...g, alias: st.alias || '', min, sold, perDay, daysLeft, level };
@@ -311,6 +381,7 @@ export function mountTonKho(app, { express, DATA_DIR, fetchWithTimeout }) {
       // Không bao giờ trả header/token của request đã dán về trình duyệt
       hkd: STORE.hkd ? { savedAt: STORE.hkd.savedAt, savedBy: STORE.hkd.savedBy, tokenExp: tokenExpiry(STORE.hkd.headers) } : null,
       autoMinutes: c.autoMinutes,
+      alert: { threshold: alertTh(), nLow: lowItems().length, last: STORE.lastAlert || null },
     });
   }));
 
@@ -376,6 +447,24 @@ export function mountTonKho(app, { express, DATA_DIR, fetchWithTimeout }) {
     res.json(out);
   }));
 
+  // Ngưỡng cảnh báo tồn thấp
+  app.post('/api/ton-kho/alert-config', guard, json, (req, res) => {
+    const th = Math.floor(Number(req.body?.alertThreshold));
+    if (!(th >= 1 && th <= 1000000)) return res.json({ ok: false, message: 'Ngưỡng phải là số nguyên từ 1 trở lên.' });
+    STORE.config = { ...STORE.config, alertThreshold: th };
+    save();
+    afterSnapshot(); // ngưỡng đổi → xét lại ngay
+    res.json({ ok: true, threshold: th });
+  });
+  // Nhắn ngay toàn bộ danh sách mã hàng đang dưới ngưỡng (kể cả mã đã báo) — dùng để thử / xem lại
+  app.post('/api/ton-kho/alert-now', guard, wrap(async (req, res) => {
+    if (!STORE.snapshot) return res.json({ ok: false, message: 'Chưa có số liệu tồn kho.' });
+    const low = lowItems(), th = alertTh();
+    const r = await notify(low.length ? alertText(`📋 <b>Danh sách tồn kho thấp</b> (dưới ${th}): ${low.length} mã`, low)
+      : `✅ Hiện không có mã hàng nào tồn dưới ${th}. Tồn MISA lúc ${vnTime(STORE.snapshot.at)}.`);
+    res.json(r && r.ok ? { ok: true, n: low.length } : { ok: false, message: 'Không gửi được: ' + ((r && r.error) || 'không rõ') });
+  }));
+
   // Phương án dự phòng: dán bảng tồn kho xuất từ MISA (đã chuẩn hoá ở trình duyệt)
   app.post('/api/ton-kho/import', guard, json, (req, res) => {
     const rows = Array.isArray(req.body?.items) ? req.body.items : [];
@@ -390,6 +479,7 @@ export function mountTonKho(app, { express, DATA_DIR, fetchWithTimeout }) {
     if (!items.length) return res.json({ ok: false, message: 'Không có dòng hợp lệ (cần ít nhất Mã hàng hoặc Tên hàng).' });
     setSnapshot(items, 'excel');
     save();
+    afterSnapshot();
     res.json({ ok: true, n: items.length });
   });
 

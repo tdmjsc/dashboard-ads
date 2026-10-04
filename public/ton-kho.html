@@ -117,6 +117,7 @@
       <button class="back primary" id="btnSync">⟳ Đồng bộ MISA</button>
       <button class="back" id="btnShowImport">⇪ Dán từ Excel</button>
       <button class="back" id="btnShowConfig">⚙ Cấu hình MISA</button>
+      <button class="back" id="btnShowBot">🤖 Bot nhóm kho</button>
       <a href="/" class="back">← Dashboard</a>
     </div>
   </div>
@@ -135,6 +136,45 @@
 </div>
 
 <div class="wrap">
+
+  <!-- Bot Telegram nhóm kho -->
+  <div class="panel hidden" id="pBot">
+    <div class="panel-head"><h2>Bot Telegram nhóm kho <span class="msg" id="botState"></span></h2><button class="btn" data-close="pBot">Đóng</button></div>
+    <div class="panel-body">
+      <p class="hint">Bot này được thêm vào nhóm Telegram của nhân viên kho để máy chủ tự nhắn thông báo vào nhóm.</p>
+      <ol class="hint" style="margin:8px 0 12px 20px">
+        <li>Trong Telegram, nhắn cho <b>@BotFather</b> lệnh <code>/newbot</code>, đặt tên bot, rồi chép <b>token</b> BotFather trả về.</li>
+        <li>Trên Hostinger, thêm dòng <code>TELEGRAM_KHO_BOT_TOKEN=&lt;token&gt;</code> vào file <code>.env</code> rồi khởi động lại ứng dụng.</li>
+        <li>Thêm bot vào nhóm nhân viên kho (mở nhóm → Thêm thành viên → tìm tên bot).</li>
+        <li>Bấm <b>Tìm nhóm</b> bên dưới, chọn nhóm kho, rồi bấm <b>Gửi tin thử</b>.</li>
+      </ol>
+      <div class="actions" style="margin-top:0">
+        <button class="btn primary" id="btnBotFind">Tìm nhóm</button>
+        <span class="msg" id="botFindMsg"></span>
+      </div>
+      <div id="botGroups" style="margin-top:10px"></div>
+      <div id="botSendBox" class="hidden">
+        <hr style="border:none;border-top:1px solid var(--line);margin:18px 0">
+        <textarea class="paste" id="botText" style="min-height:80px" placeholder="Nội dung muốn nhắn vào nhóm kho…"></textarea>
+        <div class="actions">
+          <button class="btn primary" id="btnBotSend">Gửi vào nhóm</button>
+          <button class="btn" id="btnBotTest">Gửi tin thử</button>
+          <button class="btn" id="btnBotUnlink">Bỏ chọn nhóm</button>
+          <span class="msg" id="botSendMsg"></span>
+        </div>
+        <hr style="border:none;border-top:1px solid var(--line);margin:18px 0">
+        <h3 style="font-size:14px;margin-bottom:6px">Cảnh báo tồn kho thấp <span class="msg" id="alertState"></span></h3>
+        <p class="hint">Sau mỗi lần đồng bộ MISA, mã hàng nào có tồn dưới ngưỡng thì bot nhắn vào nhóm. Mỗi mã chỉ báo một lần, tồn lên lại rồi tụt xuống mới báo lần nữa. Mã hàng có <b>Tồn tối thiểu</b> riêng trong bảng thì dùng mức đó thay cho ngưỡng chung.</p>
+        <div class="actions">
+          <label class="hint" for="alertTh">Ngưỡng chung</label>
+          <input id="alertTh" type="number" min="1" style="width:90px;font-family:inherit;font-size:13.5px;border:1px solid var(--line);border-radius:9px;padding:8px 10px">
+          <button class="btn primary" id="btnAlertSave">Lưu ngưỡng</button>
+          <button class="btn" id="btnAlertNow">Nhắn danh sách tồn thấp ngay</button>
+          <span class="msg" id="alertMsg"></span>
+        </div>
+      </div>
+    </div>
+  </div>
 
   <!-- Cấu hình MISA -->
   <div class="panel hidden" id="pConfig">
@@ -226,7 +266,7 @@
 
   <p class="hint" style="margin-top:14px">
     <b>Cách tính:</b> TB/ngày = tổng số lượng đơn OMS (Đã chốt, Đang ship, Ship thành công) trong số ngày đã chọn ÷ số ngày.
-    Còn đủ bán = tồn ÷ TB/ngày. <b>Sắp hết</b> khi dưới 7 ngày hoặc dưới mức tối thiểu; <b>Theo dõi</b> khi dưới 14 ngày.
+    Còn đủ bán = tồn ÷ TB/ngày. <b>Sắp hết</b> khi tồn dưới ngưỡng cảnh báo (mặc định 10), dưới mức tối thiểu, hoặc còn đủ bán dưới 7 ngày; <b>Theo dõi</b> khi dưới 14 ngày.
     Cột <b>Tên SP bên OMS</b>: điền tên sản phẩm như trong đơn OMS (nhiều tên cách nhau dấu phẩy) nếu tên trong MISA khác.
   </p>
 </div>
@@ -398,6 +438,71 @@ $('btnHkdDel').addEventListener('click', async () => {
   await api('/api/ton-kho/hkd-config/delete', { method: 'POST' });
   setMsg('hkdMsg', 'Đã ngắt kết nối.');
   await load(); renderHkd();
+});
+
+// ---------- Bot Telegram nhóm kho ----------
+let BOT = null;
+function renderBot() {
+  const b = BOT; if (!b) return;
+  const name = b.bot ? '@' + b.bot.username : '';
+  $('botState').textContent = !b.hasToken ? '· chưa có token trên máy chủ (bước 2)'
+    : !b.bot ? '· token không hợp lệ, kiểm tra lại bước 2'
+    : b.group ? `· ${name} đang nhắn vào nhóm "${b.group.title}"` : `· ${name} chưa chọn nhóm`;
+  $('botState').className = 'msg ' + (b.group ? 'ok' : (b.hasToken && b.bot ? '' : 'bad'));
+  $('btnBotFind').disabled = !(b.hasToken && b.bot);
+  $('botSendBox').classList.toggle('hidden', !b.group);
+}
+function renderAlert() {
+  const a = DATA && DATA.alert; if (!a) return;
+  if (document.activeElement !== $('alertTh')) $('alertTh').value = a.threshold;
+  $('alertState').textContent = `· đang có ${a.nLow} mã dưới ngưỡng` + (a.last ? (a.last.ok ? `, báo gần nhất ${dt(a.last.at)}` : `, lần báo ${dt(a.last.at)} lỗi: ${a.last.message}`) : '');
+  $('alertState').className = 'msg ' + (a.last && !a.last.ok ? 'bad' : '');
+}
+$('btnAlertSave').addEventListener('click', async () => {
+  const r = await api('/api/ton-kho/alert-config', { method: 'POST', body: JSON.stringify({ alertThreshold: $('alertTh').value }) });
+  setMsg('alertMsg', r.ok ? 'Đã lưu ngưỡng ' + r.threshold + '.' : r.message, r.ok ? 'ok' : 'bad');
+  if (r.ok) { await load(); renderAlert(); }
+});
+$('btnAlertNow').addEventListener('click', async e => {
+  e.target.disabled = true; setMsg('alertMsg', 'Đang gửi…');
+  try { const r = await api('/api/ton-kho/alert-now', { method: 'POST' }); setMsg('alertMsg', r.ok ? `Đã nhắn vào nhóm (${r.n} mã).` : r.message, r.ok ? 'ok' : 'bad'); }
+  catch (er) { setMsg('alertMsg', er.message, 'bad'); }
+  e.target.disabled = false;
+});
+async function loadBot() {
+  renderAlert();
+  try { const r = await api('/api/ton-kho/bot'); if (r.ok) { BOT = r; renderBot(); } } catch (e) { setMsg('botFindMsg', e.message, 'bad'); }
+}
+$('btnShowBot').addEventListener('click', () => { toggle('pBot'); if (!$('pBot').classList.contains('hidden')) loadBot(); });
+$('btnBotFind').addEventListener('click', async () => {
+  setMsg('botFindMsg', 'Đang hỏi Telegram…'); $('botGroups').innerHTML = '';
+  try {
+    const r = await api('/api/ton-kho/bot/groups');
+    if (!r.ok) return setMsg('botFindMsg', r.message, 'bad');
+    if (!r.groups.length) return setMsg('botFindMsg', 'Chưa thấy nhóm nào. Thêm bot vào nhóm (hoặc nhắn 1 tin có nhắc tên bot trong nhóm) rồi bấm lại.', 'bad');
+    setMsg('botFindMsg', `Thấy ${r.groups.length} nhóm, bấm vào nhóm kho để chọn:`);
+    $('botGroups').innerHTML = r.groups.map(g => `<button class="btn" data-gid="${esc(g.id)}" style="margin:0 8px 8px 0">${esc(g.title)}</button>`).join('');
+  } catch (e) { setMsg('botFindMsg', e.message, 'bad'); }
+});
+async function setBotGroup(id) {
+  const r = await api('/api/ton-kho/bot/group', { method: 'POST', body: JSON.stringify({ id }) });
+  if (!r.ok) return setMsg('botFindMsg', r.message, 'bad');
+  BOT = r; $('botGroups').innerHTML = ''; setMsg('botFindMsg', id ? 'Đã chọn nhóm.' : 'Đã bỏ chọn nhóm.', 'ok'); renderBot();
+}
+$('botGroups').addEventListener('click', e => { const id = e.target.dataset.gid; if (id) setBotGroup(id).catch(er => setMsg('botFindMsg', er.message, 'bad')); });
+$('btnBotUnlink').addEventListener('click', () => { if (confirm('Bỏ chọn nhóm? Bot sẽ không nhắn vào nhóm nữa cho tới khi chọn lại.')) setBotGroup('').catch(er => setMsg('botFindMsg', er.message, 'bad')); });
+async function botSend(text, btn) {
+  btn.disabled = true; setMsg('botSendMsg', 'Đang gửi…');
+  try {
+    const r = await api('/api/ton-kho/bot/send', { method: 'POST', body: JSON.stringify({ text }) });
+    setMsg('botSendMsg', r.message || (r.ok ? 'Đã gửi.' : 'Không gửi được.'), r.ok ? 'ok' : 'bad');
+    btn.disabled = false; return r.ok;
+  } catch (e) { setMsg('botSendMsg', e.message, 'bad'); btn.disabled = false; return false; }
+}
+$('btnBotTest').addEventListener('click', e => botSend('✅ Tin thử từ trang Tồn kho TDMJSC. Bot đã kết nối với nhóm này.', e.target));
+$('btnBotSend').addEventListener('click', async e => {
+  const t = $('botText').value.trim(); if (!t) return setMsg('botSendMsg', 'Chưa nhập nội dung.', 'bad');
+  if (await botSend(t, e.target)) $('botText').value = '';
 });
 
 // ---------- Cấu hình ----------
