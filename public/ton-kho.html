@@ -153,6 +153,14 @@
         <span class="msg" id="botFindMsg"></span>
       </div>
       <div id="botGroups" style="margin-top:10px"></div>
+      <div id="botManual" class="hidden" style="margin-top:6px">
+        <p class="hint">Mở <b>web.telegram.org</b> trên máy tính, bấm vào nhóm kho, rồi chép toàn bộ đường link trên thanh địa chỉ (kết thúc bằng một dãy số) và dán vào đây.</p>
+        <div class="actions" style="margin-top:8px">
+          <input id="botChatId" autocomplete="off" placeholder="https://web.telegram.org/a/#-1001234567890" style="flex:1;min-width:220px;max-width:460px;font-family:inherit;font-size:13.5px;border:1px solid var(--line);border-radius:9px;padding:8px 10px">
+          <button class="btn primary" id="btnBotManual">Chọn nhóm này</button>
+        </div>
+      </div>
+      <p class="hint" style="margin-top:8px"><a href="#" id="lnkBotManual">Nhập link nhóm hoặc Chat ID bằng tay</a></p>
       <div id="botSendBox" class="hidden">
         <hr style="border:none;border-top:1px solid var(--line);margin:18px 0">
         <textarea class="paste" id="botText" style="min-height:80px" placeholder="Nội dung muốn nhắn vào nhóm kho…"></textarea>
@@ -478,8 +486,8 @@ $('btnBotFind').addEventListener('click', async () => {
   setMsg('botFindMsg', 'Đang hỏi Telegram…'); $('botGroups').innerHTML = '';
   try {
     const r = await api('/api/ton-kho/bot/groups');
-    if (!r.ok) return setMsg('botFindMsg', r.message, 'bad');
-    if (!r.groups.length) return setMsg('botFindMsg', 'Chưa thấy nhóm nào. Thêm bot vào nhóm (hoặc nhắn 1 tin có nhắc tên bot trong nhóm) rồi bấm lại.', 'bad');
+    if (!r.ok) { if (r.webhook) $('botManual').classList.remove('hidden'); return setMsg('botFindMsg', r.message, 'bad'); }
+    if (!r.groups.length) { $('botManual').classList.remove('hidden'); return setMsg('botFindMsg', `Chưa thấy nhóm nào. Trong nhóm, gửi lệnh /start@${BOT && BOT.bot ? BOT.bot.username : 'tên_bot'} rồi bấm lại, hoặc dán link nhóm vào ô bên dưới.`, 'bad'); }
     setMsg('botFindMsg', `Thấy ${r.groups.length} nhóm, bấm vào nhóm kho để chọn:`);
     $('botGroups').innerHTML = r.groups.map(g => `<button class="btn" data-gid="${esc(g.id)}" style="margin:0 8px 8px 0">${esc(g.title)}</button>`).join('');
   } catch (e) { setMsg('botFindMsg', e.message, 'bad'); }
@@ -487,8 +495,14 @@ $('btnBotFind').addEventListener('click', async () => {
 async function setBotGroup(id) {
   const r = await api('/api/ton-kho/bot/group', { method: 'POST', body: JSON.stringify({ id }) });
   if (!r.ok) return setMsg('botFindMsg', r.message, 'bad');
-  BOT = r; $('botGroups').innerHTML = ''; setMsg('botFindMsg', id ? 'Đã chọn nhóm.' : 'Đã bỏ chọn nhóm.', 'ok'); renderBot();
+  BOT = r; $('botGroups').innerHTML = ''; $('botChatId').value = ''; $('botManual').classList.add('hidden');
+  setMsg('botFindMsg', id ? `Đã chọn nhóm "${r.group.title}". Bấm Gửi tin thử để kiểm tra.` : 'Đã bỏ chọn nhóm.', 'ok'); renderBot();
 }
+$('lnkBotManual').addEventListener('click', e => { e.preventDefault(); $('botManual').classList.toggle('hidden'); });
+$('btnBotManual').addEventListener('click', () => {
+  const v = $('botChatId').value.trim(); if (!v) return setMsg('botFindMsg', 'Chưa dán link nhóm hoặc Chat ID.', 'bad');
+  setMsg('botFindMsg', 'Đang kiểm tra với Telegram…'); setBotGroup(v).catch(er => setMsg('botFindMsg', er.message, 'bad'));
+});
 $('botGroups').addEventListener('click', e => { const id = e.target.dataset.gid; if (id) setBotGroup(id).catch(er => setMsg('botFindMsg', er.message, 'bad')); });
 $('btnBotUnlink').addEventListener('click', () => { if (confirm('Bỏ chọn nhóm? Bot sẽ không nhắn vào nhóm nữa cho tới khi chọn lại.')) setBotGroup('').catch(er => setMsg('botFindMsg', er.message, 'bad')); });
 async function botSend(text, btn) {
