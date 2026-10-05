@@ -248,22 +248,36 @@ export async function renewSession(cfg, fetchImpl) {
   const ua = cfg.headers['user-agent'];
   const base = () => ({ ...(ua ? { 'user-agent': ua } : {}), cookie: cookieString(jar) });
 
-  // Bước 1: đi theo chuỗi chuyển hướng (chỉ trong amisapp.misa.vn) cho tới khi gặp /hkd/callback?sid=
-  let url = AMIS_SSO_URL, cb = null;
-  for (let hop = 0; hop < 6 && !cb; hop++) {
+  // Bước 1: đi theo chuỗi chuyển hướng cho tới khi gặp /hkd/callback?sid=
+  // Cookie phiên CHỈ gửi cho amisapp.misa.vn; sang máy chủ khác của MISA thì đi tiếp không kèm cookie.
+  // `trace` ghi lại từng chặng (mã trạng thái + máy chủ + đường dẫn, KHÔNG có tham số) để chẩn đoán.
+  const trace = ['cookie gửi đi: ' + [...jar.keys()].join(', ')];
+  const fail = (msg, kind = 'auth') => { const e = new MisaError(msg, kind); e.trace = trace; return e; };
+  const isCb = u => u.origin === AMIS_ORIGIN && u.pathname.startsWith('/hkd/callback') && u.searchParams.get('sid');
+  let url = AMIS_SSO_URL, cb = null, why = '';
+  for (let hop = 0; hop < 8 && !cb; hop++) {
+    const cur = new URL(url), own = cur.origin === AMIS_ORIGIN;
     let r;
-    try { r = await fetchImpl(url, { method: 'GET', headers: { ...base(), accept: 'text/html,*/*' }, redirect: 'manual' }); }
-    catch (e) { throw new MisaError('Không kết nối được tới MISA để gia hạn phiên: ' + e.message, 'network'); }
-    absorbSetCookie(jar, r);
+    try { r = await fetchImpl(url, { method: 'GET', headers: { ...(own ? base() : (ua ? { 'user-agent': ua } : {})), accept: 'text/html,*/*' }, redirect: 'manual' }); }
+    catch (e) { trace.push(`GET ${cur.host}${cur.pathname} → lỗi mạng`); throw fail('Không kết nối được tới MISA để gia hạn phiên: ' + e.message, 'network'); }
+    if (own) absorbSetCookie(jar, r);
     const loc = r.status >= 300 && r.status < 400 ? r.headers.get('location') : '';
-    if (!loc) break;
-    let next; try { next = new URL(loc, url); } catch { break; }
-    if (next.origin !== AMIS_ORIGIN) break;                       // bị đẩy sang trang đăng nhập (id.misa.vn)
-    if (next.pathname.startsWith('/hkd/callback') && next.searchParams.get('sid')) cb = next;
-    else if (next.pathname.startsWith('/login')) break;           // phiên AMIS đã hết
-    else url = next.href;
+    let next = null; if (loc) { try { next = new URL(loc, url); } catch {} }
+    trace.push(`GET ${cur.host}${cur.pathname} → ${r.status}${next ? ' → ' + next.host + next.pathname : ''}`);
+    if (!next) {
+      // Không chuyển hướng bằng header: thử tìm địa chỉ callback trong nội dung trang (chuyển hướng bằng JavaScript)
+      let text = ''; try { text = await r.text(); } catch {}
+      const m = text.match(/(?:https:\/\/amisapp\.misa\.vn)?\/hkd\/callback\?[^"'<>\s\\]+/);
+      if (m) { try { const u = new URL(m[0].replace(/&amp;/g, '&'), AMIS_ORIGIN); if (isCb(u)) { cb = u; trace.push('tìm thấy callback trong nội dung trang'); } } catch {} }
+      if (!cb) why = /gián đoạn|Maintenance/i.test(text) ? 'MISA trả về trang "Hệ thống tạm thời gián đoạn"' : 'MISA không chuyển hướng tiếp (HTTP ' + r.status + ')';
+      break;
+    }
+    if (isCb(next)) { cb = next; break; }
+    if (!/(^|\.)misa\.vn$/.test(next.hostname) || next.protocol !== 'https:') { why = 'bị chuyển ra ngoài MISA'; break; }
+    if (/^\/(login|account\/login)/i.test(next.pathname) || next.hostname === 'id.misa.vn') { why = 'MISA đòi đăng nhập lại (' + next.host + next.pathname + ')'; break; }
+    url = next.href;
   }
-  if (!cb) throw new MisaError('Phiên đăng nhập MISA đã hết hạn hẳn — cần dán lại request mới.', 'auth');
+  if (!cb) throw fail('Không tự gia hạn được: ' + (why || 'quá nhiều lần chuyển hướng') + '. Cần dán lại request mới.');
 
   // Bước 2: đổi sid lấy token mới
   const form = new URLSearchParams({ sid: cb.searchParams.get('sid') });
@@ -282,7 +296,8 @@ export async function renewSession(cfg, fetchImpl) {
   } catch (e) { throw new MisaError('MISA không trả lời khi gia hạn phiên: ' + e.message, 'network'); }
   const data = j && j.Success === true ? j.Data : null;
   const token = data && data.AccessToken && data.AccessToken.Token;
-  if (!token) throw new MisaError('MISA từ chối gia hạn phiên — cần dán lại request mới.', 'auth');
+  trace.push(`POST ${MISA_HOST}/hkd/g1/api/auth/v1/account/login/misa_id → ${r.status}, Success=${j && j.Success}, Code=${j && j.Code}`);
+  if (!token) throw fail('MISA từ chối cấp token mới (bước đăng nhập lại). Cần dán lại request mới.');
 
   const headers = { ...cfg.headers, authorization: 'Bearer ' + token, cookie: cookieString(jar) };
   // Giữ nguyên ngữ cảnh cũ (chi nhánh, dữ liệu kế toán…), chỉ thay mã phiên — giống cách trang MISA tự làm
@@ -292,6 +307,6 @@ export async function renewSession(cfg, fetchImpl) {
     headers['x-misa-context'] = old.encode(JSON.stringify(old.obj));
   } else if (data.Context) headers['x-misa-context'] = JSON.stringify({ ...data.Context, Language: 'vi' });
   const ttl = Number(data.AccessToken.TokenExpired) || 0;
-  return { ...cfg, headers, renewedAt: new Date().toISOString(), renewCount: (cfg.renewCount || 0) + 1,
+  return { ...cfg, headers, lastRenewTrace: trace, renewedAt: new Date().toISOString(), renewCount: (cfg.renewCount || 0) + 1,
     tokenExpAt: ttl > 0 ? new Date(Date.now() + ttl * 1000).toISOString() : '' };
 }

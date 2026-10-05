@@ -328,6 +328,7 @@ export function mountTonKho(app, { express, DATA_DIR, fetchWithTimeout }) {
       console.log('[TONKHO] đã tự gia hạn phiên MISA (lần ' + STORE.hkd.renewCount + ')');
     } catch (e) {
       STORE.hkd.lastRenewError = e.message; STORE.hkd.lastRenewErrorAt = new Date().toISOString();
+      STORE.hkd.lastRenewTrace = e.trace || [];
       save();
       throw e;
     }
@@ -402,7 +403,7 @@ export function mountTonKho(app, { express, DATA_DIR, fetchWithTimeout }) {
       configured: !!STORE.hkd || !!(c.appId && c.accessCode && c.orgCompanyCode),
       // Không bao giờ trả header/token của request đã dán về trình duyệt
       hkd: STORE.hkd ? { savedAt: STORE.hkd.savedAt, savedBy: STORE.hkd.savedBy, tokenExp: STORE.hkd.tokenExpAt || tokenExpiry(STORE.hkd.headers),
-        renewedAt: STORE.hkd.renewedAt || '', renewCount: STORE.hkd.renewCount || 0, lastRenewError: STORE.hkd.lastRenewError || '' } : null,
+        renewedAt: STORE.hkd.renewedAt || '', renewCount: STORE.hkd.renewCount || 0, lastRenewError: STORE.hkd.lastRenewError || '', lastRenewTrace: STORE.hkd.lastRenewTrace || [] } : null,
       hkdAutoRenew: !!c.hkdAutoRenew,
       autoMinutes: c.autoMinutes,
       alert: { threshold: alertTh(), nLow: lowItems().length, last: STORE.lastAlert || null },
