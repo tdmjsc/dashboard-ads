@@ -203,6 +203,10 @@
         <button class="btn hidden" id="btnHkdDel">Ngắt kết nối</button>
         <span class="msg" id="hkdMsg">Nội dung dán chứa mã đăng nhập MISA, chỉ dán ở trang này.</span>
       </div>
+      <label class="hint" style="display:flex;gap:8px;align-items:flex-start;margin-top:12px;cursor:pointer">
+        <input type="checkbox" id="hkdAutoRenew" style="margin-top:3px">
+        <span><b>Tự đăng nhập lại khi token hết hạn.</b> Chỉ bật khi tài khoản MISA trong request này dành riêng cho máy chủ. MISA chỉ cho một máy đăng nhập mỗi tài khoản, nên nếu kế toán dùng chung tài khoản thì mỗi lần máy chủ đăng nhập lại, kế toán sẽ bị thoát khỏi MISA.</span>
+      </label>
       <hr style="border:none;border-top:1px solid var(--line);margin:18px 0">
       <h3 style="font-size:14px;margin-bottom:6px">MISA AMIS Kế toán Doanh nghiệp (Open API)</h3>
       <p class="hint">Lấy <b>Mã kết nối</b> trong AMIS Kế toán: <b>Tiện ích → Kết nối ứng dụng → Kết nối API</b>. <b>App ID</b> do MISA cấp khi đăng ký đối tác Open API (liên hệ tổng đài MISA). <b>Mã công ty</b> do mình tự đặt (vd <code>tdmjsc</code>) và giữ cố định.</p>
@@ -430,6 +434,7 @@ function renderHkd() {
   $('hkdState').textContent = h ? `· đã kết nối từ ${dt(h.savedAt)}${h.tokenExp ? ', mã đăng nhập hết hạn ' + dt(h.tokenExp) : ''}` : '· chưa kết nối';
   $('btnHkdDel').classList.toggle('hidden', !h);
   $('btnHkdRenew').classList.toggle('hidden', !h);
+  $('hkdAutoRenew').checked = !!(DATA && DATA.hkdAutoRenew);
   if (h && h.renewCount) $('hkdState').textContent += ` · đã tự gia hạn ${h.renewCount} lần, gần nhất ${dt(h.renewedAt)}`;
   if (h && h.lastRenewError) $('hkdState').textContent += ` · tự gia hạn lỗi: ${h.lastRenewError}`;
 }
@@ -445,7 +450,15 @@ $('btnHkdSave').addEventListener('click', async () => {
   b.disabled = false;
   await load(); renderHkd();
 });
+$('hkdAutoRenew').addEventListener('change', async e => {
+  const on = e.target.checked;
+  if (on && !confirm('Bật tự đăng nhập lại? Nếu có người đang dùng tài khoản MISA này trên máy khác, họ sẽ bị thoát mỗi lần máy chủ đăng nhập lại.')) { e.target.checked = false; return; }
+  const r = await api('/api/ton-kho/hkd-auto-renew', { method: 'POST', body: JSON.stringify({ on }) });
+  setMsg('hkdMsg', r.ok ? (r.on ? 'Đã bật tự đăng nhập lại.' : 'Đã tắt tự đăng nhập lại.') : 'Không lưu được.', r.ok ? 'ok' : 'bad');
+  await load(); renderHkd();
+});
 $('btnHkdRenew').addEventListener('click', async e => {
+  if (!confirm('Máy chủ sẽ đăng nhập lại MISA bằng tài khoản này. Người đang dùng tài khoản này trên máy khác sẽ bị thoát. Tiếp tục?')) return;
   e.target.disabled = true; setMsg('hkdMsg', 'Đang xin token mới từ MISA…');
   try {
     const r = await api('/api/ton-kho/hkd-renew', { method: 'POST' });
