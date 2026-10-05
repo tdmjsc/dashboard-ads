@@ -8,7 +8,8 @@
 // rồi dán vào trang /ton-kho.html — tonkho.js lưu lại và tự gọi theo lịch.
 //
 // HẠN CHẾ CẦN BIẾT:
-//   • Khi phiên MISA hết hạn, đồng bộ dừng cho tới khi admin dán lại request mới.
+//   • Token MISA sống khoảng 12 giờ; máy chủ tự xin token mới bằng phiên AMIS (cookie) trong
+//     request đã dán (xem renewSession). Phiên AMIS hết hẳn thì admin phải dán lại request.
 //   • Đây là API nội bộ, MISA đổi cấu trúc thì phải sửa file này.
 
 const MISA_HOST = 'amisapp.misa.vn';
@@ -204,4 +205,93 @@ export async function fetchInventory(cfg, fetchImpl, now = new Date()) {
     if (!d.PageData.length || rows.length >= total) break;
   }
   return { period, total, items: rows.map(mapRow) };
+}
+
+/* ---------- Tự gia hạn phiên MISA ----------
+   Token của phần Hộ kinh doanh chỉ sống khoảng 12 giờ và MISA không tự gia hạn nó. Trình duyệt
+   lấy token mới bằng cách đăng nhập lại qua phiên AMIS (cookie), không cần mật khẩu:
+     1) GET  /APIS/IntegrationAPI/app/redirect/hkd  (kèm cookie)  → chuyển hướng tới
+        /hkd/callback?sid=…&tid=…&mid=…
+     2) POST /hkd/g1/api/auth/v1/account/login/misa_id  (sid, lang, tid, mid)  → AccessToken mới
+   Hàm này làm đúng hai bước đó bằng cookie có trong request admin đã dán.
+   GIỚI HẠN: chỉ chạy được chừng nào phiên AMIS (cookie) còn sống. Kế toán đăng xuất MISA,
+   hoặc cookie hết hạn, thì phải dán lại request. */
+const AMIS_ORIGIN = 'https://' + MISA_HOST;
+const AMIS_SSO_URL = AMIS_ORIGIN + '/APIS/IntegrationAPI/app/redirect/hkd';
+const HKD_LOGIN_URL = AMIS_ORIGIN + '/hkd/g1/api/auth/v1/account/login/misa_id';
+
+const parseCookies = s => new Map(String(s || '').split(';').map(p => p.trim()).filter(Boolean)
+  .map(p => { const i = p.indexOf('='); return i < 0 ? [p, ''] : [p.slice(0, i), p.slice(i + 1)]; }));
+const cookieString = jar => [...jar].map(([k, v]) => `${k}=${v}`).join('; ');
+// Ghi cookie MISA trả về vào "lọ" — nhờ vậy phiên AMIS được nối dài mỗi lần gia hạn
+function absorbSetCookie(jar, res) {
+  const list = typeof res.headers?.getSetCookie === 'function' ? res.headers.getSetCookie() : [];
+  for (const line of list) {
+    const first = String(line).split(';')[0]; const i = first.indexOf('=');
+    if (i <= 0) continue;
+    const k = first.slice(0, i).trim(), v = first.slice(i + 1).trim();
+    if (v === '' || /max-age=0|expires=thu, 01 jan 1970/i.test(line)) jar.delete(k); else jar.set(k, v);
+  }
+}
+// X-MISA-Context là JSON; có thể được mã hoá URI. Trả về { obj, encode } để ghi lại đúng kiểu cũ.
+function readContext(raw) {
+  for (const [dec, enc] of [[s => s, s => s], [decodeURIComponent, encodeURIComponent]]) {
+    try { const obj = JSON.parse(dec(raw)); if (obj && typeof obj === 'object') return { obj, encode: enc }; } catch {}
+  }
+  return null;
+}
+
+// Trả về cấu hình mới (headers đã có token mới). Ném MisaError('auth') nếu phiên AMIS đã hết.
+export async function renewSession(cfg, fetchImpl) {
+  const jar = parseCookies(cfg.headers.cookie);
+  if (!jar.size) throw new MisaError('Request đã dán không kèm cookie nên không tự gia hạn được — cần dán lại request mới.', 'auth');
+  const ua = cfg.headers['user-agent'];
+  const base = () => ({ ...(ua ? { 'user-agent': ua } : {}), cookie: cookieString(jar) });
+
+  // Bước 1: đi theo chuỗi chuyển hướng (chỉ trong amisapp.misa.vn) cho tới khi gặp /hkd/callback?sid=
+  let url = AMIS_SSO_URL, cb = null;
+  for (let hop = 0; hop < 6 && !cb; hop++) {
+    let r;
+    try { r = await fetchImpl(url, { method: 'GET', headers: { ...base(), accept: 'text/html,*/*' }, redirect: 'manual' }); }
+    catch (e) { throw new MisaError('Không kết nối được tới MISA để gia hạn phiên: ' + e.message, 'network'); }
+    absorbSetCookie(jar, r);
+    const loc = r.status >= 300 && r.status < 400 ? r.headers.get('location') : '';
+    if (!loc) break;
+    let next; try { next = new URL(loc, url); } catch { break; }
+    if (next.origin !== AMIS_ORIGIN) break;                       // bị đẩy sang trang đăng nhập (id.misa.vn)
+    if (next.pathname.startsWith('/hkd/callback') && next.searchParams.get('sid')) cb = next;
+    else if (next.pathname.startsWith('/login')) break;           // phiên AMIS đã hết
+    else url = next.href;
+  }
+  if (!cb) throw new MisaError('Phiên đăng nhập MISA đã hết hạn hẳn — cần dán lại request mới.', 'auth');
+
+  // Bước 2: đổi sid lấy token mới
+  const form = new URLSearchParams({ sid: cb.searchParams.get('sid') });
+  form.set('lang', cb.searchParams.get('lang') || 'vi');
+  for (const k of ['tid', 'mid']) if (cb.searchParams.get(k)) form.set(k, cb.searchParams.get(k));
+  let r, j;
+  try {
+    r = await fetchImpl(HKD_LOGIN_URL, {
+      method: 'POST', redirect: 'manual',
+      headers: { ...base(), 'content-type': 'application/x-www-form-urlencoded', accept: 'application/json, text/plain, */*',
+        origin: AMIS_ORIGIN, referer: cb.href.split('?')[0], ...(cfg.headers['x-device'] ? { 'x-device': cfg.headers['x-device'] } : {}) },
+      body: form.toString(),
+    });
+    absorbSetCookie(jar, r);
+    j = await r.json();
+  } catch (e) { throw new MisaError('MISA không trả lời khi gia hạn phiên: ' + e.message, 'network'); }
+  const data = j && j.Success === true ? j.Data : null;
+  const token = data && data.AccessToken && data.AccessToken.Token;
+  if (!token) throw new MisaError('MISA từ chối gia hạn phiên — cần dán lại request mới.', 'auth');
+
+  const headers = { ...cfg.headers, authorization: 'Bearer ' + token, cookie: cookieString(jar) };
+  // Giữ nguyên ngữ cảnh cũ (chi nhánh, dữ liệu kế toán…), chỉ thay mã phiên — giống cách trang MISA tự làm
+  const old = readContext(cfg.headers['x-misa-context'] || '');
+  if (old && data.Context) {
+    for (const k of ['SessionId', 'AmisSessionId']) if (data.Context[k] != null) old.obj[k] = data.Context[k];
+    headers['x-misa-context'] = old.encode(JSON.stringify(old.obj));
+  } else if (data.Context) headers['x-misa-context'] = JSON.stringify({ ...data.Context, Language: 'vi' });
+  const ttl = Number(data.AccessToken.TokenExpired) || 0;
+  return { ...cfg, headers, renewedAt: new Date().toISOString(), renewCount: (cfg.renewCount || 0) + 1,
+    tokenExpAt: ttl > 0 ? new Date(Date.now() + ttl * 1000).toISOString() : '' };
 }

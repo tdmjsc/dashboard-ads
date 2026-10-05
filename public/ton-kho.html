@@ -199,6 +199,7 @@
       <textarea class="paste" id="hkdRaw" spellcheck="false" autocomplete="off" placeholder="curl 'https://amisapp.misa.vn/hkd/g1/api/report/v1/report/dynamic/v2/paging_filter' …"></textarea>
       <div class="actions">
         <button class="btn primary" id="btnHkdSave">Lưu và kiểm tra</button>
+        <button class="btn hidden" id="btnHkdRenew" title="Xin token MISA mới bằng phiên đăng nhập đã lưu, không cần dán lại">Thử tự gia hạn ngay</button>
         <button class="btn hidden" id="btnHkdDel">Ngắt kết nối</button>
         <span class="msg" id="hkdMsg">Nội dung dán chứa mã đăng nhập MISA, chỉ dán ở trang này.</span>
       </div>
@@ -428,6 +429,9 @@ function renderHkd() {
   const h = DATA && DATA.hkd;
   $('hkdState').textContent = h ? `· đã kết nối từ ${dt(h.savedAt)}${h.tokenExp ? ', mã đăng nhập hết hạn ' + dt(h.tokenExp) : ''}` : '· chưa kết nối';
   $('btnHkdDel').classList.toggle('hidden', !h);
+  $('btnHkdRenew').classList.toggle('hidden', !h);
+  if (h && h.renewCount) $('hkdState').textContent += ` · đã tự gia hạn ${h.renewCount} lần, gần nhất ${dt(h.renewedAt)}`;
+  if (h && h.lastRenewError) $('hkdState').textContent += ` · tự gia hạn lỗi: ${h.lastRenewError}`;
 }
 $('btnHkdSave').addEventListener('click', async () => {
   const raw = $('hkdRaw').value;
@@ -439,6 +443,15 @@ $('btnHkdSave').addEventListener('click', async () => {
     setMsg('hkdMsg', r.ok ? `Đã kết nối và lấy ${fmt(r.n)} dòng tồn kho.` : r.message, r.ok ? 'ok' : 'bad');
   } catch (e) { setMsg('hkdMsg', e.message, 'bad'); }
   b.disabled = false;
+  await load(); renderHkd();
+});
+$('btnHkdRenew').addEventListener('click', async e => {
+  e.target.disabled = true; setMsg('hkdMsg', 'Đang xin token mới từ MISA…');
+  try {
+    const r = await api('/api/ton-kho/hkd-renew', { method: 'POST' });
+    setMsg('hkdMsg', r.ok ? `Tự gia hạn thành công, đã lấy ${fmt(r.n)} dòng tồn kho.` : r.message, r.ok ? 'ok' : 'bad');
+  } catch (er) { setMsg('hkdMsg', er.message, 'bad'); }
+  e.target.disabled = false;
   await load(); renderHkd();
 });
 $('btnHkdDel').addEventListener('click', async () => {
