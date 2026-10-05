@@ -203,6 +203,7 @@
         <button class="btn hidden" id="btnHkdDel">Ngắt kết nối</button>
         <span class="msg" id="hkdMsg">Nội dung dán chứa mã đăng nhập MISA, chỉ dán ở trang này.</span>
       </div>
+      <pre class="raw hidden" id="hkdTrace" style="margin-top:10px"></pre>
       <label class="hint" style="display:flex;gap:8px;align-items:flex-start;margin-top:12px;cursor:pointer">
         <input type="checkbox" id="hkdAutoRenew" style="margin-top:3px">
         <span><b>Tự đăng nhập lại khi token hết hạn.</b> Chỉ bật khi tài khoản MISA trong request này dành riêng cho máy chủ. MISA chỉ cho một máy đăng nhập mỗi tài khoản, nên nếu kế toán dùng chung tài khoản thì mỗi lần máy chủ đăng nhập lại, kế toán sẽ bị thoát khỏi MISA.</span>
@@ -435,6 +436,9 @@ function renderHkd() {
   $('btnHkdDel').classList.toggle('hidden', !h);
   $('btnHkdRenew').classList.toggle('hidden', !h);
   $('hkdAutoRenew').checked = !!(DATA && DATA.hkdAutoRenew);
+  const tr = (h && h.lastRenewError && h.lastRenewTrace) || [];
+  $('hkdTrace').classList.toggle('hidden', !tr.length);
+  $('hkdTrace').textContent = tr.length ? 'Vết gia hạn lần gần nhất (gửi nguyên văn cho người hỗ trợ):\n' + tr.join('\n') : '';
   if (h && h.renewCount) $('hkdState').textContent += ` · đã tự gia hạn ${h.renewCount} lần, gần nhất ${dt(h.renewedAt)}`;
   if (h && h.lastRenewError) $('hkdState').textContent += ` · tự gia hạn lỗi: ${h.lastRenewError}`;
 }
