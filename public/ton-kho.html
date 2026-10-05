@@ -487,7 +487,7 @@ $('btnBotFind').addEventListener('click', async () => {
   try {
     const r = await api('/api/ton-kho/bot/groups');
     if (!r.ok) { if (r.webhook) $('botManual').classList.remove('hidden'); return setMsg('botFindMsg', r.message, 'bad'); }
-    if (!r.groups.length) return setMsg('botFindMsg', 'Chưa thấy nhóm nào. Thêm bot vào nhóm (hoặc nhắn 1 tin có nhắc tên bot trong nhóm) rồi bấm lại.', 'bad');
+    if (!r.groups.length) { $('botManual').classList.remove('hidden'); return setMsg('botFindMsg', `Chưa thấy nhóm nào. Trong nhóm, gửi lệnh /start@${BOT && BOT.bot ? BOT.bot.username : 'tên_bot'} rồi bấm lại, hoặc dán link nhóm vào ô bên dưới.`, 'bad'); }
     setMsg('botFindMsg', `Thấy ${r.groups.length} nhóm, bấm vào nhóm kho để chọn:`);
     $('botGroups').innerHTML = r.groups.map(g => `<button class="btn" data-gid="${esc(g.id)}" style="margin:0 8px 8px 0">${esc(g.title)}</button>`).join('');
   } catch (e) { setMsg('botFindMsg', e.message, 'bad'); }
