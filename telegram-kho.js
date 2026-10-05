@@ -85,6 +85,10 @@ export function mountKhoBot(app, { express, DATA_DIR, fetchWithTimeout, token = 
   // Các nhóm bot đang được thêm vào (đọc từ những cập nhật gần đây của bot)
   app.get('/api/ton-kho/bot/groups', guard, wrap(async (req, res) => {
     const j = await tg('getUpdates', { timeout: 0, allowed_updates: ['message', 'my_chat_member'] });
+    // Bot đang được một hệ thống khác nhận tin qua webhook → Telegram không cho đọc cập nhật ở đây.
+    // KHÔNG xoá webhook (sẽ làm hỏng hệ thống kia); thay vào đó cho nhập Chat ID nhóm bằng tay.
+    if (!j.ok && (j.error_code === 409 || /webhook/i.test(j.description || '')))
+      return res.json({ ok: false, webhook: true, message: 'Bot này đang được một hệ thống khác sử dụng (đã gắn webhook) nên không tự tìm nhóm được. Hãy dán link nhóm hoặc Chat ID vào ô bên dưới.' });
     if (!j.ok) return res.json({ ok: false, message: j.description || 'Telegram báo lỗi.' });
     const groups = new Map();
     for (const u of j.result || []) {
@@ -98,13 +102,22 @@ export function mountKhoBot(app, { express, DATA_DIR, fetchWithTimeout, token = 
 
   // Chọn nhóm nhận tin
   app.post('/api/ton-kho/bot/group', guard, json, wrap(async (req, res) => {
-    const id = String(req.body?.id ?? '').trim();
-    if (id === '') { STORE.chatId = ''; STORE.chatTitle = ''; save(); return res.json(await view()); }
-    if (!/^-?\d{4,20}$/.test(id)) return res.json({ ok: false, message: 'Chat ID nhóm phải là một dãy số.' });
+    const raw = String(req.body?.id ?? '').trim();
+    if (raw === '') { STORE.chatId = ''; STORE.chatTitle = ''; save(); return res.json(await view()); }
+    // Nhận Chat ID (vd -1001234567890) hoặc link nhóm trên Telegram Web (…/#-1234567890).
+    // Telegram Web có bản hiển thị ID siêu nhóm thiếu tiền tố -100, nên thử lần lượt các dạng.
+    const m = raw.match(/(-?\d{5,20})\s*$/);
+    if (!m) return res.json({ ok: false, message: 'Không đọc được Chat ID. Dán link nhóm trên Telegram Web hoặc dãy số Chat ID.' });
+    const digits = m[1].replace('-', '');
+    const candidates = [...new Set([m[1].startsWith('-') ? m[1] : '', '-' + digits, '-100' + digits].filter(Boolean))];
     // Hỏi Telegram để chắc bot đang ở trong nhóm và lấy đúng tên nhóm
-    const j = await tg('getChat', { chat_id: id });
-    if (!j.ok) return res.json({ ok: false, message: 'Bot không thấy nhóm này: ' + (j.description || 'kiểm tra đã thêm bot vào nhóm chưa') });
-    STORE.chatId = id; STORE.chatTitle = j.result?.title || String(req.body?.title || '').slice(0, 200);
+    let id = '', j = null;
+    for (const c of candidates) {
+      j = await tg('getChat', { chat_id: c });
+      if (j.ok && ['group', 'supergroup'].includes(j.result?.type)) { id = c; break; }
+    }
+    if (!id) return res.json({ ok: false, message: 'Bot không thấy nhóm này. Kiểm tra đã thêm bot vào nhóm chưa và đã chép đúng link của nhóm đó.' });
+    STORE.chatId = id; STORE.chatTitle = j.result?.title || '';
     STORE.savedAt = new Date().toISOString(); STORE.savedBy = req.session?.user?.user || '';
     save();
     res.json(await view());
