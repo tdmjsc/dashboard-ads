@@ -21,6 +21,8 @@ const DEFAULT_CONFIG = {
   branchId: '',         // Để trống = tất cả chi nhánh
   autoMinutes: 30,      // Tự đồng bộ mỗi N phút (0 = tắt)
   salesDays: 30,        // Số ngày gần nhất dùng để tính tốc độ bán
+  hkdAutoRenew: false,  // Tự đăng nhập lại MISA khi token hết hạn. CHỈ bật khi tài khoản MISA dành riêng cho máy chủ:
+                        // MISA chỉ cho 1 máy đăng nhập mỗi tài khoản, máy chủ đăng nhập lại sẽ làm người đang dùng bị thoát.
   alertThreshold: 10,   // Nhắn Telegram nhóm kho khi tồn MISA của một mã hàng xuống dưới số này
   dictItemType: 2,      // data_type của danh mục Vật tư hàng hoá trong get_dictionary
   dictStockType: 3,     // data_type của danh mục Kho trong get_dictionary
@@ -297,7 +299,7 @@ export function mountTonKho(app, { express, DATA_DIR, fetchWithTimeout }) {
         try { r = await fetchInventory(STORE.hkd, fetchWithTimeout); }
         catch (e) {
           // Token hết hạn (khoảng 12 giờ/lần): tự xin token mới bằng phiên AMIS rồi thử lại 1 lần
-          if (e.kind !== 'auth') throw e;
+          if (e.kind !== 'auth' || !cfg().hkdAutoRenew) throw e;
           await renewHkd();
           r = await fetchInventory(STORE.hkd, fetchWithTimeout);
         }
@@ -401,6 +403,7 @@ export function mountTonKho(app, { express, DATA_DIR, fetchWithTimeout }) {
       // Không bao giờ trả header/token của request đã dán về trình duyệt
       hkd: STORE.hkd ? { savedAt: STORE.hkd.savedAt, savedBy: STORE.hkd.savedBy, tokenExp: STORE.hkd.tokenExpAt || tokenExpiry(STORE.hkd.headers),
         renewedAt: STORE.hkd.renewedAt || '', renewCount: STORE.hkd.renewCount || 0, lastRenewError: STORE.hkd.lastRenewError || '' } : null,
+      hkdAutoRenew: !!c.hkdAutoRenew,
       autoMinutes: c.autoMinutes,
       alert: { threshold: alertTh(), nLow: lowItems().length, last: STORE.lastAlert || null },
     });
@@ -443,6 +446,12 @@ export function mountTonKho(app, { express, DATA_DIR, fetchWithTimeout }) {
     save();
     try { const r = await syncFromHkd(); res.json({ ok: true, n: r.n }); }
     catch (e) { res.json({ ok: false, saved: true, message: e.message }); }
+  });
+  // Bật/tắt tự gia hạn phiên (mặc định tắt — xem DEFAULT_CONFIG.hkdAutoRenew)
+  app.post('/api/ton-kho/hkd-auto-renew', guard, json, (req, res) => {
+    STORE.config = { ...STORE.config, hkdAutoRenew: req.body?.on === true };
+    save();
+    res.json({ ok: true, on: STORE.config.hkdAutoRenew });
   });
   // Thử tự gia hạn phiên ngay (để biết cơ chế có chạy với tài khoản này không), rồi đồng bộ lại
   app.post('/api/ton-kho/hkd-renew', guard, async (req, res) => {
