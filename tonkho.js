@@ -8,7 +8,7 @@
 // =====================================================================
 import fs from 'node:fs';
 import path from 'node:path';
-import { parsePastedRequest, fetchInventory, tokenExpiry } from './misa-tonkho.js';
+import { parsePastedRequest, fetchInventory, tokenExpiry, renewSession } from './misa-tonkho.js';
 
 // Các trạng thái OMS được tính là "đã bán" khi đo tốc độ bán
 const TRANG_THAI_BAN = ['Đã chốt', 'Đang ship', 'Ship thành công'];
@@ -293,7 +293,14 @@ export function mountTonKho(app, { express, DATA_DIR, fetchWithTimeout }) {
     if (syncing) return syncing;
     syncing = (async () => {
       try {
-        const r = await fetchInventory(STORE.hkd, fetchWithTimeout);
+        let r;
+        try { r = await fetchInventory(STORE.hkd, fetchWithTimeout); }
+        catch (e) {
+          // Token hết hạn (khoảng 12 giờ/lần): tự xin token mới bằng phiên AMIS rồi thử lại 1 lần
+          if (e.kind !== 'auth') throw e;
+          await renewHkd();
+          r = await fetchInventory(STORE.hkd, fetchWithTimeout);
+        }
         const items = r.items.filter(x => x.code || x.name);
         setSnapshot(items, 'misa-hkd');
         STORE.lastSync = { at: new Date().toISOString(), ok: true, n: items.length };
@@ -301,7 +308,7 @@ export function mountTonKho(app, { express, DATA_DIR, fetchWithTimeout }) {
         afterSnapshot();
         return STORE.lastSync;
       } catch (e) {
-        // kind === 'auth' → phiên MISA hết hạn, cần dán lại request
+        // kind === 'auth' → cả token lẫn phiên AMIS đều hết, cần dán lại request
         STORE.lastSync = { at: new Date().toISOString(), ok: false, message: e.message, kind: e.kind || '' };
         save();
         alertAuthExpired().catch(() => {});
@@ -309,6 +316,19 @@ export function mountTonKho(app, { express, DATA_DIR, fetchWithTimeout }) {
       } finally { syncing = null; }
     })();
     return syncing;
+  }
+  // Xin token MISA mới và lưu lại (kèm cookie đã được MISA nối dài). Ném lỗi kind='auth' nếu không được.
+  async function renewHkd() {
+    try {
+      STORE.hkd = await renewSession(STORE.hkd, fetchWithTimeout);
+      STORE.hkd.lastRenewError = '';
+      save();
+      console.log('[TONKHO] đã tự gia hạn phiên MISA (lần ' + STORE.hkd.renewCount + ')');
+    } catch (e) {
+      STORE.hkd.lastRenewError = e.message; STORE.hkd.lastRenewErrorAt = new Date().toISOString();
+      save();
+      throw e;
+    }
   }
   // Đã dán request Hộ kinh doanh thì ưu tiên nguồn đó, không thì dùng Open API
   const syncNow = () => (STORE.hkd ? syncFromHkd() : syncFromMisa());
@@ -379,7 +399,8 @@ export function mountTonKho(app, { express, DATA_DIR, fetchWithTimeout }) {
       history: STORE.history || [],
       configured: !!STORE.hkd || !!(c.appId && c.accessCode && c.orgCompanyCode),
       // Không bao giờ trả header/token của request đã dán về trình duyệt
-      hkd: STORE.hkd ? { savedAt: STORE.hkd.savedAt, savedBy: STORE.hkd.savedBy, tokenExp: tokenExpiry(STORE.hkd.headers) } : null,
+      hkd: STORE.hkd ? { savedAt: STORE.hkd.savedAt, savedBy: STORE.hkd.savedBy, tokenExp: STORE.hkd.tokenExpAt || tokenExpiry(STORE.hkd.headers),
+        renewedAt: STORE.hkd.renewedAt || '', renewCount: STORE.hkd.renewCount || 0, lastRenewError: STORE.hkd.lastRenewError || '' } : null,
       autoMinutes: c.autoMinutes,
       alert: { threshold: alertTh(), nLow: lowItems().length, last: STORE.lastAlert || null },
     });
@@ -422,6 +443,13 @@ export function mountTonKho(app, { express, DATA_DIR, fetchWithTimeout }) {
     save();
     try { const r = await syncFromHkd(); res.json({ ok: true, n: r.n }); }
     catch (e) { res.json({ ok: false, saved: true, message: e.message }); }
+  });
+  // Thử tự gia hạn phiên ngay (để biết cơ chế có chạy với tài khoản này không), rồi đồng bộ lại
+  app.post('/api/ton-kho/hkd-renew', guard, async (req, res) => {
+    if (!STORE.hkd) return res.json({ ok: false, message: 'Chưa kết nối MISA Hộ kinh doanh.' });
+    try { await renewHkd(); } catch (e) { return res.json({ ok: false, message: e.message }); }
+    try { const r = await syncFromHkd(); res.json({ ok: true, n: r.n }); }
+    catch (e) { res.json({ ok: false, renewed: true, message: 'Đã lấy được token mới nhưng đồng bộ lỗi: ' + e.message }); }
   });
   app.post('/api/ton-kho/hkd-config/delete', guard, (req, res) => {
     STORE.hkd = null;
