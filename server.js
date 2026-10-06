@@ -1533,16 +1533,19 @@ app.get('/api/marketing/probe-ngay', async (req, res) => {
   let rawKeys = null;
   try {
     for (const t of tries) {
-      const j = await sandboxReportEx(since, until, t.extra);
-      const d = (j && j.data) || {};
-      const rows = d.reportLeadByNhanSuMktDtos || [];
-      const tot = d.reportLeadByNhanSuMktTotalDto || {};
-      if (!rawKeys && rows.length) rawKeys = { row: rows[0], total: tot };
-      out.push({ thu: t.thu, success: j && (j.success ?? j.Success), soNV: rows.length,
-        contact: tot.tongSoContact, donChot: tot.tongSoDonHang, doanhSo: tot.tongDoanhSo });
+      try {
+        const j = await sandboxReportEx(since, until, t.extra);
+        const d = (j && j.data) || {};
+        const rows = d.reportLeadByNhanSuMktDtos || [];
+        const tot = d.reportLeadByNhanSuMktTotalDto || {};
+        if (!rawKeys && rows.length) rawKeys = { row: rows[0], total: tot };
+        out.push({ thu: t.thu, success: j && (j.success ?? j.Success), soNV: rows.length,
+          contact: tot.tongSoContact, donChot: tot.tongSoDonHang, doanhSo: tot.tongDoanhSo,
+          ...(rows.length ? {} : { loi: j && (j.message || j.Message || j.title || JSON.stringify(j).slice(0, 300)) }) });
+      } catch (e) { out.push({ thu: t.thu, loi: e.message }); }
     }
     let tuDon = null;
-    if (req.query.orders === '1' && SANDBOX_TOKEN) {
+    if (req.query.orders === '1' && SANDBOX_TOKEN) try {
       const j = await fetchSandboxOrders(since, until, { maxPages: 5, maxRetry: 2 });
       const inWin = t => { const d = t ? String(t).slice(0, 10) : ''; return d >= since && d <= until; };
       const sum = pred => { let n = 0, ds = 0; for (const o of j.data) if (String(o.orderConfirmId) === '1' && pred(o)) { n++; ds += Number(o.totalPrice || 0); } return { donChot: n, doanhSo: ds }; };
@@ -1550,9 +1553,9 @@ app.get('/api/marketing/probe-ngay', async (req, res) => {
         tatCa: sum(() => true),
         contactVeTrongNgay_saleNhanData: sum(o => inWin(o.timeSaleReceivingData || o.createTime)),
         contactVeTrongNgay_createTime: sum(o => inWin(o.createTime)) };
-    }
+    } catch (e) { tuDon = { loi: e.message }; }
     res.json({ ok: true, since, until, ghiChu: 'Tìm cách nào có donChot/doanhSo chỉ của contact về trong ngày', ketqua: out, tuDon, rawKeys });
-  } catch (e) { res.json({ ok: false, message: e.message, ketqua: out }); }
+  } catch (e) { res.json({ ok: false, message: e.message, ketqua: out, rawKeys }); }
 });
 
 // (HƯỚNG A) Lấy báo cáo lead theo nhân sự cho khoảng ngày (mặc định hôm qua).
