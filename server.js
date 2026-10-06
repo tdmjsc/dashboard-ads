@@ -1532,7 +1532,8 @@ app.get('/api/marketing/probe-ngay', async (req, res) => {
   const out = [];
   let rawKeys = null;
   try {
-    for (const t of tries) {
+    if (!sandboxCookie) await sandboxLogin();   // đăng nhập 1 lần trước khi gọi song song
+    await Promise.all(tries.map(async t => {
       try {
         const j = await sandboxReportEx(since, until, t.extra);
         const d = (j && j.data) || {};
@@ -1543,10 +1544,10 @@ app.get('/api/marketing/probe-ngay', async (req, res) => {
           contact: tot.tongSoContact, donChot: tot.tongSoDonHang, doanhSo: tot.tongDoanhSo,
           ...(rows.length ? {} : { loi: j && (j.message || j.Message || j.title || JSON.stringify(j).slice(0, 300)) }) });
       } catch (e) { out.push({ thu: t.thu, loi: e.message }); }
-    }
+    }));
     let tuDon = null;
     if (req.query.orders === '1' && SANDBOX_TOKEN) try {
-      const j = await fetchSandboxOrders(since, until, { maxPages: 5, maxRetry: 2 });
+      const j = await fetchSandboxOrders(since, until, { maxPages: 1, maxRetry: 0 });
       const inWin = t => { const d = t ? String(t).slice(0, 10) : ''; return d >= since && d <= until; };
       const sum = pred => { let n = 0, ds = 0; for (const o of j.data) if (String(o.orderConfirmId) === '1' && pred(o)) { n++; ds += Number(o.totalPrice || 0); } return { donChot: n, doanhSo: ds }; };
       tuDon = { tongDonAPI: j.data.length, totalRecord: j.totalRecord,
