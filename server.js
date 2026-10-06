@@ -1260,7 +1260,9 @@ async function sandboxReport(since, until) {
     pageInfo: { page: 1, pageSize: 1000 }, sorts: [],
     kieuXem: 4, loaiNhanVien: 1, isChietKhau: true, isVat: true,
     date: [tuNgay, denNgay], tuNgay, denNgay,
-    idChiNhanh: SANDBOX_CHINHANH, kieuNgay: 'NgayTao',
+    // 'NgayTaoContact': đơn chốt/doanh số CHỈ của contact về trong khoảng ngày.
+    // ('NgayTao' tính cả đơn chốt trong ngày của contact về từ các ngày trước → tỷ lệ chốt > 100%.)
+    idChiNhanh: SANDBOX_CHINHANH, kieuNgay: 'NgayTaoContact',
     typeViewDetail: null, idPhongBanSale: null, idNhomNhanVienSale: null, idUserSale: null,
     idPhongBanMkts: null, idNhomNhanVienMkts: null, idUserMkts: null,
   };
@@ -1514,51 +1516,6 @@ app.get('/api/marketing/login-test', async (req, res) => {
   }
 });
 
-// DÒ cách lấy doanh số CHỈ của contact về trong khoảng ngày (không tính đơn chốt hôm nay
-// của contact các ngày trước). Thử các tham số ngày của báo cáo lead + tính tay từ đơn.
-//   /api/marketing/probe-ngay?since=2026-10-06&until=2026-10-06          (chỉ báo cáo, nhanh)
-//   /api/marketing/probe-ngay?since=2026-10-06&until=2026-10-06&orders=1 (thêm tính tay từ đơn, chậm ~1 phút/trang)
-app.get('/api/marketing/probe-ngay', async (req, res) => {
-  if ((req.session.user || {}).role !== 'admin') return res.status(403).json({ ok: false, message: 'Chỉ admin' });
-  const today = new Date().toISOString().slice(0, 10);
-  const since = req.query.since || today, until = req.query.until || since;
-  const tries = [
-    { thu: 'hien_tai', extra: {} },
-    { thu: 'khongGioiHanNgayChot_false', extra: { khongGioiHanNgayChot: false } },
-    { thu: 'khongGioiHanNgayChot_true', extra: { khongGioiHanNgayChot: true } },
-    ...['NgayChot', 'NgayTaoContact', 'NgayTaoData', 'NgayNhanData', 'NgayVeData', 'NgayDataVe']
-      .map(k => ({ thu: 'kieuNgay_' + k, extra: { kieuNgay: k } })),
-  ];
-  const out = [];
-  let rawKeys = null;
-  try {
-    if (!sandboxCookie) await sandboxLogin();   // đăng nhập 1 lần trước khi gọi song song
-    await Promise.all(tries.map(async t => {
-      try {
-        const j = await sandboxReportEx(since, until, t.extra);
-        const d = (j && j.data) || {};
-        const rows = d.reportLeadByNhanSuMktDtos || [];
-        const tot = d.reportLeadByNhanSuMktTotalDto || {};
-        if (!rawKeys && rows.length) rawKeys = { row: rows[0], total: tot };
-        out.push({ thu: t.thu, success: j && (j.success ?? j.Success), soNV: rows.length,
-          contact: tot.tongSoContact, donChot: tot.tongSoDonHang, doanhSo: tot.tongDoanhSo,
-          ...(rows.length ? {} : { loi: j && (j.message || j.Message || j.title || JSON.stringify(j).slice(0, 300)) }) });
-      } catch (e) { out.push({ thu: t.thu, loi: e.message }); }
-    }));
-    let tuDon = null;
-    if (req.query.orders === '1' && SANDBOX_TOKEN) try {
-      const j = await fetchSandboxOrders(since, until, { maxPages: 1, maxRetry: 0 });
-      const inWin = t => { const d = t ? String(t).slice(0, 10) : ''; return d >= since && d <= until; };
-      const sum = pred => { let n = 0, ds = 0; for (const o of j.data) if (String(o.orderConfirmId) === '1' && pred(o)) { n++; ds += Number(o.totalPrice || 0); } return { donChot: n, doanhSo: ds }; };
-      tuDon = { tongDonAPI: j.data.length, totalRecord: j.totalRecord,
-        tatCa: sum(() => true),
-        contactVeTrongNgay_saleNhanData: sum(o => inWin(o.timeSaleReceivingData || o.createTime)),
-        contactVeTrongNgay_createTime: sum(o => inWin(o.createTime)) };
-    } catch (e) { tuDon = { loi: e.message }; }
-    res.json({ ok: true, since, until, ghiChu: 'Tìm cách nào có donChot/doanhSo chỉ của contact về trong ngày', ketqua: out, tuDon, rawKeys });
-  } catch (e) { res.json({ ok: false, message: e.message, ketqua: out, rawKeys }); }
-});
-
 // (HƯỚNG A) Lấy báo cáo lead theo nhân sự cho khoảng ngày (mặc định hôm qua).
 //  Gộp chi tiêu thực từ Meta API vào cột "chiTieu" và tính lại "giaContact".
 //  Mở: /api/marketing/report?since=2026-06-12&until=2026-06-12
@@ -1676,7 +1633,7 @@ app.get('/api/marketing/report', async (req, res) => {
         message: it.message,
       }));
     }
-    res.json({ ok: true, ver: 'mkt-2026-06-23-v13', since, until, rows, total, warnings, lastUpdated: new Date().toISOString() });
+    res.json({ ok: true, ver: 'mkt-2026-10-06-v14', since, until, rows, total, warnings, lastUpdated: new Date().toISOString() });
   } catch (e) {
     res.json({ ok: false, since, until, message: e.message });
   }
