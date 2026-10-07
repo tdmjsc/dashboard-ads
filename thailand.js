@@ -23,10 +23,13 @@ function parseCombo(message) {
   // Tìm "X กล่อง" để biết số hộp mua (combo)
   const mBox = s.match(/(\d+)\s*กล่อง/);
   const boxes = mBox ? parseInt(mBox[1], 10) : 0;
-  // Tìm TẤT CẢ số đứng trước "THB" rồi CỘNG lại (tiền hàng + phí ship)
-  // VD "549 THB + ค่าส่ง 49 THB" → 549 + 49 = 598
+  // Sản phẩm tính theo chiếc/cái (VD balo "1 ชิ้น: 759 THB ...") — không có quà tặng
+  const mPcs = boxes ? null : s.match(/(\d+)\s*(?:ชิ้น|ใบ|ตัว|ชุด)/);
+  const pcs = mPcs ? parseInt(mPcs[1], 10) : 0;
+  // Tìm TẤT CẢ số đứng trước "THB" / "บาท" / "฿" rồi CỘNG lại (tiền hàng + phí ship)
+  // VD "549 THB + ค่าส่ง 49 THB" → 598; "759 THB + ค่าจัดส่ง 40 บาท" → 799
   let gia = 0;
-  const all = s.match(/([\d,]+)\s*THB/g);
+  const all = s.match(/([\d,]+)\s*(?:THB|บาท|฿)/gi);
   if (all) {
     for (const m of all) {
       const n = parseInt(m.replace(/[^\d]/g, ''), 10);
@@ -37,6 +40,7 @@ function parseCombo(message) {
   // Số lượng gel thực nhận theo bảng (mua 3 tặng 1 = 4, mua 4 tặng 1 = 5, mua 5 tặng 1 = 6)
   let soLuong = boxes;
   if (boxes >= 3) soLuong = boxes + 1; // combo 3/4/5 đều tặng thêm 1
+  if (!boxes) soLuong = pcs;
   return { soLuong: soLuong || 0, gia: gia || 0, boxes: boxes || 0 };
 }
 
