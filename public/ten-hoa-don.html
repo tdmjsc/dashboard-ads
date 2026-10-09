@@ -82,6 +82,36 @@
   details summary{cursor:pointer;font-size:13px;font-weight:600;color:var(--accent);margin-top:6px;}
   .empty{padding:30px;text-align:center;color:var(--muted);}
   .hidden{display:none !important;}
+  /* Danh sách tên xuất HĐ dạng thẻ (dễ dùng trên điện thoại) */
+  .items{display:flex;flex-direction:column;gap:8px;}
+  .item{border:1px solid var(--line);border-radius:12px;padding:10px 12px;background:#fff;}
+  .item.active{border-color:var(--teal);background:#F4FBF9;}
+  .item-top{display:flex;gap:10px;align-items:flex-start;}
+  .idx{flex:none;width:24px;height:24px;border-radius:7px;background:#F0F3F8;display:grid;place-items:center;font-family:'Space Grotesk',sans-serif;font-size:13px;font-weight:600;color:var(--muted);}
+  .item.active .idx{background:var(--teal);color:#fff;}
+  .iname{flex:1;min-width:0;}
+  .iname b{font-size:14px;font-weight:600;display:block;word-break:break-word;}
+  .iname small{display:block;font-size:12px;color:var(--muted);margin-top:2px;}
+  .iname input.tenEdit{width:100%;margin-top:4px;}
+  .item-bottom{display:flex;gap:10px 14px;align-items:center;flex-wrap:wrap;margin-top:8px;padding-left:34px;font-size:13px;color:var(--muted);}
+  .item-bottom input.sl{width:96px;text-align:right;}
+  .item-bottom .left b{color:var(--text);font-family:'Space Grotesk',sans-serif;}
+  .item-bottom .acts{margin-left:auto;display:flex;gap:6px;}
+  .addbar{display:flex;gap:8px;flex-wrap:wrap;margin-top:10px;}
+  .picker{margin-top:10px;border:1px solid var(--line);border-radius:12px;background:#FBFCFD;padding:10px;}
+  .picker input.q{width:100%;}
+  .plist{max-height:320px;overflow:auto;margin-top:8px;display:flex;flex-direction:column;gap:2px;}
+  .pitem{display:flex;gap:10px;align-items:center;padding:8px;border-radius:9px;cursor:pointer;font-size:13.5px;}
+  .pitem:hover{background:#F0F3F8;}
+  .pitem input{flex:none;width:18px;height:18px;accent-color:var(--teal);}
+  .pitem .pn{flex:1;min-width:0;word-break:break-word;}
+  .pitem .pn small{display:block;color:var(--faint);font-size:12px;}
+  .pitem .pq{flex:none;font-family:'Space Grotesk',sans-serif;font-weight:500;}
+  .pitem.done{opacity:.45;cursor:default;}
+  .pord{flex:none;min-width:22px;height:22px;border-radius:7px;background:var(--teal);color:#fff;font-size:12px;font-weight:600;display:none;place-items:center;}
+  .pord.on{display:grid;}
+  .head-fields{display:flex;gap:10px 14px;flex-wrap:wrap;align-items:center;width:100%;}
+  .head-fields input.tenSP{flex:1;min-width:220px;font-weight:600;}
   .switch{display:inline-flex;align-items:center;gap:6px;font-size:13px;cursor:pointer;}
   @media(max-width:720px){ .wrap,.topbar-inner{padding-left:16px;padding-right:16px;} }
 </style>
@@ -118,6 +148,7 @@ const $ = id => document.getElementById(id);
 const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 const fmt = n => n === null || n === undefined ? '—' : (Math.round(n * 100) / 100).toLocaleString('vi-VN');
 const dt = s => s ? new Date(s).toLocaleString('vi-VN', { hour: '2-digit', minute: '2-digit', day: '2-digit', month: '2-digit' }) : '';
+const normName = x => String(x || '').normalize('NFD').replace(/[\u0300-\u036f]/g, '').replace(/đ/gi, 'd').toLowerCase().replace(/\s+/g, ' ').trim();
 async function api(url, body) {
   const r = await fetch(url, body === undefined ? {} : { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
   if (r.status === 401) { location.href = '/login'; throw new Error('Chưa đăng nhập'); }
@@ -128,32 +159,58 @@ async function api(url, body) {
 let DATA = { rules: [], misaItems: [] };
 let NEW = null; // sản phẩm đang thêm (chưa lưu)
 
-function misaOptions(sel) {
-  return `<option value="">— không ghép MISA —</option>` + DATA.misaItems.map(m =>
-    `<option value="${esc(m.key)}" ${m.key === sel ? 'selected' : ''}>${esc(m.name)}${m.code ? ' (' + esc(m.code) + ')' : ''} · tồn ${fmt(m.qty)}</option>`).join('');
+const misaOf = key => DATA.misaItems.find(m => m.key === key);
+
+function itemCard(q, i, r, isNew) {
+  const active = !isNew && i === (r.activeIdx || 0);
+  const m = misaOf(q.misaKey);
+  let tag = '';
+  if (!isNew) {
+    if (q.remaining === null || q.remaining === undefined) tag = '<span class="tag chua">Chưa có số lượng</span>';
+    else if (active) tag = q.remaining > 0 ? '<span class="tag dang">Đang xuất</span>' : '<span class="tag het">Đang xuất · hết</span>';
+    else tag = q.remaining > 0 ? '<span class="tag cho">Chờ</span>' : '<span class="tag het">Hết</span>';
+  }
+  // Tên xuất HĐ mặc định = tên MISA; chỉ hiện ô sửa khi không ghép MISA hoặc bấm ✎
+  const editing = q._edit || !q.misaKey;
+  const sub = [m?.code, m ? 'Tồn MISA ' + fmt(m.qty) : (q.misaKey ? 'Mã MISA không còn trong số liệu tồn' : 'Không ghép MISA')]
+    .filter(Boolean).join(' · ');
+  const remain = isNew ? '' : `<span class="left">Còn được xuất: <b>${fmt(q.remaining)}</b>${q.used ? ` (đã xuất ${fmt(q.used)})` : ''}</span>`;
+  return `<div class="item ${active ? 'active' : ''}" data-i="${i}">
+    <div class="item-top">
+      <span class="idx">${i + 1}</span>
+      <div class="iname">
+        ${editing ? `<input class="tenEdit" value="${esc(q.ten)}" placeholder="Tên xuất hoá đơn">`
+          : `<b>${esc(q.ten)}</b>`}
+        <small>${esc(sub)}${m && normName(m.name) !== normName(q.ten) && !editing ? ' · tên MISA: ' + esc(m.name) : ''}${active && q.activatedAt ? ' · dùng từ ' + dt(q.activatedAt) : ''}</small>
+      </div>
+      ${tag}
+    </div>
+    <div class="item-bottom">
+      <label>SL được xuất <input class="sl" type="number" min="0" inputmode="numeric" value="${q.soLuong ?? ''}" placeholder="theo MISA"></label>
+      ${remain}
+      <span class="acts">
+        ${q.misaKey ? `<button class="btn sm" data-act="edit" title="Sửa tên xuất hoá đơn">✎</button>` : ''}
+        <button class="btn sm" data-act="up" title="Lên">↑</button>
+        <button class="btn sm" data-act="down" title="Xuống">↓</button>
+        <button class="btn sm danger" data-act="del" title="Bỏ khỏi danh sách">✕</button>
+        ${!isNew && !active ? `<button class="btn sm" data-act="use">Dùng ngay</button>` : ''}
+      </span>
+    </div>
+  </div>`;
 }
 
-function queueRow(q, i, activeIdx, isNew) {
-  const active = !isNew && i === activeIdx;
-  let tag;
-  if (isNew) tag = '';
-  else if (q.remaining === null) tag = '<span class="tag chua">Chưa có số lượng</span>';
-  else if (active) tag = q.remaining > 0 ? '<span class="tag dang">Đang xuất</span>' : '<span class="tag het">Đang xuất · đã hết</span>';
-  else tag = q.remaining > 0 ? '<span class="tag cho">Chờ</span>' : '<span class="tag het">Hết</span>';
-  return `<tr class="${active ? 'active' : ''}" data-i="${i}">
-    <td class="mono">${i + 1}</td>
-    <td><input class="ten" value="${esc(q.ten)}" placeholder="Tên xuất hoá đơn (đúng tên trên MISA)"></td>
-    <td><select class="misa">${misaOptions(q.misaKey)}</select></td>
-    <td class="r mono">${isNew ? '' : fmt(q.misaQty)}</td>
-    <td class="r"><input class="sl" type="number" min="0" value="${q.soLuong ?? ''}" placeholder="theo MISA"></td>
-    <td class="r mono">${isNew ? '' : fmt(q.remaining)}${!isNew && q.used ? `<div class="hint">đã xuất ${fmt(q.used)}</div>` : ''}</td>
-    <td>${tag}${active && q.activatedAt ? `<div class="hint">từ ${dt(q.activatedAt)}</div>` : ''}</td>
-    <td><div class="row" style="flex-wrap:nowrap">
-      <button class="btn sm" data-act="up" title="Lên">↑</button>
-      <button class="btn sm" data-act="down" title="Xuống">↓</button>
-      <button class="btn sm danger" data-act="del" title="Xoá dòng">✕</button>
-      ${!isNew && !active ? `<button class="btn sm" data-act="use">Dùng tên này</button>` : ''}
-    </div></td></tr>`;
+// Hộp chọn hàng MISA (tick nhiều mã một lần)
+function pickerHtml(r) {
+  const used = new Set(r.queue.map(q => q.misaKey).filter(Boolean));
+  const list = DATA.misaItems.map(m => `<label class="pitem ${used.has(m.key) ? 'done' : ''}" data-s="${esc(normName(m.name + ' ' + (m.code || '')))}">
+      <input type="checkbox" value="${esc(m.key)}" ${used.has(m.key) ? 'checked disabled' : ''}>
+      <span class="pn">${esc(m.name)}<small>${esc(m.code || '')}${used.has(m.key) ? ' · đã có trong danh sách' : ''}</small></span>
+      <span class="pord"></span><span class="pq">${fmt(m.qty)}</span></label>`).join('');
+  return `<div class="picker">
+    <input class="q" type="search" placeholder="Tìm hàng trên MISA (tên hoặc mã)…">
+    <div class="plist">${list || '<p class="hint" style="padding:8px">Chưa có số liệu tồn MISA. Vào trang Tồn kho để đồng bộ trước.</p>'}</div>
+    <div class="addbar"><button class="btn primary" data-act="pickadd">Thêm các mã đã tích (theo thứ tự tích)</button><button class="btn" data-act="pickclose">Đóng</button></div>
+  </div>`;
 }
 
 function ruleCard(r, isNew) {
@@ -161,22 +218,22 @@ function ruleCard(r, isNew) {
   const sv = r.save;
   return `<div class="panel" data-id="${esc(r.id || '')}">
     <div class="panel-head">
-      <div class="row">
-        <input class="tenSP" value="${esc(r.tenSP || '')}" placeholder="Tên sản phẩm trên Sandbox" style="min-width:280px;font-weight:600">
+      <div class="head-fields">
+        <input class="tenSP" list="dlMisa" value="${esc(r.tenSP || '')}" placeholder="Tên sản phẩm trên Sandbox (gõ hoặc chọn)">
         <label class="switch"><input type="checkbox" class="auto" ${r.auto !== false ? 'checked' : ''}> Tự đổi tên</label>
-        <label class="switch">Đổi khi còn ≤ <input type="number" class="buffer" min="0" value="${r.buffer || 0}" style="width:70px"></label>
+        <label class="switch">Đổi khi còn ≤ <input type="number" class="buffer" min="0" inputmode="numeric" value="${r.buffer || 0}" style="width:70px"></label>
       </div>
       ${isNew ? '' : `<div class="now">Đang xuất: <b>${esc(cur?.ten || '—')}</b></div>`}
     </div>
     <div class="sec">
-      <h3>Danh sách tên xuất hoá đơn (theo thứ tự dùng)</h3>
-      <div class="tablescroll"><table>
-        <thead><tr><th>#</th><th>Tên xuất hoá đơn</th><th>Mã hàng MISA</th><th class="r">Tồn MISA</th><th class="r">SL nhập tay</th><th class="r">Còn được xuất</th><th>Trạng thái</th><th></th></tr></thead>
-        <tbody>${r.queue.map((q, i) => queueRow(q, i, r.activeIdx || 0, isNew)).join('')}</tbody>
-      </table></div>
-      <div class="row" style="margin-top:10px">
-        <button class="btn" data-act="addrow">＋ Thêm tên</button>
-        <button class="btn primary" data-act="save">Lưu</button>
+      <h3>Tên xuất hoá đơn — dùng lần lượt từ trên xuống</h3>
+      <div class="items">${r.queue.length ? r.queue.map((q, i) => itemCard(q, i, r, isNew)).join('')
+        : '<p class="hint">Chưa có tên nào. Bấm <b>＋ Chọn từ MISA</b> để chọn các mã hàng (B, C, A…).</p>'}</div>
+      ${r._pick ? pickerHtml(r) : `<div class="addbar">
+        <button class="btn primary" data-act="pick">＋ Chọn từ MISA</button>
+        <button class="btn" data-act="addmanual">＋ Tên không có trên MISA</button></div>`}
+      <div class="row" style="margin-top:12px">
+        <button class="btn primary" data-act="save">${isNew ? 'Lưu sản phẩm' : 'Lưu thay đổi'}</button>
         ${isNew ? '<button class="btn" data-act="cancel">Huỷ</button>' : '<button class="btn danger" data-act="delrule">Xoá sản phẩm</button>'}
         <span class="msg" data-msg="save"></span>
       </div>
@@ -219,7 +276,8 @@ function ruleCard(r, isNew) {
 function render() {
   const cards = DATA.rules.map(r => ruleCard(r, false));
   if (NEW) cards.unshift(ruleCard(NEW, true));
-  $('list').innerHTML = cards.length ? cards.join('') : '<div class="panel empty">Chưa có sản phẩm nào. Bấm <b>＋ Thêm sản phẩm</b>.</div>';
+  $('list').innerHTML = (cards.length ? cards.join('') : '<div class="panel empty">Chưa có sản phẩm nào. Bấm <b>＋ Thêm sản phẩm</b>.</div>')
+    + `<datalist id="dlMisa">${DATA.misaItems.map(m => `<option value="${esc(m.name)}">`).join('')}</datalist>`;
   $('noLogin').classList.toggle('hidden', !!DATA.sandboxLogin);
 }
 
@@ -228,51 +286,77 @@ async function load() {
   if (d.ok) { DATA = d; render(); }
 }
 
-// Đọc form của một thẻ
-function readCard(card) {
+// Dữ liệu gửi lên máy chủ (đã đồng bộ từ ô nhập vào rule mỗi khi gõ)
+function payload(card, rule) {
   return {
     id: card.dataset.id || undefined,
-    tenSP: card.querySelector('.tenSP').value,
-    auto: card.querySelector('.auto').checked,
-    buffer: card.querySelector('.buffer').value,
-    queue: [...card.querySelectorAll('tbody tr')].map(tr => ({
-      ten: tr.querySelector('.ten').value, misaKey: tr.querySelector('.misa').value, soLuong: tr.querySelector('.sl').value,
-    })),
+    tenSP: rule.tenSP, auto: rule.auto !== false, buffer: rule.buffer,
+    queue: rule.queue.map(q => ({ ten: q.ten, misaKey: q.misaKey || '', soLuong: q.soLuong ?? '' })),
   };
 }
 const ruleOf = card => card.dataset.id ? DATA.rules.find(r => r.id === card.dataset.id) : NEW;
 const setMsg = (card, k, t, cls = '') => { const el = card.querySelector(`[data-msg="${k}"]`); if (el) { el.textContent = t; el.className = 'msg ' + cls; } };
 
-// Khi chọn mã MISA mà ô tên còn trống → điền sẵn tên MISA
+// Gõ vào ô nào thì ghi ngay vào rule, để vẽ lại không mất chữ
+$('list').addEventListener('input', e => {
+  const el = e.target, card = el.closest('.panel'); if (!card) return;
+  const rule = ruleOf(card); if (!rule) return;
+  const it = el.closest('.item'), i = it ? Number(it.dataset.i) : -1;
+  if (el.classList.contains('tenSP')) rule.tenSP = el.value;
+  else if (el.classList.contains('buffer')) rule.buffer = el.value;
+  else if (el.classList.contains('auto')) rule.auto = el.checked;
+  else if (el.classList.contains('sl')) rule.queue[i].soLuong = el.value === '' ? null : el.value;
+  else if (el.classList.contains('tenEdit')) rule.queue[i].ten = el.value;
+  else if (el.classList.contains('q')) { // lọc danh sách MISA trong hộp chọn
+    const k = normName(el.value);
+    card.querySelectorAll('.pitem').forEach(p => p.classList.toggle('hidden', !!k && !p.dataset.s.includes(k)));
+  }
+});
 $('list').addEventListener('change', e => {
-  if (!e.target.classList.contains('misa')) return;
-  const tr = e.target.closest('tr'), ten = tr.querySelector('.ten');
-  const m = DATA.misaItems.find(x => x.key === e.target.value);
-  if (m && !ten.value.trim()) ten.value = m.name;
+  const el = e.target, card = el.closest('.panel'); if (!card) return;
+  if (el.classList.contains('auto')) { const rule = ruleOf(card); if (rule) rule.auto = el.checked; }
+  // Hộp chọn MISA: nhớ thứ tự tích (B rồi C rồi A → thêm đúng B, C, A) và hiện số thứ tự
+  if (el.closest('.pitem')) {
+    const rule = ruleOf(card); rule._sel = (rule._sel || []).filter(k => k !== el.value);
+    if (el.checked) rule._sel.push(el.value);
+    card.querySelectorAll('.pitem').forEach(p => {
+      const k = p.querySelector('input').value, n = rule._sel.indexOf(k), o = p.querySelector('.pord');
+      o.textContent = n >= 0 ? rule.queue.length + n + 1 : ''; o.classList.toggle('on', n >= 0);
+    });
+  }
 });
 
 $('list').addEventListener('click', async e => {
   const b = e.target.closest('button[data-act]'); if (!b) return;
   const card = b.closest('.panel'), act = b.dataset.act, rule = ruleOf(card);
-  const tr = b.closest('tr'), i = tr ? Number(tr.dataset.i) : -1;
-  // Các thao tác sửa danh sách: giữ nội dung đang gõ rồi vẽ lại
-  if (['addrow', 'up', 'down', 'del'].includes(act)) {
-    const f = readCard(card);
-    rule.tenSP = f.tenSP; rule.auto = f.auto; rule.buffer = f.buffer;
-    const prev = rule.queue;
-    let q = f.queue.map((x, k) => ({ ...prev[k], ...x, soLuong: x.soLuong === '' ? null : x.soLuong }));
-    if (act === 'addrow') q.push({ ten: '', misaKey: '', soLuong: null, remaining: null });
-    if (act === 'del') q.splice(i, 1);
+  const it = b.closest('.item'), i = it ? Number(it.dataset.i) : -1;
+  // Các thao tác sửa danh sách ở trình duyệt, chưa gửi máy chủ
+  if (['up', 'down', 'del', 'edit', 'pick', 'pickclose', 'pickadd', 'addmanual'].includes(act)) {
+    const q = rule.queue;
     if (act === 'up' && i > 0) [q[i - 1], q[i]] = [q[i], q[i - 1]];
     if (act === 'down' && i < q.length - 1) [q[i + 1], q[i]] = [q[i], q[i + 1]];
-    rule.queue = q;
+    if (act === 'del') q.splice(i, 1);
+    if (act === 'edit') q[i]._edit = !q[i]._edit;
+    if (act === 'pick') rule._pick = true;
+    if (act === 'pickclose') { rule._pick = false; rule._sel = []; }
+    if (act === 'addmanual') q.push({ ten: '', misaKey: '', soLuong: null, _edit: true });
+    if (act === 'pickadd') {
+      const keys = rule._sel || [];
+      for (const k of keys) { const m = misaOf(k); if (m) q.push({ ten: m.name, misaKey: m.key, soLuong: null }); }
+      // Sản phẩm mới chưa đặt tên → lấy tên mã MISA đầu tiên làm gợi ý
+      if (!rule.tenSP && keys.length) rule.tenSP = misaOf(keys[0])?.name || '';
+      rule._pick = false; rule._sel = [];
+    }
     render();
+    if (act === 'addmanual') card.ownerDocument.querySelector(`.panel[data-id="${card.dataset.id}"] .item:last-child .tenEdit`)?.focus();
+    if (act === 'pick') document.querySelector(`.panel[data-id="${card.dataset.id}"] .picker .q`)?.focus();
     return;
   }
   b.disabled = true;
   try {
     if (act === 'save') {
-      const r = await api('/api/ton-kho/hd/save', readCard(card));
+      if (rule.queue.some(q => !String(q.ten || '').trim())) return setMsg(card, 'save', 'Có dòng chưa có tên xuất hoá đơn.', 'bad');
+      const r = await api('/api/ton-kho/hd/save', payload(card, rule));
       if (!r.ok) return setMsg(card, 'save', r.message, 'bad');
       if (!card.dataset.id) NEW = null;
       await load();
@@ -309,7 +393,7 @@ $('list').addEventListener('click', async e => {
 });
 
 $('btnAdd').addEventListener('click', () => {
-  if (!NEW) NEW = { tenSP: '', auto: true, buffer: 0, queue: [{ ten: '', misaKey: '', soLuong: null }, { ten: '', misaKey: '', soLuong: null }] };
+  if (!NEW) NEW = { tenSP: '', auto: true, buffer: 0, queue: [], _pick: true };
   render();
   document.querySelector('.tenSP')?.focus();
 });
