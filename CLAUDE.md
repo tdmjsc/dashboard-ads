@@ -27,4 +27,5 @@ Một sản phẩm Sandbox nhập từ nhiều nhà cung cấp, mỗi nhà cung 
 - Sandbox xác thực bằng cookie (không có header Authorization). Mỗi tài khoản chỉ một phiên: máy chủ đăng nhập lại sẽ đá phiên trình duyệt cùng tài khoản và ngược lại.
 - Cách dự phòng: admin dán request "Lưu" (và request chi tiết) từ DevTools, máy chủ gửi lại request đó và chỉ thay trường tên (`tenXuatHoaDon`).
 - "Gửi thử" lưu lại nguyên trạng tên đang có trên Sandbox, không lấy tên trong hàng đợi.
+- Số lượng đã xuất hoá đơn dưới tên đang dùng (`refreshInvoiced`, chạy trong `checkAll` và mỗi 20 phút): hoá đơn điện tử từ `invoice/api/Invoice/TimHoaDonDienTuTheoDieuKien` (phiên web, chỉ `actionCode` 1 = phát hành, `ngayTao` giờ VN ≥ lúc tên bắt đầu dùng). Hoá đơn không có dòng hàng → dòng hàng lấy từ đơn qua `global.__sandboxOrders` (API đối tác, `details[].itemCode/quantity`), tải theo ngày đọc từ mã đơn (`DHLOG260930…`), cache ở `STORE.orders`. Nhập tay SL được xuất thì còn lại = SL − số đã xuất HĐ (thay cách trừ theo tồn MISA). Chưa xử lý hoá đơn thay thế/điều chỉnh/huỷ.
 - Kiểm tra chạy sau mỗi lần tồn MISA đổi (`afterSnapshot` trong `tonkho.js`).

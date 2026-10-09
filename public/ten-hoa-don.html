@@ -112,6 +112,10 @@
   .pord.on{display:grid;}
   .head-fields{display:flex;gap:10px 14px;flex-wrap:wrap;align-items:center;width:100%;}
   .head-fields input.tenSP{flex:1;min-width:220px;font-weight:600;}
+  .hdbox{margin:8px 0 0 34px;padding:8px 10px;border-radius:9px;background:#F0F7F6;font-size:13px;color:var(--muted);}
+  .hdbox b{color:var(--text);font-family:'Space Grotesk',sans-serif;}
+  .hdbox small{display:block;color:var(--faint);font-size:12px;margin-top:2px;}
+  .hdbox .warn{color:var(--amber);}
   .switch{display:inline-flex;align-items:center;gap:6px;font-size:13px;cursor:pointer;}
   @media(max-width:720px){ .wrap,.topbar-inner{padding-left:16px;padding-right:16px;} }
 </style>
@@ -137,6 +141,7 @@
     Mỗi sản phẩm trên Sandbox có một <b>danh sách tên xuất hoá đơn</b> (tên theo từng nhà cung cấp, đúng tên trên MISA). Đang xuất theo tên đầu tiên;
     khi tên đó <b>hết số lượng được xuất</b> thì máy chủ tự đổi ô <b>"Tên xuất hoá đơn"</b> của sản phẩm trên Sandbox sang tên kế tiếp và nhắn nhóm kho.
     <br>• <b>Số lượng được xuất</b>: để trống = lấy theo <b>tồn MISA</b> của mã hàng đã ghép (hoá đơn xuất ra sẽ trừ tồn MISA). Nhập số = <b>còn bấy nhiêu tính từ lúc lưu</b>, máy chủ trừ dần theo lượng tồn MISA giảm.
+    <br>• Sản phẩm có <b>Mã SP Sandbox</b>: tên đang dùng có ô <b>"Đã xuất HĐ dưới tên này"</b> — cộng số lượng sản phẩm trong các hoá đơn điện tử phát hành từ lúc tên bắt đầu dùng (đếm lại mỗi 20 phút). Khi đó <b>SL được xuất</b> nhập tay = tổng được xuất dưới tên này, trừ theo số hoá đơn thay vì tồn MISA.
     <br>• Kiểm tra mỗi lần tồn MISA được đồng bộ (theo lịch ở trang Tồn kho), hoặc bấm <b>Kiểm tra ngay</b>.
     <div class="warnbox hidden" id="noLogin">Máy chủ chưa có tài khoản Sandbox (<code>SANDBOX_WEB_USER</code>/<code>SANDBOX_WEB_PASS</code>), nên sẽ dùng cookie trong request bạn dán; cookie đó hết hạn thì phải dán lại.</div>
   </div>
@@ -174,7 +179,12 @@ function itemCard(q, i, r, isNew) {
   const editing = q._edit || !q.misaKey;
   const sub = [m?.code, m ? 'Tồn MISA ' + fmt(m.qty) : (q.misaKey ? 'Mã MISA không còn trong số liệu tồn' : 'Không ghép MISA')]
     .filter(Boolean).join(' · ');
-  const remain = isNew ? '' : `<span class="left">Còn được xuất: <b>${fmt(q.remaining)}</b>${q.used ? ` (đã xuất ${fmt(q.used)})` : ''}</span>`;
+  const remain = isNew ? '' : `<span class="left">Còn được xuất: <b>${fmt(q.remaining)}</b>${q.used && q.source !== 'hd' ? ` (đã xuất ${fmt(q.used)})` : ''}</span>`;
+  // Tên đang dùng + sản phẩm có mã SP: số lượng đã xuất hoá đơn điện tử dưới tên này
+  const hd = active && r.hdOn ? `<div class="hdbox">${q.hd && typeof q.hd.qty === 'number'
+      ? `Đã xuất HĐ dưới tên này: <b>${fmt(q.hd.qty)}</b>${q.soLuong != null ? ` / ${fmt(q.soLuong)}` : ''} · ${fmt(q.hd.soHD)} hoá đơn từ ${dt(q.hd.from)}`
+        + `${q.hd.thieu ? ` · <span class="warn">${fmt(q.hd.thieu)} hoá đơn chưa lấy được dòng hàng</span>` : ''}<small>cập nhật ${dt(q.hd.at)}</small>`
+      : 'Đã xuất HĐ dưới tên này: <b>đang đếm…</b> (bấm Kiểm tra ngay)'}${q.hd?.err ? `<div class="warn">Lỗi đếm hoá đơn: ${esc(q.hd.err)}</div>` : ''}</div>` : '';
   return `<div class="item ${active ? 'active' : ''}" data-i="${i}">
     <div class="item-top">
       <span class="idx">${i + 1}</span>
@@ -196,6 +206,7 @@ function itemCard(q, i, r, isNew) {
         ${!isNew && !active ? `<button class="btn sm" data-act="use">Dùng ngay</button>` : ''}
       </span>
     </div>
+    ${hd}
   </div>`;
 }
 

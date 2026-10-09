@@ -1764,6 +1764,9 @@ async function fetchSandboxOrders(since, until, opts = {}) {
   return { data: all, totalRecord: totalRecord || all.length };
 }
 
+// Cho module Tên xuất hoá đơn (ten-hoa-don.js) lấy dòng hàng của đơn để đếm số lượng đã xuất hoá đơn
+if (SANDBOX_TOKEN) global.__sandboxOrders = (since, until) => fetchSandboxOrders(since, until, { body: { isIncludeDetail: true } });
+
 const _isAdminOrder = o => { const k = _normNV(o.marketingDisplayName || o.marketingUserName || ''); return k === '' || k === 'admin' || k === '(trống)'; };
 
 app.get('/api/marketing/channel-breakdown', async (req, res) => {

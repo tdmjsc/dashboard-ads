@@ -93,6 +93,11 @@ export function parseSandboxRequest(raw, kind) {
 // stock: Map normKey → qty (tồn MISA cộng các kho). entry: { ten, misaKey, soLuong, baseline }
 export function remainingOf(entry, stock, isActive) {
   const misaQty = entry.misaKey && stock.has(entry.misaKey) ? stock.get(entry.misaKey) : null;
+  // Đếm theo hoá đơn điện tử Sandbox (entry.hd do máy chủ cập nhật cho tên đang dùng): thay cách trừ theo tồn MISA
+  if (isActive && entry.hd && isSet(entry.soLuong)) {
+    if (typeof entry.hd.qty !== 'number') return { remaining: null, misaQty, used: 0, source: 'hd' }; // chưa đếm được → không tự đổi
+    return { remaining: num(entry.soLuong) - entry.hd.qty, misaQty, used: entry.hd.qty, source: 'hd' };
+  }
   if (isSet(entry.soLuong)) {
     // Nhập tay "còn X tính từ lúc lưu"; trừ phần tồn MISA đã giảm kể từ lúc đó
     const used = isActive && misaQty !== null && isSet(entry.baseline) ? Math.max(0, num(entry.baseline) - misaQty) : 0;
@@ -207,7 +212,7 @@ export function mountTenHoaDon(app, { json, guard, wrap, DATA_DIR, fetchWithTime
   const apiMode = rule => !!(rule.maSP && global.__sandboxAuth?.hasLogin());
   function sbPost(endpoint, body) {
     const origin = global.__sandboxAuth?.origin || 'https://tdmjsc.sandbox.com.vn';
-    return sandboxFetch({ url: SB_API + endpoint, method: 'POST',
+    return sandboxFetch({ url: /^https:/.test(endpoint) ? endpoint : SB_API + endpoint, method: 'POST',
       headers: { 'content-type': 'application/json', accept: 'application/json, text/plain, */*', origin, referer: origin + '/' } }, body);
   }
   async function searchProducts(keyword) {
@@ -261,6 +266,90 @@ export function mountTenHoaDon(app, { json, guard, wrap, DATA_DIR, fetchWithTime
     return { before: before.tenXuatHoaDon ?? '', after: after.tenXuatHoaDon ?? '' };
   }
 
+  /* ---------- Số lượng đã xuất hoá đơn dưới tên đang dùng (hoá đơn điện tử Sandbox) ----------
+     HĐ: POST invoice/api/Invoice/TimHoaDonDienTuTheoDieuKien (phiên web máy chủ) → maDonHang, idDonHang,
+     actionCode (1 = phát hành), ngayTao (giờ VN). HĐ không có dòng hàng nên lấy dòng hàng của đơn qua API
+     đối tác (global.__sandboxOrders, details[].itemCode/quantity). Ngày tạo đơn đọc từ mã đơn
+     (DHLOG260930… → 2026-09-30) để chỉ tải đơn của những ngày cần; dòng hàng lưu cache theo mã đơn.
+     Chỉ đếm HĐ phát hành (actionCode 1) — HĐ thay thế/điều chỉnh/huỷ không trừ lại. */
+  const INV_SEARCH = 'https://api.sandbox.com.vn/invoice/api/Invoice/TimHoaDonDienTuTheoDieuKien';
+  const hdOn = rule => apiMode(rule) && typeof global.__sandboxOrders === 'function';
+  const vnDay = t => new Date(Date.parse(t) + 7 * 3600e3).toISOString().slice(0, 10);
+  const dayOfCode = code => { const m = /^[A-Z]+(\d{2})(\d{2})(\d{2})/.exec(String(code || '')); return m ? `20${m[1]}-${m[2]}-${m[3]}` : ''; };
+
+  async function invoicesSince(sinceISO) {
+    const out = [];
+    for (let page = 1; page <= 100; page++) {
+      const j = await sbPost(INV_SEARCH, { pageInfo: { page, pageSize: 100 }, sorts: [], keyword: null, actionType: null, typeDonHang: null,
+        typeInvoice: null, trangThaiGuiSMS: null, trangThaiGuiZNS: null, idDonHang: null,
+        tuNgay: `${vnDay(sinceISO)}T00:00:00`, denNgay: `${vnDay(new Date().toISOString())}T23:59:59`, status_Nhap: null, isNhap: null });
+      const data = Array.isArray(j?.data) ? j.data : [];
+      out.push(...data);
+      if (!data.length || out.length >= Number(j.totalRecord || 0)) break;
+    }
+    const since = Date.parse(sinceISO);
+    const seen = new Set();
+    return out.filter(h => {
+      if (h.isDelete || Number(h.actionCode) !== 1) return false;
+      if (Date.parse(String(h.ngayTao).slice(0, 23) + '+07:00') < since) return false;
+      const k = h.maDonHang || h.idDonHang;
+      if (seen.has(k)) return false;
+      seen.add(k); return true;
+    });
+  }
+
+  // Dòng hàng của các đơn (cache STORE.orders: mã đơn → [[itemCode, qty], ...])
+  async function orderItems(invoices) {
+    STORE.orders = STORE.orders || {}; STORE.orderDays = STORE.orderDays || {};
+    const key = h => h.maDonHang || h.idDonHang;
+    const days = new Set();
+    for (const h of invoices) if (!STORE.orders[key(h)]) {
+      const d = dayOfCode(h.maDonHang);
+      // Ngày đã tải mà vẫn thiếu đơn: tải lại nếu lần trước cách đây hơn 30 phút
+      if (d && (!STORE.orderDays[d] || Date.now() - Date.parse(STORE.orderDays[d]) > 30 * 60e3)) days.add(d);
+    }
+    for (const d of [...days].sort()) {
+      const { data } = await global.__sandboxOrders(d, d);
+      for (const o of data) {
+        const items = (o.details || []).map(x => [String(x.itemCode || '').trim(), num(x.quantity)]);
+        for (const k of [o.orderCode, o.orderId]) if (k) STORE.orders[k] = items;
+      }
+      STORE.orderDays[d] = new Date().toISOString();
+    }
+    // Bỏ cache đơn cũ hơn 120 ngày
+    const cut = new Date(Date.now() - 120 * 86400e3).toISOString().slice(0, 10);
+    for (const d of Object.keys(STORE.orderDays)) if (d < cut) delete STORE.orderDays[d];
+    for (const k of Object.keys(STORE.orders)) { const d = dayOfCode(k); if (d && d < cut) delete STORE.orders[k]; }
+    return h => STORE.orders[key(h)] || STORE.orders[h.idDonHang] || null;
+  }
+
+  // Cập nhật entry.hd = { qty, soHD, thieu, from, at, err } cho tên đang dùng của các sản phẩm có mã SP
+  async function refreshInvoiced() {
+    const rules = STORE.rules.filter(r => hdOn(r) && r.queue?.length);
+    if (!rules.length) return;
+    for (const r of rules) { const q = r.queue[r.activeIdx || 0]; if (!q.activatedAt) q.activatedAt = new Date().toISOString(); }
+    const from = rules.map(r => r.queue[r.activeIdx || 0].activatedAt).sort()[0];
+    let invs, itemsOf;
+    try { invs = await invoicesSince(from); itemsOf = await orderItems(invs); }
+    catch (e) {
+      for (const r of rules) { const q = r.queue[r.activeIdx || 0]; q.hd = { ...(q.hd || { qty: null }), err: e.message, at: new Date().toISOString() }; }
+      save(); return;
+    }
+    for (const r of rules) {
+      const q = r.queue[r.activeIdx || 0], since = Date.parse(q.activatedAt), ma = String(r.maSP).trim().toLowerCase();
+      let qty = 0, soHD = 0, thieu = 0;
+      for (const h of invs) {
+        if (Date.parse(String(h.ngayTao).slice(0, 23) + '+07:00') < since) continue;
+        const items = itemsOf(h);
+        if (!items) { thieu++; continue; }
+        const n = items.filter(([c]) => c.toLowerCase() === ma).reduce((s, [, x]) => s + x, 0);
+        if (n) { qty += n; soHD++; }
+      }
+      q.hd = { qty, soHD, thieu, from: q.activatedAt, at: new Date().toISOString(), err: '' };
+    }
+    save();
+  }
+
   async function pushName(rule, ten) {
     if (apiMode(rule)) return pushNameApi(rule, ten);
     if (!rule.save) throw new Error('Chưa nhập mã sản phẩm Sandbox (hoặc dán request Lưu sản phẩm).');
@@ -291,9 +380,13 @@ export function mountTenHoaDon(app, { json, guard, wrap, DATA_DIR, fetchWithTime
     // Tên cũ nhập tay: chốt lại số còn thực tế, để lần sau quay lại không tính lại từ đầu
     const prev = rule.queue[rule.activeIdx || 0];
     if (prev && prev !== q && isSet(prev.soLuong)) {
-      prev.soLuong = Math.max(0, remainingOf(prev, m, true).remaining);
+      const rem = remainingOf(prev, m, true).remaining;
+      if (rem !== null) prev.soLuong = Math.max(0, rem);
       prev.baseline = null;
     }
+    if (prev && prev !== q) delete prev.hd;
+    // Tên mới: đếm hoá đơn từ lúc này
+    if (hdOn(rule)) q.hd = { qty: 0, soHD: 0, thieu: 0, from: new Date().toISOString(), at: new Date().toISOString(), err: '' };
     q.baseline = q.misaKey && m.has(q.misaKey) ? m.get(q.misaKey) : null;
     q.activatedAt = new Date().toISOString();
     rule.activeIdx = idx;
@@ -307,6 +400,7 @@ export function mountTenHoaDon(app, { json, guard, wrap, DATA_DIR, fetchWithTime
   function checkAll() {
     if (checking) return checking;
     checking = (async () => {
+      await refreshInvoiced().catch(e => console.warn('[TENHD] đếm hoá đơn lỗi:', e.message));
       const { m } = stockMap();
       for (const rule of STORE.rules) {
         if (!rule.auto || !rule.queue?.length) continue;
@@ -344,7 +438,9 @@ export function mountTenHoaDon(app, { json, guard, wrap, DATA_DIR, fetchWithTime
     return {
       id: rule.id, tenSP: rule.tenSP, maSP: rule.maSP || '', apiMode: apiMode(rule), auto: !!rule.auto, buffer: num(rule.buffer), activeIdx: rule.activeIdx || 0,
       queue: rule.queue.map((q, i) => ({ ten: q.ten, misaKey: q.misaKey || '', soLuong: isSet(q.soLuong) ? num(q.soLuong) : null,
-        activatedAt: i === (rule.activeIdx || 0) ? q.activatedAt || '' : '', ...remainingOf(q, m, i === (rule.activeIdx || 0)) })),
+        activatedAt: i === (rule.activeIdx || 0) ? q.activatedAt || '' : '', hd: i === (rule.activeIdx || 0) ? q.hd || null : null,
+        ...remainingOf(q, m, i === (rule.activeIdx || 0)) })),
+      hdOn: hdOn(rule),
       decision: d.action,
       save: rule.save ? { url: rule.save.url, method: rule.save.method, field: rule.save.field, fields: rule.save.fields || [],
         currentValue: rule.save.field ? getPath(rule.save.body, rule.save.field) ?? '' : '', savedAt: rule.save.savedAt } : null,
@@ -396,7 +492,7 @@ export function mountTenHoaDon(app, { json, guard, wrap, DATA_DIR, fetchWithTime
       const o = old.get(normName(q.ten));
       const changed = !o || o.soLuong !== q.soLuong || o.misaKey !== q.misaKey;
       return { ...q, baseline: changed ? (q.misaKey && m.has(q.misaKey) ? m.get(q.misaKey) : null) : o.baseline,
-        activatedAt: o?.activatedAt || '' };
+        activatedAt: o?.activatedAt || '', ...(o?.hd ? { hd: o.hd } : {}) };
     });
     const ai = rule.queue.findIndex(q => normName(q.ten) === activeTen);
     rule.activeIdx = ai >= 0 ? ai : 0;
@@ -515,6 +611,9 @@ export function mountTenHoaDon(app, { json, guard, wrap, DATA_DIR, fetchWithTime
     await checkAll();
     res.json({ ok: true });
   }));
+
+  // Hoá đơn được phát hành suốt ngày (không theo lịch đồng bộ MISA) → tự đếm và kiểm tra mỗi 20 phút
+  setInterval(() => { if (STORE.rules.some(hdOn)) checkAll(); }, 20 * 60e3).unref?.();
 
   return { checkAll };
 }
