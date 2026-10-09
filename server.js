@@ -1253,10 +1253,17 @@ async function sandboxLogin() {
 }
 
 // Gọi API báo cáo cho khoảng ngày [since, until] (YYYY-MM-DD). Tự đăng nhập lại nếu phiên hết hạn.
+// Lọc "Ngày tạo contact" + "Không giới hạn ngày chốt" (Sandbox xác nhận là cách ra số đúng):
+// chỉ contact về trong khoảng ngày, nhưng tính MỌI đơn chốt của các contact đó, kể cả chốt
+// những ngày sau (vd contact về 7/10, chốt 9/10 vẫn tính vào 7/10).
+// Chưa rõ Sandbox nhận cờ ở dạng nào → thử lần lượt, nhớ dạng chạy được; nếu không dạng
+// nào được thì gọi không có cờ (khongGioiHan=false) để trang vẫn có số, kèm cảnh báo.
+const KHONG_GIOI_HAN_VALUES = [true, 1, 'true'];
+let khongGioiHanOk = undefined; // dạng cờ Sandbox đã nhận ở lần gọi trước
 async function sandboxReport(since, until) {
   const tuNgay = `${since}T00:00:00.000+07:00`;
   const denNgay = `${until}T23:59:59.998+07:00`;
-  const payload = {
+  const base = {
     pageInfo: { page: 1, pageSize: 1000 }, sorts: [],
     kieuXem: 4, loaiNhanVien: 1, isChietKhau: true, isVat: true,
     date: [tuNgay, denNgay], tuNgay, denNgay,
@@ -1266,7 +1273,7 @@ async function sandboxReport(since, until) {
     typeViewDetail: null, idPhongBanSale: null, idNhomNhanVienSale: null, idUserSale: null,
     idPhongBanMkts: null, idNhomNhanVienMkts: null, idUserMkts: null,
   };
-  const call = () => fetch(SANDBOX_REPORT_URL, {
+  const call = payload => fetch(SANDBOX_REPORT_URL, {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json', 'Accept': 'application/json, text/plain, */*',
@@ -1275,11 +1282,26 @@ async function sandboxReport(since, until) {
     },
     body: JSON.stringify(payload),
   });
+  const run = async payload => {
+    let r = await call(payload);
+    if (r.status === 401 || r.status === 403) { await sandboxLogin(); r = await call(payload); }
+    const j = await r.json().catch(() => ({ success: false, message: 'Phản hồi không hợp lệ' }));
+    return { httpStatus: r.status, json: j };
+  };
+  const ok = rp => !!(rp.json && (rp.json.success ?? rp.json.Success));
   if (!sandboxCookie) await sandboxLogin();
-  let r = await call();
-  if (r.status === 401 || r.status === 403) { await sandboxLogin(); r = await call(); }
-  const j = await r.json().catch(() => ({ success: false, message: 'Phản hồi không hợp lệ' }));
-  return { httpStatus: r.status, json: j };
+  const values = khongGioiHanOk !== undefined
+    ? [khongGioiHanOk, ...KHONG_GIOI_HAN_VALUES.filter(v => v !== khongGioiHanOk)]
+    : KHONG_GIOI_HAN_VALUES;
+  const loi = [];
+  for (const v of values) {
+    const rp = await run({ ...base, khongGioiHanNgayChot: v });
+    if (ok(rp)) { khongGioiHanOk = v; return { ...rp, khongGioiHan: true }; }
+    loi.push(`${JSON.stringify(v)}: HTTP ${rp.httpStatus} ${JSON.stringify(rp.json).slice(0, 200)}`);
+  }
+  console.warn('[sandboxReport] Sandbox không nhận khongGioiHanNgayChot:', loi.join(' | '));
+  const rp = await run(base);
+  return { ...rp, khongGioiHan: false, khongGioiHanLoi: loi };
 }
 
 // Báo cáo "Leads theo nguồn" (MarketingDashboard/TimTheoDieuKien) — nhóm theo NGUỒN DỮ LIỆU.
@@ -1585,7 +1607,7 @@ app.get('/api/marketing/report', async (req, res) => {
     ]);
 
     if (!(rp.json && (rp.json.success ?? rp.json.Success)))
-      return res.json({ ok: false, since, until, httpStatus: rp.httpStatus, message: (rp.json && (rp.json.message || rp.json.Message)) || 'Lỗi gọi báo cáo' });
+      return res.json({ ok: false, since, until, httpStatus: rp.httpStatus, message: (rp.json && (rp.json.message || rp.json.Message || rp.json.title)) || ('Lỗi gọi báo cáo (HTTP ' + rp.httpStatus + ')') });
 
     const m = mapReport(rp.json);
     const norm = s => String(s == null ? '' : s).trim().toLowerCase().replace(/\s+/g, ' ');
@@ -1667,7 +1689,11 @@ app.get('/api/marketing/report', async (req, res) => {
         message: it.message,
       }));
     }
-    res.json({ ok: true, ver: 'mkt-2026-10-09-v15', since, until, rows, total, warnings, lastUpdated: new Date().toISOString() });
+    if (!rp.khongGioiHan) warnings.push({
+      accName: 'doanh số đơn chốt muộn (Sandbox không nhận "Không giới hạn ngày chốt")',
+      rateLimit: false, message: (rp.khongGioiHanLoi || []).join(' | '),
+    });
+    res.json({ ok: true, ver: 'mkt-2026-10-09-v16', since, until, rows, total, warnings, lastUpdated: new Date().toISOString() });
   } catch (e) {
     res.json({ ok: false, since, until, message: e.message });
   }
