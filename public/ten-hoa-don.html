@@ -82,6 +82,24 @@
   details summary{cursor:pointer;font-size:13px;font-weight:600;color:var(--accent);margin-top:6px;}
   .empty{padding:30px;text-align:center;color:var(--muted);}
   .hidden{display:none !important;}
+  /* Danh sách gọn: hàng 1 = sản phẩm gốc, hàng 2 = các tên xuất HĐ theo thứ tự */
+  .plistc{padding:0;}
+  .prow{padding:12px 18px;border-bottom:1px solid var(--line-soft);}
+  .prow:last-child{border-bottom:none;}
+  .prow-1{display:flex;align-items:center;gap:8px 12px;flex-wrap:wrap;}
+  .prow-1 .pname{font-family:'Space Grotesk',sans-serif;font-size:15px;font-weight:600;flex:1;min-width:200px;word-break:break-word;}
+  .prow-1 .pma{font-size:12px;color:var(--faint);font-weight:500;margin-left:6px;}
+  .prow-2{display:flex;align-items:stretch;gap:6px;flex-wrap:wrap;margin-top:8px;}
+  .chip{display:flex;align-items:center;gap:8px;border:1px solid var(--line);border-radius:10px;padding:5px 10px;background:#fff;font-size:13px;max-width:100%;}
+  .chip .ci{flex:none;width:20px;height:20px;border-radius:6px;background:#F0F3F8;display:grid;place-items:center;font-family:'Space Grotesk',sans-serif;font-size:12px;font-weight:600;color:var(--muted);}
+  .chip .cn{font-weight:600;word-break:break-word;}
+  .chip .cq{color:var(--muted);font-size:12px;white-space:nowrap;}
+  .chip .cq b{color:var(--text);font-family:'Space Grotesk',sans-serif;}
+  .chip.active{border-color:var(--teal);background:#F1FAF7;}
+  .chip.active .ci{background:var(--teal);color:#fff;}
+  .chip.het{opacity:.55;}
+  .chip-arrow{align-self:center;color:var(--faint);font-size:13px;}
+  .prow .err{margin-top:8px;}
   /* Danh sách tên xuất HĐ dạng thẻ (dễ dùng trên điện thoại) */
   .items{display:flex;flex-direction:column;gap:8px;}
   .item{border:1px solid var(--line);border-radius:12px;padding:10px 12px;background:#fff;}
@@ -249,7 +267,7 @@ function ruleCard(r, isNew) {
         <button class="btn" data-act="addmanual">＋ Tên không có trên MISA</button></div>`}
       <div class="row" style="margin-top:12px">
         <button class="btn primary" data-act="save">${isNew ? 'Lưu sản phẩm' : 'Lưu thay đổi'}</button>
-        ${isNew ? '<button class="btn" data-act="cancel">Huỷ</button>' : '<button class="btn danger" data-act="delrule">Xoá sản phẩm</button>'}
+        ${isNew ? '<button class="btn" data-act="cancel">Huỷ</button>' : '<button class="btn" data-act="close">Thu gọn</button><button class="btn danger" data-act="delrule">Xoá sản phẩm</button>'}
         <span class="msg" data-msg="save"></span>
       </div>
       ${r.lastError ? `<div class="err">Lần đổi tên gần nhất lỗi (${dt(r.lastErrorAt)}): ${esc(r.lastError)}</div>` : ''}
@@ -290,9 +308,36 @@ function ruleCard(r, isNew) {
   </div>`;
 }
 
+// Một sản phẩm ở dạng gọn: hàng 1 tên gốc, hàng 2 các tên xuất HĐ theo thứ tự dùng
+function compactRow(r) {
+  const ai = r.activeIdx || 0;
+  const chips = r.queue.map((q, i) => {
+    const active = i === ai;
+    const het = !active && q.remaining !== null && q.remaining !== undefined && q.remaining <= 0;
+    const hdTxt = active && q.hd && typeof q.hd.qty === 'number'
+      ? ` · đã xuất HĐ <b>${fmt(q.hd.qty)}</b>${q.soLuong != null ? '/' + fmt(q.soLuong) : ''}` : '';
+    return `<span class="chip ${active ? 'active' : ''} ${het ? 'het' : ''}" title="${esc(q.ten)}">
+      <span class="ci">${i + 1}</span><span class="cn">${esc(q.ten)}</span>
+      <span class="cq">còn <b>${fmt(q.remaining)}</b>${hdTxt}</span></span>`;
+  }).join('<span class="chip-arrow">→</span>');
+  return `<div class="prow" data-id="${esc(r.id)}">
+    <div class="prow-1">
+      <span class="pname">${esc(r.tenSP)}${r.maSP ? `<span class="pma">${esc(r.maSP)}</span>` : ''}</span>
+      ${r.auto ? '<span class="tag dang">Tự đổi tên</span>' : '<span class="tag cho">Không tự đổi</span>'}
+      ${r.decision === 'het' ? '<span class="tag het">Hết tên</span>' : ''}
+      <button class="btn sm" data-act="open">Sửa</button>
+    </div>
+    <div class="prow-2">${chips}</div>
+    ${r.lastError ? `<div class="err">Lần đổi tên gần nhất lỗi (${dt(r.lastErrorAt)}): ${esc(r.lastError)}</div>` : ''}
+  </div>`;
+}
+
+const OPEN = new Set(); // sản phẩm đang mở khung sửa (giữ qua các lần tải lại)
 function render() {
-  const cards = DATA.rules.map(r => ruleCard(r, false));
+  const closed = DATA.rules.filter(r => !OPEN.has(r.id));
+  const cards = DATA.rules.filter(r => OPEN.has(r.id)).map(r => ruleCard(r, false));
   if (NEW) cards.unshift(ruleCard(NEW, true));
+  if (closed.length) cards.push(`<div class="panel plistc">${closed.map(compactRow).join('')}</div>`);
   $('list').innerHTML = (cards.length ? cards.join('') : '<div class="panel empty">Chưa có sản phẩm nào. Bấm <b>＋ Thêm sản phẩm</b>.</div>');
   $('noLogin').classList.toggle('hidden', !!DATA.sandboxLogin);
 }
@@ -366,6 +411,9 @@ $('list').addEventListener('change', e => {
 
 $('list').addEventListener('click', async e => {
   const b = e.target.closest('button[data-act]'); if (!b) return;
+  // Mở / thu gọn khung sửa của một sản phẩm
+  if (b.dataset.act === 'open') { OPEN.add(b.closest('.prow').dataset.id); render(); return; }
+  if (b.dataset.act === 'close') { OPEN.delete(b.closest('.panel').dataset.id); render(); return; }
   const card = b.closest('.panel'), act = b.dataset.act, rule = ruleOf(card);
   const it = b.closest('.item'), i = it ? Number(it.dataset.i) : -1;
   // Các thao tác sửa danh sách ở trình duyệt, chưa gửi máy chủ
@@ -394,7 +442,7 @@ $('list').addEventListener('click', async e => {
       if (rule.queue.some(q => !String(q.ten || '').trim())) return setMsg(card, 'save', 'Có dòng chưa có tên xuất hoá đơn.', 'bad');
       const r = await api('/api/ton-kho/hd/save', payload(card, rule));
       if (!r.ok) return setMsg(card, 'save', r.message, 'bad');
-      if (!card.dataset.id) NEW = null;
+      if (!card.dataset.id) NEW = null; else OPEN.delete(card.dataset.id);
       await load();
       if (r.warning) alert('⚠️ ' + r.warning + '\nHãy sửa danh sách cho khớp (tên đầu tiên = tên đang ghi trên Sandbox).');
     } else if (act === 'lookup') {
