@@ -386,7 +386,7 @@ $('list').addEventListener('click', async e => {
     } else if (act === 'test') {
       setMsg(card, 'test', 'Đang gửi…');
       const r = await api('/api/ton-kho/hd/test', { id: rule.id });
-      setMsg(card, 'test', r.ok ? `Sandbox nhận request (tên "${r.ten}").` : r.message, r.ok ? 'ok' : 'bad');
+      setMsg(card, 'test', r.ok ? `Sandbox nhận request (tên "${r.ten}").` + (r.warning ? ' ⚠️ ' + r.warning : '') : r.message, r.ok && !r.warning ? 'ok' : 'bad');
     }
   } catch (err) { alert(err.message); }
   finally { b.disabled = false; }

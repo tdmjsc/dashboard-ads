@@ -373,16 +373,24 @@ export function mountTenHoaDon(app, { json, guard, wrap, DATA_DIR, fetchWithTime
     res.json({ ok: true });
   }));
 
-  // Gửi thử: ghi lại ĐÚNG tên đang dùng (không đổi gì) để kiểm tra request còn chạy
+  // Gửi thử: gửi lại dữ liệu sản phẩm y nguyên (tên đang ghi trên Sandbox, không phải tên trong
+  // hàng đợi) để kiểm tra request còn chạy mà không đổi gì
   app.post('/api/ton-kho/hd/test', guard, json, wrap(async (req, res) => {
     const rule = findRule(req.body?.id);
     if (!rule) return res.json({ ok: false, message: 'Không tìm thấy sản phẩm.' });
-    const ten = rule.queue[rule.activeIdx || 0]?.ten;
-    try { await pushName(rule, ten); }
-    catch (e) { return res.json({ ok: false, message: e.message }); }
+    if (!rule.save?.field) return res.json({ ok: false, message: 'Chưa dán request Lưu hoặc chưa chọn trường tên.' });
+    let ten;
+    try {
+      const body = await latestBody(rule);
+      ten = getPath(body, rule.save.field);
+      await sandboxFetch(rule.save, body);
+    } catch (e) { return res.json({ ok: false, message: e.message }); }
     rule.lastError = '';
     save();
-    res.json({ ok: true, ten });
+    const active = rule.queue[rule.activeIdx || 0]?.ten;
+    res.json({ ok: true, ten, active,
+      warning: active && normName(ten) !== normName(active)
+        ? `Tên trên Sandbox ("${ten}") khác tên đang dùng trong danh sách ("${active}"). Chưa đổi gì — hãy sửa danh sách cho khớp.` : '' });
   }));
 
   app.post('/api/ton-kho/hd/check', guard, wrap(async (req, res) => {
