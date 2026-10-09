@@ -724,6 +724,7 @@ app.use((req, res, next) => {
       '/ket-qua-kinh-doanh.html',  // Kết quả kinh doanh
       '/attribution.html',         // Đơn theo chiến dịch / nguồn
       '/ton-kho.html',             // Tồn kho (MISA AMIS)
+      '/ten-hoa-don.html',         // Tên xuất hoá đơn theo lô
     ];
     const API_CHI_ADMIN =
          p.startsWith('/api/attribution')       // Đơn theo chiến dịch / nguồn
@@ -1251,6 +1252,14 @@ async function sandboxLogin() {
     message: body ? (body.message || body.Message) : undefined,
   };
 }
+
+// Cho module Tên xuất hoá đơn (ten-hoa-don.js) gọi API Sandbox bằng cùng phiên đăng nhập
+global.__sandboxAuth = {
+  hasLogin: () => !!(SANDBOX_WEB_USER && SANDBOX_WEB_PASS),
+  cookie: () => sandboxCookie,
+  login: sandboxLogin,
+  origin: SANDBOX_ORIGIN,
+};
 
 // Gọi API báo cáo cho khoảng ngày [since, until] (YYYY-MM-DD). Tự đăng nhập lại nếu phiên hết hạn.
 // ⚠ ĐỪNG ĐỔI (xem CLAUDE.md). Lọc "Ngày tạo contact" + "Không giới hạn ngày chốt" — Sandbox xác nhận, đã đối chiếu đúng:

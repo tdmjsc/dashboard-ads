@@ -18,3 +18,12 @@ Doanh số / đơn chốt / số SP lấy từ báo cáo Sandbox `ReportLeadByNh
 Muốn kiểm tra số liệu thì mở endpoint dành cho admin: `/api/marketing/check-ngay-chot?since=YYYY-MM-DD&until=YYYY-MM-DD&name=<tên NV>`. Endpoint này so sánh các cách gọi và hiện lỗi gốc của Sandbox.
 
 Không có tài khoản Sandbox trong môi trường dev. Đổi tham số báo cáo xong thì nhờ người dùng đối chiếu số với Sandbox.
+
+## Tên xuất hoá đơn theo lô (`ten-hoa-don.js`, trang `/ten-hoa-don.html`)
+
+Một sản phẩm Sandbox nhập từ nhiều nhà cung cấp, mỗi nhà cung cấp có tên riêng trên MISA. Module giữ hàng đợi tên xuất hoá đơn. Khi tên đang dùng hết số lượng (tồn MISA, hoặc số nhập tay trừ dần theo tồn MISA giảm), module tự đổi ô "Tên xuất hoá đơn" trên Sandbox sang tên kế tiếp.
+
+- Sandbox không có API công khai để sửa sản phẩm. Admin dán request "Lưu" (và nên dán thêm request lấy chi tiết sản phẩm) từ DevTools, máy chủ gửi lại request đó và chỉ thay trường tên.
+- Nếu có `SANDBOX_WEB_USER`/`SANDBOX_WEB_PASS` thì dùng phiên đăng nhập của máy chủ (`global.__sandboxAuth` trong `server.js`).
+- Kiểm tra chạy sau mỗi lần tồn MISA đổi (`afterSnapshot` trong `tonkho.js`).
+- Chưa thử với Sandbox thật: tên trường và địa chỉ request do admin dán vào quyết định.

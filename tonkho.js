@@ -9,6 +9,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { parsePastedRequest, fetchInventory, tokenExpiry, renewSession } from './misa-tonkho.js';
+import { mountTenHoaDon } from './ten-hoa-don.js';
 
 // Các trạng thái OMS được tính là "đã bán" khi đo tốc độ bán
 const TRANG_THAI_BAN = ['Đã chốt', 'Đang ship', 'Ship thành công'];
@@ -251,9 +252,11 @@ export function mountTonKho(app, { express, DATA_DIR, fetchWithTimeout }) {
     return alerting;
   }
   // Số tồn vừa đổi (đồng bộ MISA hoặc nhập Excel): xoá cờ hết phiên và kiểm tra tồn thấp, chạy ngầm
+  let tenHoaDon = null; // module Tên xuất hoá đơn theo lô, gắn ở cuối hàm
   function afterSnapshot() {
     if (STORE.authAlertAt) { STORE.authAlertAt = ''; save(); }
     checkLowStock().catch(e => console.warn('[TONKHO] cảnh báo tồn thấp lỗi:', e.message));
+    tenHoaDon?.checkAll(); // tồn MISA đổi → xem tên xuất hoá đơn đang dùng đã hết chưa
   }
   // Phiên MISA hết hạn thì số tồn đứng yên và cảnh báo ngừng hoạt động → báo 1 lần
   async function alertAuthExpired() {
@@ -533,6 +536,10 @@ export function mountTonKho(app, { express, DATA_DIR, fetchWithTimeout }) {
     save();
     res.json({ ok: true });
   });
+
+  // Tên xuất hoá đơn theo lô (ten-hoa-don.js) — dùng chung tồn MISA và bot nhóm kho
+  tenHoaDon = mountTenHoaDon(app, { json, guard, wrap, DATA_DIR, fetchWithTimeout,
+    getStockItems: () => STORE.snapshot?.items || [], notify });
 
   console.log('[TONKHO] đã gắn module tồn kho');
 }
