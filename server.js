@@ -1262,7 +1262,9 @@ async function sandboxReport(since, until) {
     date: [tuNgay, denNgay], tuNgay, denNgay,
     // 'NgayTaoContact': đơn chốt/doanh số CHỈ của contact về trong khoảng ngày.
     // ('NgayTao' tính cả đơn chốt trong ngày của contact về từ các ngày trước → tỷ lệ chốt > 100%.)
-    idChiNhanh: SANDBOX_CHINHANH, kieuNgay: 'NgayTaoContact',
+    // khongGioiHanNgayChot: true → tính cả đơn chốt SAU khoảng ngày (vd contact về 7/10, chốt 9/10),
+    // nếu không Sandbox chỉ đếm đơn chốt trong chính khoảng ngày → thiếu doanh số khi xem lại ngày cũ.
+    idChiNhanh: SANDBOX_CHINHANH, kieuNgay: 'NgayTaoContact', khongGioiHanNgayChot: true,
     typeViewDetail: null, idPhongBanSale: null, idNhomNhanVienSale: null, idUserSale: null,
     idPhongBanMkts: null, idNhomNhanVienMkts: null, idUserMkts: null,
   };
@@ -1516,6 +1518,37 @@ app.get('/api/marketing/login-test', async (req, res) => {
   }
 });
 
+// KIỂM TRA cách tính doanh số theo ngày contact về: so các cách gọi báo cáo lead cho 1 nhân viên.
+//   /api/marketing/check-ngay-chot?since=2026-10-07&until=2026-10-07&name=Lưu Xuân Phong
+app.get('/api/marketing/check-ngay-chot', async (req, res) => {
+  if ((req.session.user || {}).role !== 'admin') return res.status(403).json({ ok: false, message: 'Chỉ admin' });
+  const since = req.query.since, until = req.query.until || since;
+  if (!since) return res.json({ ok: false, message: 'Thiếu since' });
+  const name = _normNV(req.query.name || '');
+  const tries = [
+    { thu: 'NgayTaoContact (cũ)', extra: { kieuNgay: 'NgayTaoContact' } },
+    { thu: 'NgayTaoContact + khongGioiHanNgayChot (mới)', extra: { kieuNgay: 'NgayTaoContact', khongGioiHanNgayChot: true } },
+    { thu: 'NgayTao', extra: { kieuNgay: 'NgayTao' } },
+    { thu: 'NgayTao + khongGioiHanNgayChot', extra: { kieuNgay: 'NgayTao', khongGioiHanNgayChot: true } },
+  ];
+  try {
+    if (!sandboxCookie) await sandboxLogin();
+    const ketqua = await Promise.all(tries.map(async t => {
+      try {
+        const j = await sandboxReportEx(since, until, t.extra);
+        const d = (j && j.data) || {};
+        const rows = d.reportLeadByNhanSuMktDtos || [];
+        const tot = d.reportLeadByNhanSuMktTotalDto || {};
+        const r = name ? rows.find(x => _normNV(x.ten) === name) : null;
+        return { thu: t.thu, success: j && (j.success ?? j.Success),
+          ...(name ? { nhanVien: r ? { contact: r.soContact, donChot: r.soDonChot, soSP: r.soLuongSanPham, doanhSo: r.doanhSo } : 'không thấy' } : {}),
+          tong: { contact: tot.tongSoContact, donChot: tot.tongSoDonHang, soSP: tot.tongSanPham, doanhSo: tot.tongDoanhSo } };
+      } catch (e) { return { thu: t.thu, loi: e.message }; }
+    }));
+    res.json({ ok: true, since, until, name: req.query.name || null, ketqua });
+  } catch (e) { res.json({ ok: false, message: e.message }); }
+});
+
 // (HƯỚNG A) Lấy báo cáo lead theo nhân sự cho khoảng ngày (mặc định hôm qua).
 //  Gộp chi tiêu thực từ Meta API vào cột "chiTieu" và tính lại "giaContact".
 //  Mở: /api/marketing/report?since=2026-06-12&until=2026-06-12
@@ -1633,7 +1666,7 @@ app.get('/api/marketing/report', async (req, res) => {
         message: it.message,
       }));
     }
-    res.json({ ok: true, ver: 'mkt-2026-10-06-v14', since, until, rows, total, warnings, lastUpdated: new Date().toISOString() });
+    res.json({ ok: true, ver: 'mkt-2026-10-09-v15', since, until, rows, total, warnings, lastUpdated: new Date().toISOString() });
   } catch (e) {
     res.json({ ok: false, since, until, message: e.message });
   }
