@@ -23,7 +23,8 @@ Không có tài khoản Sandbox trong môi trường dev. Đổi tham số báo 
 
 Một sản phẩm Sandbox nhập từ nhiều nhà cung cấp, mỗi nhà cung cấp có tên riêng trên MISA. Module giữ hàng đợi tên xuất hoá đơn. Khi tên đang dùng hết số lượng (tồn MISA, hoặc số nhập tay trừ dần theo tồn MISA giảm), module tự đổi ô "Tên xuất hoá đơn" trên Sandbox sang tên kế tiếp.
 
-- Sandbox không có API công khai để sửa sản phẩm. Admin dán request "Lưu" (và nên dán thêm request lấy chi tiết sản phẩm) từ DevTools, máy chủ gửi lại request đó và chỉ thay trường tên.
-- Nếu có `SANDBOX_WEB_USER`/`SANDBOX_WEB_PASS` thì dùng phiên đăng nhập của máy chủ (`global.__sandboxAuth` trong `server.js`).
+- Cách chính (khi có `SANDBOX_WEB_USER`/`SANDBOX_WEB_PASS`): admin nhập **Mã SP Sandbox**, máy chủ dùng phiên đăng nhập của nó (`global.__sandboxAuth` trong `server.js`) gọi web API của form Cập nhật sản phẩm: `TimTheoDieuKienSPCha` (tìm id theo mã) → `SanPhamInit` (`data.data`) → `CapNhatThongTin`. `buildSaveBody` dựng body y hệt form (đã so khớp từng trường với một lần Lưu thật 9/10/2026). Sau khi lưu, đọc lại và so mọi trường; lệch thì ghi lại dữ liệu cũ và báo lỗi. Sản phẩm có thuộc tính con / cấu thành thì từ chối.
+- Sandbox xác thực bằng cookie (không có header Authorization). Mỗi tài khoản chỉ một phiên: máy chủ đăng nhập lại sẽ đá phiên trình duyệt cùng tài khoản và ngược lại.
+- Cách dự phòng: admin dán request "Lưu" (và request chi tiết) từ DevTools, máy chủ gửi lại request đó và chỉ thay trường tên (`tenXuatHoaDon`).
+- "Gửi thử" lưu lại nguyên trạng tên đang có trên Sandbox, không lấy tên trong hàng đợi.
 - Kiểm tra chạy sau mỗi lần tồn MISA đổi (`afterSnapshot` trong `tonkho.js`).
-- Chưa thử với Sandbox thật: tên trường và địa chỉ request do admin dán vào quyết định.

@@ -220,10 +220,13 @@ function ruleCard(r, isNew) {
     <div class="panel-head">
       <div class="head-fields">
         <input class="tenSP" list="dlMisa" value="${esc(r.tenSP || '')}" placeholder="Tên sản phẩm trên Sandbox (gõ hoặc chọn)">
+        <input class="maSP" value="${esc(r.maSP || '')}" placeholder="Mã SP Sandbox (vd SP260922KVY43SB)" style="width:230px">
+        <button class="btn sm" data-act="lookup">Xem trên Sandbox</button>
         <label class="switch"><input type="checkbox" class="auto" ${r.auto !== false ? 'checked' : ''}> Tự đổi tên</label>
         <label class="switch">Đổi khi còn ≤ <input type="number" class="buffer" min="0" inputmode="numeric" value="${r.buffer || 0}" style="width:70px"></label>
       </div>
       ${isNew ? '' : `<div class="now">Đang xuất: <b>${esc(cur?.ten || '—')}</b></div>`}
+      <span class="msg" data-msg="lookup"></span>
     </div>
     <div class="sec">
       <h3>Tên xuất hoá đơn — dùng lần lượt từ trên xuống</h3>
@@ -242,7 +245,9 @@ function ruleCard(r, isNew) {
     ${isNew ? '' : `
     <div class="sec">
       <h3>Kết nối Sandbox cho sản phẩm này</h3>
-      ${sv ? `<div class="kv">
+      ${r.apiMode ? `<p class="hint">Máy chủ tự tìm sản phẩm theo mã <b>${esc(r.maSP)}</b>, lấy dữ liệu mới nhất rồi lưu lại, chỉ đổi ô tên xuất hoá đơn. Không cần dán request.</p>
+        <div class="row" style="margin-top:8px"><button class="btn" data-act="test">Gửi thử (lưu lại nguyên trạng, không đổi gì)</button><span class="msg" data-msg="test"></span></div>`
+      : sv ? `<div class="kv">
           <div><span>Request Lưu:</span> <code>${esc(sv.method)} ${esc(sv.url)}</code> · dán lúc ${dt(sv.savedAt)}</div>
           <div><span>Trường tên xuất HĐ:</span>
             <select class="field">${(sv.fields.length ? sv.fields : [sv.field]).filter(Boolean).map(f => `<option ${f === sv.field ? 'selected' : ''}>${esc(f)}</option>`).join('')}</select>
@@ -252,9 +257,9 @@ function ruleCard(r, isNew) {
           <div><span>Request chi tiết (lấy dữ liệu mới trước khi lưu):</span> ${r.detail ? `<code>${esc(r.detail.url)}</code> <button class="btn sm danger" data-act="deldetail">Bỏ</button>` : '<b style="color:var(--amber)">chưa có</b> — nên thêm để không ghi đè giá / thông tin vừa sửa trên Sandbox'}</div>
         </div>
         <div class="row" style="margin-top:8px"><button class="btn" data-act="test">Gửi thử (ghi lại đúng tên đang dùng)</button><span class="msg" data-msg="test"></span></div>`
-      : '<p class="hint">Chưa dán request. Làm theo hướng dẫn bên dưới.</p>'}
-      <details ${sv ? '' : 'open'}>
-        <summary>${sv ? 'Dán lại request' : 'Hướng dẫn lấy request từ Sandbox'}</summary>
+      : `<p class="hint">${DATA.sandboxLogin ? 'Nhập <b>Mã SP Sandbox</b> ở trên rồi bấm <b>Lưu thay đổi</b> là xong.' : 'Chưa dán request. Làm theo hướng dẫn bên dưới.'}</p>`}
+      <details ${sv || r.apiMode || DATA.sandboxLogin ? '' : 'open'}>
+        <summary>${r.apiMode || DATA.sandboxLogin ? 'Cách dự phòng: dán request từ DevTools' : sv ? 'Dán lại request' : 'Hướng dẫn lấy request từ Sandbox'}</summary>
         <p class="hint" style="margin-top:8px">
           1. Mở Sandbox trên Chrome máy tính → <b>Kho → Quản lý sản phẩm</b>, bấm <b>F12</b> → tab <b>Network</b>.<br>
           2. Mở form <b>Cập nhật sản phẩm</b> của sản phẩm này. <i>(Tuỳ chọn, khuyên dùng)</i> Trong Network tìm request vừa lấy chi tiết sản phẩm (thường có id sản phẩm trong địa chỉ) → chuột phải → <b>Copy → Copy as cURL (bash)</b> → dán vào ô <b>Request chi tiết</b>.<br>
@@ -290,7 +295,7 @@ async function load() {
 function payload(card, rule) {
   return {
     id: card.dataset.id || undefined,
-    tenSP: rule.tenSP, auto: rule.auto !== false, buffer: rule.buffer,
+    tenSP: rule.tenSP, maSP: rule.maSP || '', auto: rule.auto !== false, buffer: rule.buffer,
     queue: rule.queue.map(q => ({ ten: q.ten, misaKey: q.misaKey || '', soLuong: q.soLuong ?? '' })),
   };
 }
@@ -303,6 +308,7 @@ $('list').addEventListener('input', e => {
   const rule = ruleOf(card); if (!rule) return;
   const it = el.closest('.item'), i = it ? Number(it.dataset.i) : -1;
   if (el.classList.contains('tenSP')) rule.tenSP = el.value;
+  else if (el.classList.contains('maSP')) rule.maSP = el.value;
   else if (el.classList.contains('buffer')) rule.buffer = el.value;
   else if (el.classList.contains('auto')) rule.auto = el.checked;
   else if (el.classList.contains('sl')) rule.queue[i].soLuong = el.value === '' ? null : el.value;
@@ -360,6 +366,14 @@ $('list').addEventListener('click', async e => {
       if (!r.ok) return setMsg(card, 'save', r.message, 'bad');
       if (!card.dataset.id) NEW = null;
       await load();
+    } else if (act === 'lookup') {
+      setMsg(card, 'lookup', 'Đang xem…');
+      const r = await api('/api/ton-kho/hd/lookup', { maSP: rule.maSP });
+      if (!r.ok) return setMsg(card, 'lookup', r.message, 'bad');
+      const cur = rule.queue[card.dataset.id ? rule.activeIdx || 0 : 0]?.ten;
+      const lech = cur && normName(cur) !== normName(r.tenXuatHoaDon);
+      setMsg(card, 'lookup', `${r.tenSP} · tên xuất HĐ trên Sandbox: "${r.tenXuatHoaDon || '(trống)'}"`
+        + (lech ? ` ⚠️ khác tên ${card.dataset.id ? 'đang dùng' : 'đầu danh sách'} "${cur}"` : ''), lech ? 'bad' : 'ok');
     } else if (act === 'cancel') { NEW = null; render(); }
     else if (act === 'delrule') {
       if (!confirm('Xoá sản phẩm này khỏi danh sách tự đổi tên? (Không ảnh hưởng Sandbox)')) return;

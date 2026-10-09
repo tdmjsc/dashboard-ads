@@ -165,29 +165,109 @@ export function mountTenHoaDon(app, { json, guard, wrap, DATA_DIR, fetchWithTime
     return j;
   }
 
+  // Sản phẩm trong response request chi tiết. Sandbox không có API chi tiết khi mở form: form lấy
+  // dữ liệu từ request tìm kiếm (SanPham/TimTheoDieuKienSPCha) nên response có thể là danh sách →
+  // chọn object có cùng id/mã với body Lưu.
+  function pickProduct(j, target) {
+    const idKeys = Object.keys(target).filter(k => /^(id|ma\w*|code)$/i.test(k) && isSet(target[k]) && typeof target[k] !== 'object');
+    const cands = [];
+    const walk = (o, depth) => {
+      if (!o || typeof o !== 'object' || depth > 4) return;
+      if (Array.isArray(o)) { o.forEach(x => walk(x, depth + 1)); return; }
+      cands.push(o);
+      for (const v of Object.values(o)) if (v && typeof v === 'object') walk(v, depth + 1);
+    };
+    walk(j, 0);
+    const match = o => idKeys.length && idKeys.every(k => k in o) && idKeys.every(k => String(o[k]) === String(target[k]));
+    const found = cands.find(match);
+    if (found) return found;
+    if (idKeys.length) throw new Error(`Request chi tiết không có sản phẩm ${idKeys.map(k => `${k}=${target[k]}`).join(', ')}.`);
+    return j && typeof j.data === 'object' && !Array.isArray(j.data) ? j.data : j;
+  }
+
   // Dữ liệu sản phẩm mới nhất (nếu có request chi tiết) để không ghi đè sửa đổi khác trên Sandbox
   async function latestBody(rule) {
     const base = JSON.parse(JSON.stringify(rule.save.body));
     if (!rule.detail) return base;
-    const j = await sandboxFetch(rule.detail);
-    const fresh = j && typeof j === 'object' && j.data && typeof j.data === 'object' && !Array.isArray(j.data) ? j.data : j;
+    const target = rule.save.wrapKey ? base[rule.save.wrapKey] : base;
+    const fresh = pickProduct(await sandboxFetch(rule.detail, rule.detail.body), target);
     if (!fresh || typeof fresh !== 'object') throw new Error('Request chi tiết sản phẩm không trả về dữ liệu sản phẩm.');
     // Lấy giá trị mới cho mọi trường có trong body Lưu (giữ nguyên cấu trúc body Lưu)
-    const target = rule.save.wrapKey ? base[rule.save.wrapKey] : base;
     for (const k of Object.keys(target)) if (k in fresh) target[k] = fresh[k];
     return base;
   }
 
+  /* ---------- Gọi thẳng API Sandbox theo mã sản phẩm (cần SANDBOX_WEB_USER/PASS) ----------
+     Đã đối chiếu với form Cập nhật sản phẩm thật (10/2026):
+       tìm:  POST warehouse/api/SanPham/TimTheoDieuKienSPCha  { keyword: mã } → data[] có id, ma, tenXuatHoaDon
+       đọc:  POST warehouse/api/SanPham/SanPhamInit { id } → data.data (mọi ô của form)
+       lưu:  POST warehouse/api/SanPham/CapNhatThongTin  body = buildSaveBody(data.data)
+     buildSaveBody dựng lại body y hệt form gửi (đã so khớp từng trường với một lần Lưu thật). */
+  const SB_API = 'https://api.sandbox.com.vn/warehouse/api/SanPham/';
+  const apiMode = rule => !!(rule.maSP && global.__sandboxAuth?.hasLogin());
+  function sbPost(endpoint, body) {
+    const origin = global.__sandboxAuth?.origin || 'https://tdmjsc.sandbox.com.vn';
+    return sandboxFetch({ url: SB_API + endpoint, method: 'POST',
+      headers: { 'content-type': 'application/json', accept: 'application/json, text/plain, */*', origin, referer: origin + '/' } }, body);
+  }
+  async function findProduct(ma) {
+    const j = await sbPost('TimTheoDieuKienSPCha', { pageInfo: { page: 1, pageSize: 20 }, sorts: [], keyword: ma, ListIdNhomSanPham: [],
+      ListIdNhanSanPham: null, ListIdDmThuongHieu: null, ListIdDmXuatXu: null, ListIdDmMauSac: null, Model: null, ListIdNhaCungCap: null,
+      SuDung: null, XemTatCaChiNhanh: true });
+    const p = (Array.isArray(j?.data) ? j.data : []).find(x => String(x.ma).trim().toLowerCase() === String(ma).trim().toLowerCase());
+    if (!p) throw new Error(`Không tìm thấy sản phẩm mã "${ma}" trên Sandbox.`);
+    return p;
+  }
+  async function productInit(id) {
+    const j = await sbPost('SanPhamInit', { id });
+    const p = j?.data?.data;
+    if (!p || typeof p !== 'object' || p.id !== id) throw new Error('Sandbox không trả về dữ liệu sản phẩm (SanPhamInit).');
+    return p;
+  }
+  function buildSaveBody(p) {
+    // Sản phẩm có biến thể con / thành phần: form xử lý thêm các danh sách này → không tự gửi để tránh ghi sai
+    if ((p.listSanPhamThuocTinh || []).length || p.isSanPhamCauThanh)
+      throw new Error('Sản phẩm có thuộc tính con hoặc là sản phẩm cấu thành — chưa hỗ trợ tự đổi tên, hãy đổi tay trên Sandbox.');
+    const b = { ...p };
+    for (const k of ['idNganhNghe', 'isHienThiDatLich', 'listIdChiNhanh', 'listSanPhamImei']) delete b[k];
+    b.listIdNhanSanPham = p.listIdNhanSanPham ?? null;
+    b.listIdNhanSanPhamFE = p.listIdNhanSanPham ? String(p.listIdNhanSanPham).split(',').map(s => s.trim()).filter(Boolean) : [];
+    b.listSanPhamThuocTinh = [];
+    b.ListIdChiNhanh = p.listIdChiNhanh || [];
+    b.ListSanPhamCauThanh = [];
+    return b;
+  }
+  // Lưu sản phẩm với tên ten (ten === undefined: giữ nguyên tên). Sau khi lưu đọc lại: mọi trường khác
+  // phải giữ nguyên, không thì ghi lại dữ liệu cũ và báo lỗi.
+  async function pushNameApi(rule, ten) {
+    const { id } = await findProduct(rule.maSP);
+    const before = await productInit(id);
+    const body = buildSaveBody(before);
+    if (ten !== undefined) body.tenXuatHoaDon = ten;
+    await sbPost('CapNhatThongTin', body);
+    const after = await productInit(id);
+    const skip = new Set(['tenXuatHoaDon', 'ngayCapNhat', 'nguoiCapNhat', 'nguoiCapNhatUserName']);
+    const changed = Object.keys(before).filter(k => !skip.has(k) && JSON.stringify(before[k]) !== JSON.stringify(after[k]));
+    if (changed.length) {
+      try { await sbPost('CapNhatThongTin', buildSaveBody(before)); } catch {}
+      throw new Error(`Sandbox đổi thêm trường ngoài tên xuất HĐ (${changed.join(', ')}) — đã thử ghi lại dữ liệu cũ, kiểm tra sản phẩm trên Sandbox.`);
+    }
+    const want = ten === undefined ? before.tenXuatHoaDon : ten;
+    if (String(after.tenXuatHoaDon ?? '').trim() !== String(want ?? '').trim())
+      throw new Error(`Đã gửi nhưng Sandbox vẫn ghi tên "${after.tenXuatHoaDon}".`);
+    return { before: before.tenXuatHoaDon ?? '', after: after.tenXuatHoaDon ?? '' };
+  }
+
   async function pushName(rule, ten) {
-    if (!rule.save) throw new Error('Chưa dán request Lưu sản phẩm của Sandbox.');
+    if (apiMode(rule)) return pushNameApi(rule, ten);
+    if (!rule.save) throw new Error('Chưa nhập mã sản phẩm Sandbox (hoặc dán request Lưu sản phẩm).');
     if (!rule.save.field) throw new Error('Chưa chọn trường "Tên xuất hoá đơn" trong request.');
     const body = await latestBody(rule);
     setPath(body, rule.save.field, ten);
     await sandboxFetch(rule.save, body);
     // Kiểm tra lại nếu có request chi tiết
     if (rule.detail) {
-      const j = await sandboxFetch(rule.detail);
-      const fresh = j && j.data && typeof j.data === 'object' ? j.data : j;
+      const fresh = pickProduct(await sandboxFetch(rule.detail, rule.detail.body), rule.save.wrapKey ? body[rule.save.wrapKey] : body);
       const fld = rule.save.wrapKey ? rule.save.field.slice(rule.save.wrapKey.length + 1) : rule.save.field;
       const got = getPath(fresh, fld);
       if (got !== undefined && String(got).trim() !== String(ten).trim())
@@ -259,7 +339,7 @@ export function mountTenHoaDon(app, { json, guard, wrap, DATA_DIR, fetchWithTime
   function view(rule, m) {
     const d = decide(rule, m);
     return {
-      id: rule.id, tenSP: rule.tenSP, auto: !!rule.auto, buffer: num(rule.buffer), activeIdx: rule.activeIdx || 0,
+      id: rule.id, tenSP: rule.tenSP, maSP: rule.maSP || '', apiMode: apiMode(rule), auto: !!rule.auto, buffer: num(rule.buffer), activeIdx: rule.activeIdx || 0,
       queue: rule.queue.map((q, i) => ({ ten: q.ten, misaKey: q.misaKey || '', soLuong: isSet(q.soLuong) ? num(q.soLuong) : null,
         activatedAt: i === (rule.activeIdx || 0) ? q.activatedAt || '' : '', ...remainingOf(q, m, i === (rule.activeIdx || 0)) })),
       decision: d.action,
@@ -281,7 +361,7 @@ export function mountTenHoaDon(app, { json, guard, wrap, DATA_DIR, fetchWithTime
     });
   });
 
-  // Tạo / sửa: { id?, tenSP, auto, buffer, queue:[{ten, misaKey, soLuong}] }
+  // Tạo / sửa: { id?, tenSP, maSP, auto, buffer, queue:[{ten, misaKey, soLuong}] }
   app.post('/api/ton-kho/hd/save', guard, json, (req, res) => {
     const b = req.body || {};
     const tenSP = String(b.tenSP || '').trim().slice(0, 300);
@@ -311,6 +391,7 @@ export function mountTenHoaDon(app, { json, guard, wrap, DATA_DIR, fetchWithTime
     const ai = rule.queue.findIndex(q => normName(q.ten) === activeTen);
     rule.activeIdx = ai >= 0 ? ai : 0;
     rule.tenSP = tenSP;
+    rule.maSP = String(b.maSP || '').trim().slice(0, 100);
     rule.auto = b.auto !== false;
     rule.buffer = Math.max(0, num(b.buffer));
     save();
@@ -373,14 +454,28 @@ export function mountTenHoaDon(app, { json, guard, wrap, DATA_DIR, fetchWithTime
     res.json({ ok: true });
   }));
 
+  // Xem sản phẩm trên Sandbox theo mã (chỉ đọc): kiểm tra mã đúng và tên xuất HĐ đang ghi
+  app.post('/api/ton-kho/hd/lookup', guard, json, wrap(async (req, res) => {
+    const ma = String(req.body?.maSP || '').trim();
+    if (!ma) return res.json({ ok: false, message: 'Nhập mã sản phẩm Sandbox.' });
+    if (!global.__sandboxAuth?.hasLogin()) return res.json({ ok: false, message: 'Máy chủ chưa có tài khoản Sandbox (SANDBOX_WEB_USER/PASS).' });
+    try {
+      const p = await findProduct(ma);
+      res.json({ ok: true, ma: p.ma, tenSP: p.tenSp, tenXuatHoaDon: p.tenXuatHoaDon || '', giaBan: p.giaBan });
+    } catch (e) { res.json({ ok: false, message: e.message }); }
+  }));
+
   // Gửi thử: gửi lại dữ liệu sản phẩm y nguyên (tên đang ghi trên Sandbox, không phải tên trong
   // hàng đợi) để kiểm tra request còn chạy mà không đổi gì
   app.post('/api/ton-kho/hd/test', guard, json, wrap(async (req, res) => {
     const rule = findRule(req.body?.id);
     if (!rule) return res.json({ ok: false, message: 'Không tìm thấy sản phẩm.' });
-    if (!rule.save?.field) return res.json({ ok: false, message: 'Chưa dán request Lưu hoặc chưa chọn trường tên.' });
     let ten;
-    try {
+    if (apiMode(rule)) {
+      try { ten = (await pushNameApi(rule)).after; }
+      catch (e) { return res.json({ ok: false, message: e.message }); }
+    } else try {
+      if (!rule.save?.field) return res.json({ ok: false, message: 'Chưa nhập mã sản phẩm Sandbox (hoặc dán request Lưu).' });
       const body = await latestBody(rule);
       ten = getPath(body, rule.save.field);
       await sandboxFetch(rule.save, body);
