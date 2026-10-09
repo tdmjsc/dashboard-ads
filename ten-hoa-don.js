@@ -362,10 +362,17 @@ export function mountTenHoaDon(app, { json, guard, wrap, DATA_DIR, fetchWithTime
   });
 
   // Tạo / sửa: { id?, tenSP, maSP, auto, buffer, queue:[{ten, misaKey, soLuong}] }
-  app.post('/api/ton-kho/hd/save', guard, json, (req, res) => {
+  app.post('/api/ton-kho/hd/save', guard, json, wrap(async (req, res) => {
     const b = req.body || {};
-    const tenSP = String(b.tenSP || '').trim().slice(0, 300);
-    if (!tenSP) return res.json({ ok: false, message: 'Nhập tên sản phẩm trên Sandbox.' });
+    const maSP = String(b.maSP || '').trim().slice(0, 100);
+    let tenSP = String(b.tenSP || '').trim().slice(0, 300);
+    // Có mã SP → lấy tên sản phẩm gốc và tên xuất HĐ hiện tại từ Sandbox
+    let sb = null;
+    if (maSP && global.__sandboxAuth?.hasLogin()) {
+      try { sb = await findProduct(maSP); tenSP = String(sb.tenSp || tenSP).slice(0, 300); }
+      catch (e) { return res.json({ ok: false, message: e.message }); }
+    }
+    if (!tenSP) return res.json({ ok: false, message: 'Nhập mã hoặc tên sản phẩm trên Sandbox.' });
     const queueIn = Array.isArray(b.queue) ? b.queue.slice(0, 50) : [];
     const queue = queueIn.map(q => ({ ten: String(q.ten || '').trim().slice(0, 300), misaKey: String(q.misaKey || '').slice(0, 300),
       soLuong: isSet(q.soLuong) ? Math.max(0, num(q.soLuong)) : null })).filter(q => q.ten);
@@ -391,13 +398,15 @@ export function mountTenHoaDon(app, { json, guard, wrap, DATA_DIR, fetchWithTime
     const ai = rule.queue.findIndex(q => normName(q.ten) === activeTen);
     rule.activeIdx = ai >= 0 ? ai : 0;
     rule.tenSP = tenSP;
-    rule.maSP = String(b.maSP || '').trim().slice(0, 100);
+    rule.maSP = maSP;
     rule.auto = b.auto !== false;
     rule.buffer = Math.max(0, num(b.buffer));
     save();
     checkAll();
-    res.json({ ok: true, id: rule.id });
-  });
+    const active = rule.queue[rule.activeIdx].ten;
+    res.json({ ok: true, id: rule.id, warning: sb && normName(sb.tenXuatHoaDon) !== normName(active)
+      ? `Tên xuất HĐ trên Sandbox đang là "${sb.tenXuatHoaDon || '(trống)'}", khác tên đang dùng "${active}".` : '' });
+  }));
 
   app.post('/api/ton-kho/hd/delete', guard, json, (req, res) => {
     STORE.rules = STORE.rules.filter(r => r.id !== req.body?.id);

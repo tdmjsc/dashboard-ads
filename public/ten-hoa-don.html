@@ -219,13 +219,13 @@ function ruleCard(r, isNew) {
   return `<div class="panel" data-id="${esc(r.id || '')}">
     <div class="panel-head">
       <div class="head-fields">
-        <input class="tenSP" list="dlMisa" value="${esc(r.tenSP || '')}" placeholder="Tên sản phẩm trên Sandbox (gõ hoặc chọn)">
+        <input class="tenSP" list="dlMisa" value="${esc(r.tenSP || '')}" placeholder="Tên sản phẩm gốc trên Sandbox (tự điền khi có mã SP)">
         <input class="maSP" value="${esc(r.maSP || '')}" placeholder="Mã SP Sandbox (vd SP260922KVY43SB)" style="width:230px">
         <button class="btn sm" data-act="lookup">Xem trên Sandbox</button>
         <label class="switch"><input type="checkbox" class="auto" ${r.auto !== false ? 'checked' : ''}> Tự đổi tên</label>
         <label class="switch">Đổi khi còn ≤ <input type="number" class="buffer" min="0" inputmode="numeric" value="${r.buffer || 0}" style="width:70px"></label>
       </div>
-      ${isNew ? '' : `<div class="now">Đang xuất: <b>${esc(cur?.ten || '—')}</b></div>`}
+      ${isNew ? '' : `<div class="now">Sản phẩm trên Sandbox: <b>${esc(r.tenSP)}</b>${r.maSP ? ` (${esc(r.maSP)})` : ''} · Đang xuất: <b>${esc(cur?.ten || '—')}</b></div>`}
       <span class="msg" data-msg="lookup"></span>
     </div>
     <div class="sec">
@@ -349,8 +349,6 @@ $('list').addEventListener('click', async e => {
     if (act === 'pickadd') {
       const keys = rule._sel || [];
       for (const k of keys) { const m = misaOf(k); if (m) q.push({ ten: m.name, misaKey: m.key, soLuong: null }); }
-      // Sản phẩm mới chưa đặt tên → lấy tên mã MISA đầu tiên làm gợi ý
-      if (!rule.tenSP && keys.length) rule.tenSP = misaOf(keys[0])?.name || '';
       rule._pick = false; rule._sel = [];
     }
     render();
@@ -366,10 +364,12 @@ $('list').addEventListener('click', async e => {
       if (!r.ok) return setMsg(card, 'save', r.message, 'bad');
       if (!card.dataset.id) NEW = null;
       await load();
+      if (r.warning) alert('⚠️ ' + r.warning + '\nHãy sửa danh sách cho khớp (tên đầu tiên = tên đang ghi trên Sandbox).');
     } else if (act === 'lookup') {
       setMsg(card, 'lookup', 'Đang xem…');
       const r = await api('/api/ton-kho/hd/lookup', { maSP: rule.maSP });
       if (!r.ok) return setMsg(card, 'lookup', r.message, 'bad');
+      rule.tenSP = r.tenSP; card.querySelector('.tenSP').value = r.tenSP;
       const cur = rule.queue[card.dataset.id ? rule.activeIdx || 0 : 0]?.ten;
       const lech = cur && normName(cur) !== normName(r.tenXuatHoaDon);
       setMsg(card, 'lookup', `${r.tenSP} · tên xuất HĐ trên Sandbox: "${r.tenXuatHoaDon || '(trống)'}"`
