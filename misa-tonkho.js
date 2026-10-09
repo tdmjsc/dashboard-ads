@@ -81,7 +81,8 @@ function parseCurl(raw) {
     } else if (a === '-b' || a === '--cookie') req.headers.cookie = t[++i] || '';
     else if (['--data-raw', '--data', '-d', '--data-binary', '--data-ascii'].includes(a)) req.body = t[++i] || '';
     else if (a === '--url') req.url = t[++i] || '';
-    else if (a === '-X' || a === '--request' || a === '-A' || a === '-e' || a === '-o') i++;
+    else if (a === '-X' || a === '--request') req.method = (t[++i] || '').toUpperCase();
+    else if (a === '-A' || a === '-e' || a === '-o') i++;
     else if (!a.startsWith('-') && !req.url) req.url = a;
   }
   return req;
@@ -93,16 +94,20 @@ function parseFetch(raw) {
   const opt = JSON.parse(m[2]);
   const headers = {};
   for (const [k, v] of Object.entries(opt.headers || {})) headers[k.toLowerCase()] = String(v);
-  return { url: JSON.parse(m[1]), headers, body: opt.body || '' };
+  return { url: JSON.parse(m[1]), headers, body: opt.body || '', method: String(opt.method || '').toUpperCase() };
+}
+
+// Đọc request dán vào (cURL hoặc fetch) → { url, headers (chữ thường), body (chuỗi), method }
+export function parseRawRequest(raw) {
+  raw = String(raw || '').trim();
+  if (!raw) throw new Error('Chưa dán nội dung.');
+  try { return /^curl\b/i.test(raw) ? parseCurl(raw) : parseFetch(raw); }
+  catch (e) { throw new Error('Không đọc được nội dung đã dán (' + e.message + '). Hãy dùng "Copy as cURL (bash)".'); }
 }
 
 // Trả về cấu hình đã kiểm tra, hoặc ném lỗi tiếng Việt để hiện cho admin
 export function parsePastedRequest(raw) {
-  raw = String(raw || '').trim();
-  if (!raw) throw new Error('Chưa dán nội dung.');
-  let req;
-  try { req = /^curl\b/i.test(raw) ? parseCurl(raw) : parseFetch(raw); }
-  catch (e) { throw new Error('Không đọc được nội dung đã dán (' + e.message + '). Hãy dùng "Copy as cURL (bash)".'); }
+  const req = parseRawRequest(raw);
 
   let u;
   try { u = new URL(req.url); } catch { throw new Error('Không tìm thấy địa chỉ request.'); }

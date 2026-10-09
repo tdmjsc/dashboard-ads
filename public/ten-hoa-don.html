@@ -1,0 +1,321 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Tên xuất hoá đơn — TDMJSC</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&family=Space+Grotesk:wght@500;600;700&display=swap" rel="stylesheet">
+<style>
+  :root{
+    --ink:#10192B; --ink-soft:#1C2A42; --paper:#EEF1F5; --card:#FFFFFF;
+    --line:#E2E6EC; --line-soft:#EFF2F6; --text:#1A2436; --muted:#697587; --faint:#9AA4B2;
+    --teal:#0E8C76; --teal-bg:#E2F4F0; --amber:#B7791F; --amber-bg:#FBF1DD;
+    --red:#C2412D; --red-bg:#FBE7E2; --accent:#3D5AFE;
+    --shadow:0 1px 2px rgba(16,25,43,.04), 0 6px 24px rgba(16,25,43,.05); --radius:14px;
+  }
+  *{box-sizing:border-box;margin:0;padding:0}
+  body{font-family:'Inter',system-ui,sans-serif;background:var(--paper);color:var(--text);-webkit-font-smoothing:antialiased;font-variant-numeric:tabular-nums;line-height:1.45;}
+  .wrap{max-width:1180px;margin:0 auto;padding:0 20px 64px;}
+  header.topbar{background:var(--ink);color:#fff;}
+  .topbar-inner{max-width:1180px;margin:0 auto;padding:15px 20px;display:flex;align-items:center;justify-content:space-between;gap:14px;flex-wrap:wrap;}
+  .brand{display:flex;align-items:center;gap:11px;}
+  .brand .mark{width:36px;height:36px;border-radius:10px;background:#22314f;display:grid;place-items:center;flex:none;font-size:18px;}
+  .brand h1{font-family:'Space Grotesk',sans-serif;font-size:16px;font-weight:600;}
+  .brand p{font-size:12px;color:#9FB0C8;margin-top:1px;}
+  .right{display:flex;gap:10px;flex-wrap:wrap;}
+  .back{color:#C4D0E2;font-size:13px;text-decoration:none;border:1px solid rgba(255,255,255,.14);padding:7px 12px;border-radius:9px;white-space:nowrap;background:transparent;cursor:pointer;font-family:'Inter',system-ui,sans-serif;}
+  .back:hover{background:rgba(255,255,255,.08);color:#fff;}
+  .back.primary{background:var(--teal);border-color:var(--teal);color:#fff;font-weight:600;}
+
+  .intro{margin-top:18px;font-size:13px;color:var(--muted);line-height:1.6;background:var(--card);border:1px solid var(--line);border-radius:var(--radius);padding:14px 18px;}
+  .intro b{color:var(--text);}
+  .warnbox{margin-top:12px;font-size:13px;background:var(--amber-bg);color:#7a520f;border-radius:10px;padding:10px 14px;}
+
+  .panel{background:var(--card);border:1px solid var(--line);border-radius:var(--radius);margin-top:16px;box-shadow:var(--shadow);overflow:hidden;}
+  .panel-head{padding:14px 18px;border-bottom:1px solid var(--line-soft);display:flex;justify-content:space-between;align-items:center;gap:12px;flex-wrap:wrap;}
+  .panel-head h2{font-family:'Space Grotesk',sans-serif;font-size:16px;font-weight:600;}
+  .panel-head .now{font-size:13px;color:var(--muted);}
+  .panel-head .now b{color:var(--teal);font-size:14px;}
+  .sec{padding:14px 18px;border-bottom:1px solid var(--line-soft);}
+  .sec:last-child{border-bottom:none;}
+  .sec h3{font-size:12px;text-transform:uppercase;letter-spacing:.4px;color:var(--faint);font-weight:600;margin-bottom:10px;}
+  .hint{font-size:12.5px;color:var(--muted);line-height:1.55;}
+  .hint code{background:#F0F3F8;padding:1px 5px;border-radius:5px;font-size:12px;}
+
+  input,select,textarea{font-family:'Inter',system-ui,sans-serif;font-size:13.5px;color:var(--text);border:1px solid var(--line);background:#fff;border-radius:8px;padding:7px 9px;outline:none;}
+  input:focus,select:focus,textarea:focus{border-color:var(--teal);box-shadow:0 0 0 3px var(--teal-bg);}
+  .btn{font-family:'Inter',system-ui,sans-serif;font-size:13px;font-weight:600;border:1px solid var(--line);background:#fff;color:var(--text);padding:7px 12px;border-radius:9px;cursor:pointer;white-space:nowrap;}
+  .btn:hover{background:#F4F6FB;}
+  .btn.primary{background:var(--teal);border-color:var(--teal);color:#fff;}
+  .btn.primary:hover{background:#0b7764;}
+  .btn.danger{color:var(--red);}
+  .btn.sm{padding:4px 8px;font-size:12px;}
+  .btn:disabled{opacity:.6;cursor:wait;}
+
+  .tablescroll{overflow-x:auto;}
+  table{width:100%;border-collapse:collapse;min-width:900px;}
+  th{text-align:left;font-size:11.5px;font-weight:600;color:var(--faint);text-transform:uppercase;letter-spacing:.4px;padding:8px 8px;border-bottom:1px solid var(--line-soft);white-space:nowrap;}
+  td{padding:7px 8px;border-bottom:1px solid var(--line-soft);font-size:13.5px;vertical-align:middle;}
+  td.r,th.r{text-align:right;}
+  td input.ten{width:100%;min-width:220px;}
+  td select.misa{width:100%;min-width:200px;}
+  td input.sl{width:100px;text-align:right;}
+  tr.active td{background:#F1FAF7;}
+  .mono{font-family:'Space Grotesk',sans-serif;font-weight:500;}
+  .tag{font-size:12px;font-weight:600;padding:3px 9px;border-radius:7px;display:inline-block;white-space:nowrap;}
+  .tag.dang{background:var(--teal-bg);color:var(--teal);}
+  .tag.cho{background:#F0F3F8;color:var(--muted);}
+  .tag.het{background:var(--red-bg);color:var(--red);}
+  .tag.chua{background:var(--amber-bg);color:var(--amber);}
+  .row{display:flex;gap:10px;flex-wrap:wrap;align-items:center;}
+  .msg{font-size:12.5px;color:var(--muted);}
+  .msg.ok{color:var(--teal);} .msg.bad{color:var(--red);}
+  textarea.paste{width:100%;min-height:80px;font-family:ui-monospace,Menlo,monospace;font-size:12px;resize:vertical;margin-top:8px;}
+  .kv{font-size:13px;line-height:1.7;}
+  .kv span{color:var(--muted);}
+  .kv code{font-size:12px;background:#F0F3F8;padding:1px 6px;border-radius:5px;word-break:break-all;}
+  .hist{font-size:12.5px;color:var(--muted);line-height:1.7;max-height:180px;overflow:auto;}
+  .hist .bad{color:var(--red);}
+  .err{margin-top:8px;font-size:13px;color:var(--red);background:var(--red-bg);border-radius:8px;padding:8px 12px;}
+  details summary{cursor:pointer;font-size:13px;font-weight:600;color:var(--accent);margin-top:6px;}
+  .empty{padding:30px;text-align:center;color:var(--muted);}
+  .hidden{display:none !important;}
+  .switch{display:inline-flex;align-items:center;gap:6px;font-size:13px;cursor:pointer;}
+  @media(max-width:720px){ .wrap,.topbar-inner{padding-left:16px;padding-right:16px;} }
+</style>
+</head>
+<body>
+<header class="topbar">
+  <div class="topbar-inner">
+    <div class="brand">
+      <div class="mark">🧾</div>
+      <div><h1>Tên xuất hoá đơn theo lô</h1><p>Hết số lượng tên này thì tự đổi sang tên kế tiếp trên Sandbox</p></div>
+    </div>
+    <div class="right">
+      <button class="back primary" id="btnAdd">＋ Thêm sản phẩm</button>
+      <button class="back" id="btnCheck">⟳ Kiểm tra ngay</button>
+      <a href="/ton-kho.html" class="back">📦 Tồn kho</a>
+      <a href="/" class="back">← Dashboard</a>
+    </div>
+  </div>
+</header>
+
+<div class="wrap">
+  <div class="intro">
+    Mỗi sản phẩm trên Sandbox có một <b>danh sách tên xuất hoá đơn</b> (tên theo từng nhà cung cấp, đúng tên trên MISA). Đang xuất theo tên đầu tiên;
+    khi tên đó <b>hết số lượng được xuất</b> thì máy chủ tự đổi ô <b>"Tên xuất hoá đơn"</b> của sản phẩm trên Sandbox sang tên kế tiếp và nhắn nhóm kho.
+    <br>• <b>Số lượng được xuất</b>: để trống = lấy theo <b>tồn MISA</b> của mã hàng đã ghép (hoá đơn xuất ra sẽ trừ tồn MISA). Nhập số = <b>còn bấy nhiêu tính từ lúc lưu</b>, máy chủ trừ dần theo lượng tồn MISA giảm.
+    <br>• Kiểm tra mỗi lần tồn MISA được đồng bộ (theo lịch ở trang Tồn kho), hoặc bấm <b>Kiểm tra ngay</b>.
+    <div class="warnbox hidden" id="noLogin">Máy chủ chưa có tài khoản Sandbox (<code>SANDBOX_WEB_USER</code>/<code>SANDBOX_WEB_PASS</code>), nên sẽ dùng cookie trong request bạn dán; cookie đó hết hạn thì phải dán lại.</div>
+  </div>
+  <div id="list"></div>
+</div>
+
+<script>
+const $ = id => document.getElementById(id);
+const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+const fmt = n => n === null || n === undefined ? '—' : (Math.round(n * 100) / 100).toLocaleString('vi-VN');
+const dt = s => s ? new Date(s).toLocaleString('vi-VN', { hour: '2-digit', minute: '2-digit', day: '2-digit', month: '2-digit' }) : '';
+async function api(url, body) {
+  const r = await fetch(url, body === undefined ? {} : { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+  if (r.status === 401) { location.href = '/login'; throw new Error('Chưa đăng nhập'); }
+  if (r.status === 403) { location.href = '/'; throw new Error('Không có quyền'); }
+  return r.json();
+}
+
+let DATA = { rules: [], misaItems: [] };
+let NEW = null; // sản phẩm đang thêm (chưa lưu)
+
+function misaOptions(sel) {
+  return `<option value="">— không ghép MISA —</option>` + DATA.misaItems.map(m =>
+    `<option value="${esc(m.key)}" ${m.key === sel ? 'selected' : ''}>${esc(m.name)}${m.code ? ' (' + esc(m.code) + ')' : ''} · tồn ${fmt(m.qty)}</option>`).join('');
+}
+
+function queueRow(q, i, activeIdx, isNew) {
+  const active = !isNew && i === activeIdx;
+  let tag;
+  if (isNew) tag = '';
+  else if (q.remaining === null) tag = '<span class="tag chua">Chưa có số lượng</span>';
+  else if (active) tag = q.remaining > 0 ? '<span class="tag dang">Đang xuất</span>' : '<span class="tag het">Đang xuất · đã hết</span>';
+  else tag = q.remaining > 0 ? '<span class="tag cho">Chờ</span>' : '<span class="tag het">Hết</span>';
+  return `<tr class="${active ? 'active' : ''}" data-i="${i}">
+    <td class="mono">${i + 1}</td>
+    <td><input class="ten" value="${esc(q.ten)}" placeholder="Tên xuất hoá đơn (đúng tên trên MISA)"></td>
+    <td><select class="misa">${misaOptions(q.misaKey)}</select></td>
+    <td class="r mono">${isNew ? '' : fmt(q.misaQty)}</td>
+    <td class="r"><input class="sl" type="number" min="0" value="${q.soLuong ?? ''}" placeholder="theo MISA"></td>
+    <td class="r mono">${isNew ? '' : fmt(q.remaining)}${!isNew && q.used ? `<div class="hint">đã xuất ${fmt(q.used)}</div>` : ''}</td>
+    <td>${tag}${active && q.activatedAt ? `<div class="hint">từ ${dt(q.activatedAt)}</div>` : ''}</td>
+    <td><div class="row" style="flex-wrap:nowrap">
+      <button class="btn sm" data-act="up" title="Lên">↑</button>
+      <button class="btn sm" data-act="down" title="Xuống">↓</button>
+      <button class="btn sm danger" data-act="del" title="Xoá dòng">✕</button>
+      ${!isNew && !active ? `<button class="btn sm" data-act="use">Dùng tên này</button>` : ''}
+    </div></td></tr>`;
+}
+
+function ruleCard(r, isNew) {
+  const cur = r.queue[r.activeIdx || 0];
+  const sv = r.save;
+  return `<div class="panel" data-id="${esc(r.id || '')}">
+    <div class="panel-head">
+      <div class="row">
+        <input class="tenSP" value="${esc(r.tenSP || '')}" placeholder="Tên sản phẩm trên Sandbox" style="min-width:280px;font-weight:600">
+        <label class="switch"><input type="checkbox" class="auto" ${r.auto !== false ? 'checked' : ''}> Tự đổi tên</label>
+        <label class="switch">Đổi khi còn ≤ <input type="number" class="buffer" min="0" value="${r.buffer || 0}" style="width:70px"></label>
+      </div>
+      ${isNew ? '' : `<div class="now">Đang xuất: <b>${esc(cur?.ten || '—')}</b></div>`}
+    </div>
+    <div class="sec">
+      <h3>Danh sách tên xuất hoá đơn (theo thứ tự dùng)</h3>
+      <div class="tablescroll"><table>
+        <thead><tr><th>#</th><th>Tên xuất hoá đơn</th><th>Mã hàng MISA</th><th class="r">Tồn MISA</th><th class="r">SL nhập tay</th><th class="r">Còn được xuất</th><th>Trạng thái</th><th></th></tr></thead>
+        <tbody>${r.queue.map((q, i) => queueRow(q, i, r.activeIdx || 0, isNew)).join('')}</tbody>
+      </table></div>
+      <div class="row" style="margin-top:10px">
+        <button class="btn" data-act="addrow">＋ Thêm tên</button>
+        <button class="btn primary" data-act="save">Lưu</button>
+        ${isNew ? '<button class="btn" data-act="cancel">Huỷ</button>' : '<button class="btn danger" data-act="delrule">Xoá sản phẩm</button>'}
+        <span class="msg" data-msg="save"></span>
+      </div>
+      ${r.lastError ? `<div class="err">Lần đổi tên gần nhất lỗi (${dt(r.lastErrorAt)}): ${esc(r.lastError)}</div>` : ''}
+    </div>
+    ${isNew ? '' : `
+    <div class="sec">
+      <h3>Kết nối Sandbox cho sản phẩm này</h3>
+      ${sv ? `<div class="kv">
+          <div><span>Request Lưu:</span> <code>${esc(sv.method)} ${esc(sv.url)}</code> · dán lúc ${dt(sv.savedAt)}</div>
+          <div><span>Trường tên xuất HĐ:</span>
+            <select class="field">${(sv.fields.length ? sv.fields : [sv.field]).filter(Boolean).map(f => `<option ${f === sv.field ? 'selected' : ''}>${esc(f)}</option>`).join('')}</select>
+            <input class="fieldManual" placeholder="hoặc gõ tên trường" style="width:180px">
+            <button class="btn sm" data-act="field">Chọn</button>
+            · giá trị trong request: <b>${esc(sv.currentValue)}</b></div>
+          <div><span>Request chi tiết (lấy dữ liệu mới trước khi lưu):</span> ${r.detail ? `<code>${esc(r.detail.url)}</code> <button class="btn sm danger" data-act="deldetail">Bỏ</button>` : '<b style="color:var(--amber)">chưa có</b> — nên thêm để không ghi đè giá / thông tin vừa sửa trên Sandbox'}</div>
+        </div>
+        <div class="row" style="margin-top:8px"><button class="btn" data-act="test">Gửi thử (ghi lại đúng tên đang dùng)</button><span class="msg" data-msg="test"></span></div>`
+      : '<p class="hint">Chưa dán request. Làm theo hướng dẫn bên dưới.</p>'}
+      <details ${sv ? '' : 'open'}>
+        <summary>${sv ? 'Dán lại request' : 'Hướng dẫn lấy request từ Sandbox'}</summary>
+        <p class="hint" style="margin-top:8px">
+          1. Mở Sandbox trên Chrome máy tính → <b>Kho → Quản lý sản phẩm</b>, bấm <b>F12</b> → tab <b>Network</b>.<br>
+          2. Mở form <b>Cập nhật sản phẩm</b> của sản phẩm này. <i>(Tuỳ chọn, khuyên dùng)</i> Trong Network tìm request vừa lấy chi tiết sản phẩm (thường có id sản phẩm trong địa chỉ) → chuột phải → <b>Copy → Copy as cURL (bash)</b> → dán vào ô <b>Request chi tiết</b>.<br>
+          3. Bấm <b>Lưu</b> trên form (không cần sửa gì). Trong Network chọn request vừa gửi đi khi Lưu → <b>Copy as cURL (bash)</b> → dán vào ô <b>Request Lưu</b>.
+        </p>
+        <textarea class="paste" data-kind="save" placeholder="Request Lưu sản phẩm (curl ...)"></textarea>
+        <div class="row" style="margin-top:6px"><button class="btn primary" data-act="paste" data-kind="save">Lưu request Lưu</button><span class="msg" data-msg="paste-save"></span></div>
+        <textarea class="paste" data-kind="detail" placeholder="Request chi tiết sản phẩm (tuỳ chọn, curl ...)"></textarea>
+        <div class="row" style="margin-top:6px"><button class="btn" data-act="paste" data-kind="detail">Lưu request chi tiết</button><span class="msg" data-msg="paste-detail"></span></div>
+      </details>
+    </div>
+    <div class="sec">
+      <h3>Lịch sử đổi tên</h3>
+      <div class="hist">${(r.history || []).length ? r.history.map(h => `<div class="${h.ok ? '' : 'bad'}">${dt(h.at)} · ${esc(h.by || '')}: ${esc(h.from || '?')} → <b>${esc(h.to)}</b>${h.ok ? '' : ' — lỗi: ' + esc(h.message)}${h.reason ? ' (' + esc(h.reason) + ')' : ''}</div>`).join('') : 'Chưa có.'}</div>
+    </div>`}
+  </div>`;
+}
+
+function render() {
+  const cards = DATA.rules.map(r => ruleCard(r, false));
+  if (NEW) cards.unshift(ruleCard(NEW, true));
+  $('list').innerHTML = cards.length ? cards.join('') : '<div class="panel empty">Chưa có sản phẩm nào. Bấm <b>＋ Thêm sản phẩm</b>.</div>';
+  $('noLogin').classList.toggle('hidden', !!DATA.sandboxLogin);
+}
+
+async function load() {
+  const d = await api('/api/ton-kho/hd');
+  if (d.ok) { DATA = d; render(); }
+}
+
+// Đọc form của một thẻ
+function readCard(card) {
+  return {
+    id: card.dataset.id || undefined,
+    tenSP: card.querySelector('.tenSP').value,
+    auto: card.querySelector('.auto').checked,
+    buffer: card.querySelector('.buffer').value,
+    queue: [...card.querySelectorAll('tbody tr')].map(tr => ({
+      ten: tr.querySelector('.ten').value, misaKey: tr.querySelector('.misa').value, soLuong: tr.querySelector('.sl').value,
+    })),
+  };
+}
+const ruleOf = card => card.dataset.id ? DATA.rules.find(r => r.id === card.dataset.id) : NEW;
+const setMsg = (card, k, t, cls = '') => { const el = card.querySelector(`[data-msg="${k}"]`); if (el) { el.textContent = t; el.className = 'msg ' + cls; } };
+
+// Khi chọn mã MISA mà ô tên còn trống → điền sẵn tên MISA
+$('list').addEventListener('change', e => {
+  if (!e.target.classList.contains('misa')) return;
+  const tr = e.target.closest('tr'), ten = tr.querySelector('.ten');
+  const m = DATA.misaItems.find(x => x.key === e.target.value);
+  if (m && !ten.value.trim()) ten.value = m.name;
+});
+
+$('list').addEventListener('click', async e => {
+  const b = e.target.closest('button[data-act]'); if (!b) return;
+  const card = b.closest('.panel'), act = b.dataset.act, rule = ruleOf(card);
+  const tr = b.closest('tr'), i = tr ? Number(tr.dataset.i) : -1;
+  // Các thao tác sửa danh sách: giữ nội dung đang gõ rồi vẽ lại
+  if (['addrow', 'up', 'down', 'del'].includes(act)) {
+    const f = readCard(card);
+    rule.tenSP = f.tenSP; rule.auto = f.auto; rule.buffer = f.buffer;
+    const prev = rule.queue;
+    let q = f.queue.map((x, k) => ({ ...prev[k], ...x, soLuong: x.soLuong === '' ? null : x.soLuong }));
+    if (act === 'addrow') q.push({ ten: '', misaKey: '', soLuong: null, remaining: null });
+    if (act === 'del') q.splice(i, 1);
+    if (act === 'up' && i > 0) [q[i - 1], q[i]] = [q[i], q[i - 1]];
+    if (act === 'down' && i < q.length - 1) [q[i + 1], q[i]] = [q[i], q[i + 1]];
+    rule.queue = q;
+    render();
+    return;
+  }
+  b.disabled = true;
+  try {
+    if (act === 'save') {
+      const r = await api('/api/ton-kho/hd/save', readCard(card));
+      if (!r.ok) return setMsg(card, 'save', r.message, 'bad');
+      if (!card.dataset.id) NEW = null;
+      await load();
+    } else if (act === 'cancel') { NEW = null; render(); }
+    else if (act === 'delrule') {
+      if (!confirm('Xoá sản phẩm này khỏi danh sách tự đổi tên? (Không ảnh hưởng Sandbox)')) return;
+      await api('/api/ton-kho/hd/delete', { id: rule.id }); await load();
+    } else if (act === 'use') {
+      const ten = rule.queue[i].ten;
+      if (!confirm(`Đổi tên xuất hoá đơn của "${rule.tenSP}" trên Sandbox sang "${ten}" ngay bây giờ?`)) return;
+      const r = await api('/api/ton-kho/hd/activate', { id: rule.id, idx: i });
+      if (!r.ok) alert('Không đổi được: ' + r.message);
+      await load();
+    } else if (act === 'paste') {
+      const kind = b.dataset.kind, raw = card.querySelector(`textarea[data-kind="${kind}"]`).value;
+      const r = await api('/api/ton-kho/hd/request', { id: rule.id, kind, raw });
+      if (!r.ok) return setMsg(card, 'paste-' + kind, r.message, 'bad');
+      await load();
+      if (r.message) alert(r.message);
+    } else if (act === 'field') {
+      const field = card.querySelector('.fieldManual').value.trim() || card.querySelector('.field').value;
+      const r = await api('/api/ton-kho/hd/request', { id: rule.id, field });
+      if (!r.ok) alert(r.message);
+      await load();
+    } else if (act === 'deldetail') {
+      await api('/api/ton-kho/hd/request/delete', { id: rule.id, kind: 'detail' }); await load();
+    } else if (act === 'test') {
+      setMsg(card, 'test', 'Đang gửi…');
+      const r = await api('/api/ton-kho/hd/test', { id: rule.id });
+      setMsg(card, 'test', r.ok ? `Sandbox nhận request (tên "${r.ten}").` : r.message, r.ok ? 'ok' : 'bad');
+    }
+  } catch (err) { alert(err.message); }
+  finally { b.disabled = false; }
+});
+
+$('btnAdd').addEventListener('click', () => {
+  if (!NEW) NEW = { tenSP: '', auto: true, buffer: 0, queue: [{ ten: '', misaKey: '', soLuong: null }, { ten: '', misaKey: '', soLuong: null }] };
+  render();
+  document.querySelector('.tenSP')?.focus();
+});
+$('btnCheck').addEventListener('click', async () => { await api('/api/ton-kho/hd/check', {}); await load(); });
+
+load();
+</script>
+</body>
+</html>
