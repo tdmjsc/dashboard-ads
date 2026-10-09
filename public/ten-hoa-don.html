@@ -219,7 +219,8 @@ function ruleCard(r, isNew) {
   return `<div class="panel" data-id="${esc(r.id || '')}">
     <div class="panel-head">
       <div class="head-fields">
-        <input class="tenSP" list="dlMisa" value="${esc(r.tenSP || '')}" placeholder="Tên sản phẩm gốc trên Sandbox (tự điền khi có mã SP)">
+        <input class="tenSP" list="dlSb-${esc(r.id || 'new')}" autocomplete="off" value="${esc(r.tenSP || '')}" placeholder="Tìm sản phẩm trên Sandbox (gõ tên hoặc mã)">
+        <datalist id="dlSb-${esc(r.id || 'new')}"></datalist>
         <input class="maSP" value="${esc(r.maSP || '')}" placeholder="Mã SP Sandbox (vd SP260922KVY43SB)" style="width:230px">
         <button class="btn sm" data-act="lookup">Xem trên Sandbox</button>
         <label class="switch"><input type="checkbox" class="auto" ${r.auto !== false ? 'checked' : ''}> Tự đổi tên</label>
@@ -281,8 +282,7 @@ function ruleCard(r, isNew) {
 function render() {
   const cards = DATA.rules.map(r => ruleCard(r, false));
   if (NEW) cards.unshift(ruleCard(NEW, true));
-  $('list').innerHTML = (cards.length ? cards.join('') : '<div class="panel empty">Chưa có sản phẩm nào. Bấm <b>＋ Thêm sản phẩm</b>.</div>')
-    + `<datalist id="dlMisa">${DATA.misaItems.map(m => `<option value="${esc(m.name)}">`).join('')}</datalist>`;
+  $('list').innerHTML = (cards.length ? cards.join('') : '<div class="panel empty">Chưa có sản phẩm nào. Bấm <b>＋ Thêm sản phẩm</b>.</div>');
   $('noLogin').classList.toggle('hidden', !!DATA.sandboxLogin);
 }
 
@@ -302,12 +302,33 @@ function payload(card, rule) {
 const ruleOf = card => card.dataset.id ? DATA.rules.find(r => r.id === card.dataset.id) : NEW;
 const setMsg = (card, k, t, cls = '') => { const el = card.querySelector(`[data-msg="${k}"]`); if (el) { el.textContent = t; el.className = 'msg ' + cls; } };
 
+// Ô tên sản phẩm: gợi ý sản phẩm tìm trên Sandbox; chọn đúng một gợi ý thì điền luôn mã SP
+let sbTimer = null, sbItems = [];
+function sbSuggest(el, card, rule) {
+  const hit = sbItems.find(p => p.tenSP === el.value);
+  if (hit) {
+    rule.tenSP = hit.tenSP; rule.maSP = hit.ma; card.querySelector('.maSP').value = hit.ma;
+    setMsg(card, 'lookup', `Đã chọn ${hit.ma} · tên xuất HĐ trên Sandbox: "${hit.tenXuatHoaDon || '(trống)'}"`, 'ok');
+    return;
+  }
+  clearTimeout(sbTimer);
+  const q = el.value.trim();
+  if (q.length < 2) return;
+  sbTimer = setTimeout(async () => {
+    const r = await api('/api/ton-kho/hd/search', { q });
+    if (!r.ok) return setMsg(card, 'lookup', r.message, 'bad');
+    sbItems = r.items;
+    card.querySelector('datalist').innerHTML = r.items.map(p => `<option value="${esc(p.tenSP)}" label="${esc(p.ma)}${p.tenXuatHoaDon ? ' · HĐ: ' + esc(p.tenXuatHoaDon) : ''}">`).join('');
+    if (!r.items.length) setMsg(card, 'lookup', 'Không thấy sản phẩm nào trên Sandbox.', 'bad');
+  }, 350);
+}
+
 // Gõ vào ô nào thì ghi ngay vào rule, để vẽ lại không mất chữ
 $('list').addEventListener('input', e => {
   const el = e.target, card = el.closest('.panel'); if (!card) return;
   const rule = ruleOf(card); if (!rule) return;
   const it = el.closest('.item'), i = it ? Number(it.dataset.i) : -1;
-  if (el.classList.contains('tenSP')) rule.tenSP = el.value;
+  if (el.classList.contains('tenSP')) { rule.tenSP = el.value; sbSuggest(el, card, rule); }
   else if (el.classList.contains('maSP')) rule.maSP = el.value;
   else if (el.classList.contains('buffer')) rule.buffer = el.value;
   else if (el.classList.contains('auto')) rule.auto = el.checked;

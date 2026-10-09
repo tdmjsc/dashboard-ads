@@ -210,11 +210,14 @@ export function mountTenHoaDon(app, { json, guard, wrap, DATA_DIR, fetchWithTime
     return sandboxFetch({ url: SB_API + endpoint, method: 'POST',
       headers: { 'content-type': 'application/json', accept: 'application/json, text/plain, */*', origin, referer: origin + '/' } }, body);
   }
-  async function findProduct(ma) {
-    const j = await sbPost('TimTheoDieuKienSPCha', { pageInfo: { page: 1, pageSize: 20 }, sorts: [], keyword: ma, ListIdNhomSanPham: [],
+  async function searchProducts(keyword) {
+    const j = await sbPost('TimTheoDieuKienSPCha', { pageInfo: { page: 1, pageSize: 20 }, sorts: [], keyword, ListIdNhomSanPham: [],
       ListIdNhanSanPham: null, ListIdDmThuongHieu: null, ListIdDmXuatXu: null, ListIdDmMauSac: null, Model: null, ListIdNhaCungCap: null,
       SuDung: null, XemTatCaChiNhanh: true });
-    const p = (Array.isArray(j?.data) ? j.data : []).find(x => String(x.ma).trim().toLowerCase() === String(ma).trim().toLowerCase());
+    return Array.isArray(j?.data) ? j.data : [];
+  }
+  async function findProduct(ma) {
+    const p = (await searchProducts(ma)).find(x => String(x.ma).trim().toLowerCase() === String(ma).trim().toLowerCase());
     if (!p) throw new Error(`Không tìm thấy sản phẩm mã "${ma}" trên Sandbox.`);
     return p;
   }
@@ -461,6 +464,17 @@ export function mountTenHoaDon(app, { json, guard, wrap, DATA_DIR, fetchWithTime
       return res.json({ ok: false, message: e.message });
     }
     res.json({ ok: true });
+  }));
+
+  // Tìm sản phẩm trên Sandbox theo tên hoặc mã (chỉ đọc) — gợi ý cho ô tên sản phẩm
+  app.post('/api/ton-kho/hd/search', guard, json, wrap(async (req, res) => {
+    const q = String(req.body?.q || '').trim().slice(0, 200);
+    if (q.length < 2) return res.json({ ok: true, items: [] });
+    if (!global.__sandboxAuth?.hasLogin()) return res.json({ ok: false, message: 'Máy chủ chưa có tài khoản Sandbox.' });
+    try {
+      const items = (await searchProducts(q)).map(p => ({ ma: p.ma, tenSP: p.tenSp, tenXuatHoaDon: p.tenXuatHoaDon || '' }));
+      res.json({ ok: true, items });
+    } catch (e) { res.json({ ok: false, message: e.message }); }
   }));
 
   // Xem sản phẩm trên Sandbox theo mã (chỉ đọc): kiểm tra mã đúng và tên xuất HĐ đang ghi
