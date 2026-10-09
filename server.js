@@ -1253,7 +1253,7 @@ async function sandboxLogin() {
 }
 
 // Gọi API báo cáo cho khoảng ngày [since, until] (YYYY-MM-DD). Tự đăng nhập lại nếu phiên hết hạn.
-// Lọc "Ngày tạo contact" + "Không giới hạn ngày chốt" (Sandbox xác nhận là cách ra số đúng):
+// ⚠ ĐỪNG ĐỔI (xem CLAUDE.md). Lọc "Ngày tạo contact" + "Không giới hạn ngày chốt" — Sandbox xác nhận, đã đối chiếu đúng:
 // chỉ contact về trong khoảng ngày, nhưng tính MỌI đơn chốt của các contact đó, kể cả chốt
 // những ngày sau (vd contact về 7/10, chốt 9/10 vẫn tính vào 7/10).
 // Chưa rõ Sandbox nhận cờ ở dạng nào → thử lần lượt, nhớ dạng chạy được; nếu không dạng
