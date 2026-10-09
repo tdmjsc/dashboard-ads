@@ -407,10 +407,12 @@ export function mountTenHoaDon(app, { json, guard, wrap, DATA_DIR, fetchWithTime
         const d = decide(rule, m);
         if (d.action === 'doi') {
           const cur = rule.queue[rule.activeIdx || 0], nxt = rule.queue[d.next];
+          const curRem = remainingOf(cur, m, true), curSL = num(cur.soLuong); // activate() sẽ sửa cur.soLuong
           try {
             await activate(rule, d.next, 'tự động', `"${cur.ten}" hết số lượng được xuất`);
-            await notify(`🧾 <b>Đã đổi tên xuất hoá đơn</b>\nSản phẩm: <b>${tgEsc(rule.tenSP)}</b>\n`
-              + `"${tgEsc(cur.ten)}" đã hết số lượng → nay xuất theo <b>${tgEsc(nxt.ten)}</b>.`);
+            await notify(`🧾 Sản phẩm <b>${tgEsc(rule.tenSP)}</b>: xuất hoá đơn dưới tên "<b>${tgEsc(cur.ten)}</b>" `
+              + `về ${curRem.remaining > 0 ? `còn ${curRem.remaining}` : '0'}, đã tự chuyển tên xuất hoá đơn sang "<b>${tgEsc(nxt.ten)}</b>".`
+              + (curRem.source === 'hd' ? `\n(Đã xuất HĐ dưới tên "${tgEsc(cur.ten)}": ${curRem.used}/${curSL})` : ''));
           } catch (e) {
             // Cùng một lỗi lặp lại mỗi lần đồng bộ thì chỉ ghi lịch sử 1 lần
             if (rule.lastError !== e.message) addHistory(rule, { from: cur.ten, to: nxt.ten, by: 'tự động', ok: false, message: e.message });
