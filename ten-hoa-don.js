@@ -305,6 +305,11 @@ export function mountTenHoaDon(app, { json, guard, wrap, DATA_DIR, fetchWithTime
   const QTY_KEYS = ['soLuong', 'quantity', 'soLuongSanPham', 'sl', 'soLuongBan'];
   const pickStr = (o, ks) => { for (const k of ks) if (typeof o[k] === 'string' && o[k].trim()) return o[k].trim(); return ''; };
   function linesOf(data) {
+    // Đã xác nhận với đơn thật (12/10/2026): dòng hàng ở donHangLogisticSanPhamDtos (maSanPham, soLuong,
+    // tenSanPham, idSanPham). Chỉ đọc mảng này khi có, để không đếm đôi với sanPhamLogisticDtos.
+    if (Array.isArray(data?.donHangLogisticSanPhamDtos))
+      return data.donHangLogisticSanPhamDtos.map(x => [String(x.maSanPham || '').trim(), num(x.soLuong),
+        String(x.tenSanPham || '').trim(), String(x.idSanPham || '')]);
     const lines = [];
     const walk = (v, depth) => {
       if (!v || typeof v !== 'object' || depth > 4) return;
