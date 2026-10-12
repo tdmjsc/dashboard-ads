@@ -268,14 +268,12 @@ export function mountTenHoaDon(app, { json, guard, wrap, DATA_DIR, fetchWithTime
 
   /* ---------- Số lượng đã xuất hoá đơn dưới tên đang dùng (hoá đơn điện tử Sandbox) ----------
      HĐ: POST invoice/api/Invoice/TimHoaDonDienTuTheoDieuKien (phiên web máy chủ) → maDonHang, idDonHang,
-     actionCode (1 = phát hành), ngayTao (giờ VN). HĐ không có dòng hàng nên lấy dòng hàng của đơn qua API
-     đối tác (global.__sandboxOrders, details[].itemCode/quantity). Ngày tạo đơn đọc từ mã đơn
-     (DHLOG260930… → 2026-09-30) để chỉ tải đơn của những ngày cần; dòng hàng lưu cache theo mã đơn.
+     actionCode (1 = phát hành), ngayTao (giờ VN). HĐ không có dòng hàng nên lấy dòng hàng của đơn theo mã
+     đơn (orderlogistic GetChiTietDonByMa, cùng phiên web), lưu cache theo mã đơn.
      Chỉ đếm HĐ phát hành (actionCode 1) — HĐ thay thế/điều chỉnh/huỷ không trừ lại. */
   const INV_SEARCH = 'https://api.sandbox.com.vn/invoice/api/Invoice/TimHoaDonDienTuTheoDieuKien';
-  const hdOn = rule => apiMode(rule) && typeof global.__sandboxOrders === 'function';
+  const hdOn = rule => apiMode(rule);
   const vnDay = t => new Date(Date.parse(t) + 7 * 3600e3).toISOString().slice(0, 10);
-  const ORDER_KEYS = ['orderCode', 'shortCode', 'orderNumber', 'orderId', 'code', 'maDonHang'];
   const dayOfCode = code => { const m = /^[A-Z]+(\d{2})(\d{2})(\d{2})/.exec(String(code || '')); return m ? `20${m[1]}-${m[2]}-${m[3]}` : ''; };
 
   async function invoicesSince(sinceISO) {
@@ -299,39 +297,61 @@ export function mountTenHoaDon(app, { json, guard, wrap, DATA_DIR, fetchWithTime
     });
   }
 
-  // Dòng hàng của các đơn (cache STORE.orders: mã đơn → [[itemCode, qty], ...])
-  async function orderItems(invoices) {
-    STORE.orders = STORE.orders || {}; STORE.orderDays = STORE.orderDays || {};
-    const key = h => h.maDonHang || h.idDonHang;
-    const days = new Set();
-    for (const h of invoices) if (!STORE.orders[key(h)]) {
-      const d = dayOfCode(h.maDonHang);
-      // Ngày đã tải mà vẫn thiếu đơn: tải lại nếu lần trước cách đây hơn 30 phút
-      if (d && (!STORE.orderDays[d] || Date.now() - Date.parse(STORE.orderDays[d]) > 30 * 60e3)) days.add(d);
-    }
-    for (const d of [...days].sort()) {
-      // Lấy cả ngày trước: ngày trong mã đơn (giờ VN) có thể lệch với ngày lọc của API
-      const prev = new Date(Date.parse(d + 'T00:00:00Z') - 86400e3).toISOString().slice(0, 10);
-      const { data } = await global.__sandboxOrders(prev, d);
-      for (const o of data) {
-        const items = (o.details || []).map(x => [String(x.itemCode || '').trim(), num(x.quantity), String(x.itemName || '').trim()]);
-        // Mã đơn trên hoá đơn (DHLOG…) chưa rõ ứng với trường nào của API đối tác → ghi theo mọi trường mã
-        for (const k of ORDER_KEYS) if (o[k]) STORE.orders[String(o[k]).trim()] = items;
+  // Dòng sản phẩm của một đơn: web API của Sandbox (phiên máy chủ), giống nút xem đơn theo mã trên web.
+  // (API đối tác GetOrderByConditions lọc theo ngày data về, không tìm được đơn theo mã, và bị giới hạn
+  //  ~1 lần gọi / 30–60 giây nên không dùng.) Chưa chắc tên trường dòng hàng → nhận mọi mảng object có
+  //  số lượng + mã/tên/id sản phẩm: [mã, SL, tên, idSanPham].
+  const ORDER_BY_CODE = 'https://api.sandbox.com.vn/orderlogistic/api/DonHangLogistic/GetChiTietDonByMa';
+  const QTY_KEYS = ['soLuong', 'quantity', 'soLuongSanPham', 'sl', 'soLuongBan'];
+  const pickStr = (o, ks) => { for (const k of ks) if (typeof o[k] === 'string' && o[k].trim()) return o[k].trim(); return ''; };
+  function linesOf(data) {
+    const lines = [];
+    const walk = (v, depth) => {
+      if (!v || typeof v !== 'object' || depth > 4) return;
+      if (Array.isArray(v)) {
+        for (const x of v) {
+          if (x && typeof x === 'object' && !Array.isArray(x)) {
+            const qk = QTY_KEYS.find(k => typeof x[k] === 'number');
+            const code = pickStr(x, ['maSanPham', 'maSp', 'maSP', 'itemCode', 'ma', 'code']);
+            const name = pickStr(x, ['tenSanPham', 'tenSp', 'tenSP', 'itemName', 'ten', 'name']);
+            const idsp = pickStr(x, ['idSanPham', 'idSanPhamCha', 'productId', 'itemId']);
+            if (qk && (code || name || idsp)) lines.push([code, num(x[qk]), name, idsp]);
+          }
+          walk(x, depth + 1);
+        }
+        return;
       }
-      STORE.orderDays[d] = new Date().toISOString();
+      for (const x of Object.values(v)) if (x && typeof x === 'object') walk(x, depth + 1);
+    };
+    walk(data, 0);
+    return lines;
+  }
+  async function orderItems(invoices) {
+    // Cache cũ (lấy từ API đối tác) có thể sai khoá → bỏ khi đổi sang API web
+    if (STORE.ordersV !== 2) { STORE.orders = {}; STORE.ordersV = 2; delete STORE.orderDays; }
+    const key = h => h.maDonHang || h.idDonHang;
+    const need = [...new Set(invoices.filter(h => h.maDonHang && !STORE.orders[key(h)]).map(key))];
+    // Gọi 4 đơn song song; đơn lỗi thì để lần sau
+    for (let i = 0; i < need.length; i += 4) {
+      await Promise.all(need.slice(i, i + 4).map(async ma => {
+        try { const j = await sbPost(ORDER_BY_CODE, { MaDon: ma }); if (j?.data) STORE.orders[ma] = linesOf(j.data); }
+        catch (e) { console.warn('[TENHD] đọc đơn', ma, e.message); }
+      }));
     }
     // Bỏ cache đơn cũ hơn 120 ngày
     const cut = new Date(Date.now() - 120 * 86400e3).toISOString().slice(0, 10);
-    for (const d of Object.keys(STORE.orderDays)) if (d < cut) delete STORE.orderDays[d];
     for (const k of Object.keys(STORE.orders)) { const d = dayOfCode(k); if (d && d < cut) delete STORE.orders[k]; }
-    return h => STORE.orders[key(h)] || STORE.orders[h.idDonHang] || null;
+    return h => STORE.orders[key(h)] || null;
   }
 
   // Cập nhật entry.hd = { qty, soHD, thieu, from, at, err } cho tên đang dùng của các sản phẩm có mã SP
   async function refreshInvoiced() {
     const rules = STORE.rules.filter(r => hdOn(r) && r.queue?.length);
     if (!rules.length) return;
-    for (const r of rules) { const q = r.queue[r.activeIdx || 0]; if (!q.activatedAt) q.activatedAt = new Date().toISOString(); }
+    for (const r of rules) {
+      const q = r.queue[r.activeIdx || 0]; if (!q.activatedAt) q.activatedAt = new Date().toISOString();
+      if (!r.sbId) try { r.sbId = (await findProduct(r.maSP)).id; } catch {} // id sản phẩm để khớp dòng hàng
+    }
     const from = rules.map(r => r.queue[r.activeIdx || 0].activatedAt).sort()[0];
     let invs, itemsOf;
     try { invs = await invoicesSince(from); itemsOf = await orderItems(invs); }
@@ -342,8 +362,9 @@ export function mountTenHoaDon(app, { json, guard, wrap, DATA_DIR, fetchWithTime
     for (const r of rules) {
       const q = r.queue[r.activeIdx || 0], since = Date.parse(q.activatedAt), ma = String(r.maSP).trim().toLowerCase();
       const tenSP = normName(r.tenSP);
-      // Dòng hàng của SP này: đúng mã SP, hoặc (phòng khi itemCode không phải mã SP) đúng tên sản phẩm gốc
-      const isMine = ([c, , name]) => String(c).toLowerCase() === ma || (!!name && normName(name) === tenSP);
+      // Dòng hàng của SP này: đúng mã SP, đúng id sản phẩm Sandbox, hoặc đúng tên sản phẩm gốc
+      const isMine = ([c, , name, idsp]) => String(c).toLowerCase() === ma || (!!idsp && idsp === r.sbId)
+        || (!!name && normName(name) === tenSP);
       let qty = 0, soHD = 0, thieu = 0;
       const don = [], thieuDon = [];
       for (const h of invs) {
@@ -587,22 +608,19 @@ export function mountTenHoaDon(app, { json, guard, wrap, DATA_DIR, fetchWithTime
         ngayTao: h.ngayTao, invNo: h.invNo, tongSoLuongSanPham: h.tongSoLuongSanPham }));
     } catch (e) { out.loiHoaDon = e.message; }
     out.trongCache = STORE.orders?.[ma] || null;
-    if (typeof global.__sandboxOrders !== 'function') out.loiDon = 'Chưa có SANDBOX_TOKEN (API đơn hàng).';
-    else if (out.ngayTrongMa) {
-      try {
-        const d = out.ngayTrongMa, prev = new Date(Date.parse(d + 'T00:00:00Z') - 86400e3).toISOString().slice(0, 10);
-        const { data } = await global.__sandboxOrders(prev, d);
-        out.soDonTrongNgay = data.length;
-        const idHD = out.hoaDon?.[0]?.idDonHang;
-        const o = data.find(x => Object.values(x).some(v => typeof v === 'string' && (v.trim() === ma || (idHD && v === idHD))));
-        out.donTimThay = o ? {
-          ma: Object.fromEntries(ORDER_KEYS.filter(k => o[k] != null).map(k => [k, o[k]])),
-          truongChuaMa: Object.keys(o).filter(k => typeof o[k] === 'string' && o[k].trim() === ma),
-          details: (o.details || []).map(x => ({ itemCode: x.itemCode, itemName: x.itemName, quantity: x.quantity })),
-        } : null;
-        if (!o) out.viDuMaDon = data.slice(0, 3).map(x => Object.fromEntries(ORDER_KEYS.filter(k => x[k] != null).map(k => [k, x[k]])));
-      } catch (e) { out.loiDon = e.message; }
-    }
+    try {
+      const j = await sbPost(ORDER_BY_CODE, { MaDon: ma });
+      const d = j?.data;
+      // Chỉ trả tên trường (không trả giá trị) để không lộ thông tin khách; dòng hàng thì trả mã/SL/tên SP
+      const arrays = [];
+      const walk = (v, p, depth) => {
+        if (!v || typeof v !== 'object' || depth > 4) return;
+        if (Array.isArray(v)) { if (v[0] && typeof v[0] === 'object') arrays.push({ path: p, len: v.length, keys: Object.keys(v[0]) }); v.forEach(x => walk(x, p + '[]', depth + 1)); return; }
+        for (const [k, x] of Object.entries(v)) walk(x, p ? `${p}.${k}` : k, depth + 1);
+      };
+      walk(d, '', 0);
+      out.donWeb = d ? { truong: Object.keys(d), mang: arrays, dongHang: linesOf(d).map(([c, sl, ten, idsp]) => ({ ma: c, sl, ten, idSanPham: idsp })) } : null;
+    } catch (e) { out.loiDon = e.message; }
     out.sanPham = STORE.rules.map(r => ({ tenSP: r.tenSP, maSP: r.maSP, dangDung: r.queue[r.activeIdx || 0]?.ten,
       batDauDem: r.queue[r.activeIdx || 0]?.activatedAt, hd: r.queue[r.activeIdx || 0]?.hd }));
     res.json({ ok: true, ...out });
