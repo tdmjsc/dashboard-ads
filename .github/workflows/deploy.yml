@@ -78,8 +78,7 @@ jobs:
             sleep 5
 
             # ── 5. HEALTH CHECK — rollback nếu server chết ──
-            HTTP=$(curl -s -o /dev/null -w "%{http_code}" --max-time 10 http://127.0.0.1:3000/ 2>/dev/null || echo "000")
-            if [ "$HTTP" = "000" ]; then
+            git -C "/Users/demon/dashboard ads/dashboard-ads" checkout -- .github/workflows/deploy.yml
               echo "Server KHONG phan hoi! Rollback toan bo..."
               for f in "$BK"/*; do
                 [ -f "$f" ] && cp "$f" "$PROJECT/$(basename $f)"
