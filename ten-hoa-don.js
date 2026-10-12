@@ -310,14 +310,17 @@ export function mountTenHoaDon(app, { json, guard, wrap, DATA_DIR, fetchWithTime
     // Combo (donHangLogisticComboDtos): soLuong = số combo; sản phẩm trong combo ở comBoSpaKhachHangChiTietDtos,
     // soLan = số lượng sản phẩm đó trong 1 combo (form Sandbox gán soLuong = soLan) → SL = số combo × soLan.
     if (Array.isArray(data?.donHangLogisticSanPhamDtos)) {
+      // [mã, SL, tên, idSanPham, tên combo, idSanPhamCha]. idSanPham ở đơn là id con (khác id sản phẩm gốc),
+      // idSanPhamCha mới là id sản phẩm gốc.
       const lines = data.donHangLogisticSanPhamDtos.map(x => [String(x.maSanPham || '').trim(), num(x.soLuong),
-        String(x.tenSanPham || '').trim(), String(x.idSanPham || '')]);
+        String(x.tenSanPham || '').trim(), String(x.idSanPham || ''), '', String(x.idSanPhamCha || '')]);
       for (const cb of data.donHangLogisticComboDtos || []) {
         const n = num(cb.soLuong);
         for (const x of cb.comBoSpaKhachHangChiTietDtos || cb.comboLogisticChiTietDtos || []) {
           const per = typeof x.soLan === 'number' ? x.soLan : num(x.soLuong);
+          // Dòng trong combo (đơn thật 12/10/2026): không có mã SP, chỉ có ten + idSanPham (id con)
           lines.push([pickStr(x, ['maSanPham', 'maSp', 'ma']), n * per, pickStr(x, ['tenSanPham', 'tenSp', 'ten']),
-            pickStr(x, ['idSanPham', 'idSanPhamCha']), cb.tenComboSpa || 'combo']);
+            pickStr(x, ['idSanPham']), cb.tenComboSpa || 'combo', pickStr(x, ['idSanPhamCha'])]);
         }
       }
       return lines;
@@ -379,9 +382,14 @@ export function mountTenHoaDon(app, { json, guard, wrap, DATA_DIR, fetchWithTime
     for (const r of rules) {
       const q = r.queue[r.activeIdx || 0], since = Date.parse(q.activatedAt), ma = String(r.maSP).trim().toLowerCase();
       const tenSP = normName(r.tenSP);
-      // Dòng hàng của SP này: đúng mã SP, đúng id sản phẩm Sandbox, hoặc đúng tên sản phẩm gốc
-      const isMine = ([c, , name, idsp]) => String(c).toLowerCase() === ma || (!!idsp && idsp === r.sbId)
-        || (!!name && normName(name) === tenSP);
+      // Dòng hàng của SP này: đúng mã SP, id gốc (idSanPhamCha / id), id con đã học, hoặc đúng tên sản phẩm gốc.
+      // Dòng trong combo không có mã SP → nhận qua id con, học từ các dòng bán lẻ đã khớp mã SP / id gốc.
+      const direct = ([c, , , idsp, , idCha]) => String(c).toLowerCase() === ma
+        || (!!r.sbId && (idCha === r.sbId || idsp === r.sbId));
+      const ids = new Set(r.sbIds || []);
+      for (const items of Object.values(STORE.orders || {})) for (const l of items || []) if (l[3] && direct(l)) ids.add(l[3]);
+      r.sbIds = [...ids].slice(0, 50);
+      const isMine = l => direct(l) || (!!l[3] && ids.has(l[3])) || (!!l[2] && normName(l[2]) === tenSP);
       let qty = 0, soHD = 0, thieu = 0;
       const don = [], thieuDon = [];
       for (const h of invs) {
@@ -639,10 +647,14 @@ export function mountTenHoaDon(app, { json, guard, wrap, DATA_DIR, fetchWithTime
       out.donWeb = d ? { truong: Object.keys(d), mang: arrays,
         combo: (d.donHangLogisticComboDtos || []).map(cb => ({ ten: cb.tenComboSpa, soLuong: cb.soLuong,
           sanPham: (cb.comBoSpaKhachHangChiTietDtos || cb.comboLogisticChiTietDtos || []).map(x => ({ truong: Object.keys(x), ma: x.maSanPham, ten: x.tenSanPham, soLan: x.soLan, soLuong: x.soLuong })) })),
-        dongHang: linesOf(d).map(([c, sl, ten, idsp, combo]) => ({ ma: c, sl, ten, idSanPham: idsp, ...(combo ? { combo } : {}) })) } : null;
+        dongHang: linesOf(d).map(([c, sl, ten, idsp, combo, idCha]) => ({ ma: c, sl, ten, idSanPham: idsp, idSanPhamCha: idCha,
+          ...(combo ? { combo } : {}),
+          // Sản phẩm trên trang nhận dòng này (theo mã, id gốc, id con đã học)
+          khopVoi: STORE.rules.filter(r => (c && c.toLowerCase() === String(r.maSP).toLowerCase())
+            || (r.sbId && (idCha === r.sbId || idsp === r.sbId)) || (idsp && (r.sbIds || []).includes(idsp))).map(r => r.tenSP) })) } : null;
     } catch (e) { out.loiDon = e.message; }
     out.sanPham = STORE.rules.map(r => ({ tenSP: r.tenSP, maSP: r.maSP, dangDung: r.queue[r.activeIdx || 0]?.ten,
-      batDauDem: r.queue[r.activeIdx || 0]?.activatedAt, hd: r.queue[r.activeIdx || 0]?.hd }));
+      sbId: r.sbId, idConDaHoc: r.sbIds, batDauDem: r.queue[r.activeIdx || 0]?.activatedAt, hd: r.queue[r.activeIdx || 0]?.hd }));
     res.json({ ok: true, ...out });
   }));
 
