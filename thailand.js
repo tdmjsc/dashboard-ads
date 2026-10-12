@@ -140,6 +140,14 @@ async function ensureTable(pool) {
 //   - mysql: module 'mysql2/promise' (truyền từ server.js sau khi import động)
 //   - requireLogin: middleware đăng nhập của dashboard (tái dùng phiên admin)
 // =====================================================================
+// Chiến dịch QC Thái: tên có mã "TL" (vd "TD0-Trường-TL-HUD Hiển Thị Tốc Độ")
+// hoặc kiểu cũ "thailan" / "thái lan".
+function isThaiCampaign(name) {
+  const s = String(name == null ? '' : name).toLowerCase();
+  if (s.includes('thailan') || s.includes('thái lan')) return true;
+  return s.split(/[^\p{L}\p{N}]+/u).includes('tl');
+}
+
 export function mountThailand(app, { mysql, requireLogin, express, getCampaigns, QC_TAX, loadOwners, normProd, detectEmployee, exposeCounter }) {
   let pool = null;
   let tableReady = false;
@@ -677,14 +685,13 @@ export function mountThailand(app, { mysql, requireLogin, express, getCampaigns,
     const until = req.query.until || since;
     const norm = s => String(s == null ? '' : s).trim().toLowerCase().replace(/\s+/g, ' ');
 
-    // (A) Chi tiêu QC Meta — lọc chiến dịch có chữ "thái lan" / "thailand" trong tên
+    // (A) Chi tiêu QC Meta — lọc chiến dịch Thái (mã "TL" hoặc "thailan" trong tên)
     const spend = {}; // { tênNV: tổng chi tiêu }
     try {
       if (typeof getCampaigns === 'function') {
         const campaigns = await getCampaigns(since, until);
         for (const c of campaigns) {
-          const ten = norm(c.name);
-          if (!ten.includes('thailan')) continue;
+          if (!isThaiCampaign(c.name)) continue;
           const emp = c.employee || '';
           if (!emp || norm(emp) === 'chưa xác định') continue;
           const s = (c.daily || []).reduce((t, d) => t + (Number(d.spent) || 0), 0);
@@ -977,13 +984,12 @@ export function mountThailand(app, { mysql, requireLogin, express, getCampaigns,
     ]);
     const orders = ordersResult[0];
 
-    // ── Ngân sách Meta: lọc campaign chứa "thailan" hoặc "thái lan", gom theo NV ──
+    // ── Ngân sách Meta: lọc campaign Thái (mã "TL" hoặc "thailan"), gom theo NV ──
     const norm = s => String(s == null ? '' : s).trim().toLowerCase().replace(/\s+/g, ' ');
     const TAX = 1 + (QC_TAX || 0.11);
     const adSpend = {};
     for (const c of campaigns) {
-      const cName = norm(c.name || '');
-      if (!cName.includes('thailan')) continue; // chỉ lọc chiến dịch có từ "thailan"
+      if (!isThaiCampaign(c.name)) continue;
       const emp = norm(typeof detectEmployee === 'function' ? detectEmployee(c.name) : (c.employee || ''));
       if (!emp || emp === 'chưa xác định') continue;
       const s = (c.daily || []).reduce((t, d) => t + (Number(d.spent) || 0), 0);
