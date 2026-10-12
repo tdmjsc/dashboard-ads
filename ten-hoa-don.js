@@ -307,9 +307,21 @@ export function mountTenHoaDon(app, { json, guard, wrap, DATA_DIR, fetchWithTime
   function linesOf(data) {
     // Đã xác nhận với đơn thật (12/10/2026): dòng hàng ở donHangLogisticSanPhamDtos (maSanPham, soLuong,
     // tenSanPham, idSanPham). Chỉ đọc mảng này khi có, để không đếm đôi với sanPhamLogisticDtos.
-    if (Array.isArray(data?.donHangLogisticSanPhamDtos))
-      return data.donHangLogisticSanPhamDtos.map(x => [String(x.maSanPham || '').trim(), num(x.soLuong),
+    // Combo (donHangLogisticComboDtos): soLuong = số combo; sản phẩm trong combo ở comBoSpaKhachHangChiTietDtos,
+    // soLan = số lượng sản phẩm đó trong 1 combo (form Sandbox gán soLuong = soLan) → SL = số combo × soLan.
+    if (Array.isArray(data?.donHangLogisticSanPhamDtos)) {
+      const lines = data.donHangLogisticSanPhamDtos.map(x => [String(x.maSanPham || '').trim(), num(x.soLuong),
         String(x.tenSanPham || '').trim(), String(x.idSanPham || '')]);
+      for (const cb of data.donHangLogisticComboDtos || []) {
+        const n = num(cb.soLuong);
+        for (const x of cb.comBoSpaKhachHangChiTietDtos || cb.comboLogisticChiTietDtos || []) {
+          const per = typeof x.soLan === 'number' ? x.soLan : num(x.soLuong);
+          lines.push([pickStr(x, ['maSanPham', 'maSp', 'ma']), n * per, pickStr(x, ['tenSanPham', 'tenSp', 'ten']),
+            pickStr(x, ['idSanPham', 'idSanPhamCha']), cb.tenComboSpa || 'combo']);
+        }
+      }
+      return lines;
+    }
     const lines = [];
     const walk = (v, depth) => {
       if (!v || typeof v !== 'object' || depth > 4) return;
@@ -624,7 +636,10 @@ export function mountTenHoaDon(app, { json, guard, wrap, DATA_DIR, fetchWithTime
         for (const [k, x] of Object.entries(v)) walk(x, p ? `${p}.${k}` : k, depth + 1);
       };
       walk(d, '', 0);
-      out.donWeb = d ? { truong: Object.keys(d), mang: arrays, dongHang: linesOf(d).map(([c, sl, ten, idsp]) => ({ ma: c, sl, ten, idSanPham: idsp })) } : null;
+      out.donWeb = d ? { truong: Object.keys(d), mang: arrays,
+        combo: (d.donHangLogisticComboDtos || []).map(cb => ({ ten: cb.tenComboSpa, soLuong: cb.soLuong,
+          sanPham: (cb.comBoSpaKhachHangChiTietDtos || cb.comboLogisticChiTietDtos || []).map(x => ({ truong: Object.keys(x), ma: x.maSanPham, ten: x.tenSanPham, soLan: x.soLan, soLuong: x.soLuong })) })),
+        dongHang: linesOf(d).map(([c, sl, ten, idsp, combo]) => ({ ma: c, sl, ten, idSanPham: idsp, ...(combo ? { combo } : {}) })) } : null;
     } catch (e) { out.loiDon = e.message; }
     out.sanPham = STORE.rules.map(r => ({ tenSP: r.tenSP, maSP: r.maSP, dangDung: r.queue[r.activeIdx || 0]?.ten,
       batDauDem: r.queue[r.activeIdx || 0]?.activatedAt, hd: r.queue[r.activeIdx || 0]?.hd }));
