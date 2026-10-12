@@ -346,20 +346,19 @@ export function mountTenHoaDon(app, { json, guard, wrap, DATA_DIR, fetchWithTime
     walk(data, 0);
     return lines;
   }
-  // id của sản phẩm ở từng chi nhánh (Kho → Quản lý sản phẩm - chi nhánh). Dòng hàng trong đơn dùng id con,
-  // khác id sản phẩm gốc; dòng trong combo chỉ có id con (không có mã SP).
+  // id sản phẩm dùng trong đơn hàng. Sản phẩm có thuộc tính: TimTheoDieuKienSPCha trả id "cha", còn đơn
+  // (kể cả dòng trong combo, vốn không có mã SP) dùng id do SanPham/TimTheoDieuKien trả về. Đã đối chiếu
+  // 12/10/2026: máy đo cha a0bf1fa0… / trong đơn b182e29b…; gel cha 567a4a7a… / trong combo 7df0d80b….
+  // TimTheoDieuKien bắt buộc truyền nhóm sản phẩm và tìm theo tên (gõ mã không ra) → tìm theo tên, lọc đúng mã.
   async function branchProductIds(r) {
-    const p = await productInit(r.sbId);
-    const ids = new Set();
-    for (const cn of p.listIdChiNhanh || []) {
-      const j = await sbPost('TimTheoDieuKienSpChiNhanhAsync', { pageInfo: { page: 1, pageSize: 20 }, sorts: [], keyword: r.maSP,
-        ListIdNhomSanPham: [], IdChiNhanh: cn, ListIdNhanSanPham: null, ListIdDmThuongHieu: null, ListIdDmXuatXu: null,
-        ListIdDmMauSac: null, Model: null, ListIdNhaCungCap: null });
-      for (const x of Array.isArray(j?.data) ? j.data : [])
-        if (String(x.ma || x.maSanPham || '').trim().toLowerCase() === String(r.maSP).trim().toLowerCase())
-          for (const k of ['id', 'idSanPham', 'idSanPhamChiNhanh']) if (typeof x[k] === 'string' && x[k]) ids.add(x[k]);
-    }
-    return [...ids];
+    const g = await sbPost('https://api.sandbox.com.vn/warehouse/api/DMNhomSanPham/LayTatCaKemSoLuong?xemTatCaChiNhanh=true');
+    const groups = (Array.isArray(g?.data) ? g.data : []).map(x => x.id).filter(Boolean);
+    const ten = r.tenSP || (await findProduct(r.maSP)).tenSp;
+    const j = await sbPost('TimTheoDieuKien', { pageInfo: { page: 1, pageSize: 50 }, sorts: [], keyword: ten, ListIdNhomSanPham: groups,
+      ListIdNhanSanPham: null, ListIdDmThuongHieu: null, ListIdDmXuatXu: null, ListIdDmMauSac: null, Model: null,
+      ListIdNhaCungCap: null, SuDung: null, XemTatCaChiNhanh: true });
+    const ma = String(r.maSP).trim().toLowerCase();
+    return (Array.isArray(j?.data) ? j.data : []).filter(x => String(x.ma || '').trim().toLowerCase() === ma && x.id).map(x => x.id);
   }
 
   async function orderItems(invoices) {
@@ -387,8 +386,8 @@ export function mountTenHoaDon(app, { json, guard, wrap, DATA_DIR, fetchWithTime
     for (const r of rules) {
       const q = r.queue[r.activeIdx || 0]; if (!q.activatedAt) q.activatedAt = new Date().toISOString();
       if (!r.sbId) try { r.sbId = (await findProduct(r.maSP)).id; } catch {} // id sản phẩm để khớp dòng hàng
-      // id sản phẩm theo chi nhánh (dòng combo chỉ có id này), tra lại mỗi 6 giờ
-      if (r.sbId && (!r.sbBranchAt || Date.now() - Date.parse(r.sbBranchAt) > 6 * 3600e3))
+      // id sản phẩm dùng trong đơn (dòng combo chỉ có id này), tra lại mỗi 6 giờ hoặc khi chưa có
+      if (r.sbId && (!r.sbBranchIds?.length || !r.sbBranchAt || Date.now() - Date.parse(r.sbBranchAt) > 6 * 3600e3))
         try { r.sbBranchIds = await branchProductIds(r); r.sbBranchAt = new Date().toISOString(); } catch (e) { console.warn('[TENHD] SP chi nhánh', e.message); }
     }
     const from = rules.map(r => r.queue[r.activeIdx || 0].activatedAt).sort()[0];
@@ -655,7 +654,7 @@ export function mountTenHoaDon(app, { json, guard, wrap, DATA_DIR, fetchWithTime
     // &sp=<mã SP>: id gốc + id theo chi nhánh của một sản phẩm (kể cả SP chưa có trên trang) để so với idSanPham trong đơn
     if (req.query.sp) try {
       const p = await findProduct(String(req.query.sp));
-      out.thuSP = { ma: p.ma, ten: p.tenSp, id: p.id, idChiNhanh: await branchProductIds({ sbId: p.id, maSP: p.ma }) };
+      out.thuSP = { ma: p.ma, ten: p.tenSp, id: p.id, idTrongDon: await branchProductIds({ sbId: p.id, maSP: p.ma, tenSP: p.tenSp }) };
     } catch (e) { out.thuSP = { loi: e.message }; }
     try {
       const j = await sbPost(ORDER_BY_CODE, { MaDon: ma });
@@ -678,7 +677,7 @@ export function mountTenHoaDon(app, { json, guard, wrap, DATA_DIR, fetchWithTime
             || (r.sbId && (idCha === r.sbId || idsp === r.sbId)) || (idsp && [...(r.sbIds || []), ...(r.sbBranchIds || [])].includes(idsp))).map(r => r.tenSP) })) } : null;
     } catch (e) { out.loiDon = e.message; }
     out.sanPham = STORE.rules.map(r => ({ tenSP: r.tenSP, maSP: r.maSP, dangDung: r.queue[r.activeIdx || 0]?.ten,
-      sbId: r.sbId, idChiNhanh: r.sbBranchIds, idConDaHoc: r.sbIds, batDauDem: r.queue[r.activeIdx || 0]?.activatedAt, hd: r.queue[r.activeIdx || 0]?.hd }));
+      sbId: r.sbId, idTrongDon: r.sbBranchIds, idConDaHoc: r.sbIds, batDauDem: r.queue[r.activeIdx || 0]?.activatedAt, hd: r.queue[r.activeIdx || 0]?.hd }));
     res.json({ ok: true, ...out });
   }));
 
