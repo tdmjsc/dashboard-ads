@@ -275,6 +275,7 @@ export function mountTenHoaDon(app, { json, guard, wrap, DATA_DIR, fetchWithTime
   const INV_SEARCH = 'https://api.sandbox.com.vn/invoice/api/Invoice/TimHoaDonDienTuTheoDieuKien';
   const hdOn = rule => apiMode(rule) && typeof global.__sandboxOrders === 'function';
   const vnDay = t => new Date(Date.parse(t) + 7 * 3600e3).toISOString().slice(0, 10);
+  const ORDER_KEYS = ['orderCode', 'shortCode', 'orderNumber', 'orderId', 'code', 'maDonHang'];
   const dayOfCode = code => { const m = /^[A-Z]+(\d{2})(\d{2})(\d{2})/.exec(String(code || '')); return m ? `20${m[1]}-${m[2]}-${m[3]}` : ''; };
 
   async function invoicesSince(sinceISO) {
@@ -309,10 +310,13 @@ export function mountTenHoaDon(app, { json, guard, wrap, DATA_DIR, fetchWithTime
       if (d && (!STORE.orderDays[d] || Date.now() - Date.parse(STORE.orderDays[d]) > 30 * 60e3)) days.add(d);
     }
     for (const d of [...days].sort()) {
-      const { data } = await global.__sandboxOrders(d, d);
+      // Lấy cả ngày trước: ngày trong mã đơn (giờ VN) có thể lệch với ngày lọc của API
+      const prev = new Date(Date.parse(d + 'T00:00:00Z') - 86400e3).toISOString().slice(0, 10);
+      const { data } = await global.__sandboxOrders(prev, d);
       for (const o of data) {
-        const items = (o.details || []).map(x => [String(x.itemCode || '').trim(), num(x.quantity)]);
-        for (const k of [o.orderCode, o.orderId]) if (k) STORE.orders[k] = items;
+        const items = (o.details || []).map(x => [String(x.itemCode || '').trim(), num(x.quantity), String(x.itemName || '').trim()]);
+        // Mã đơn trên hoá đơn (DHLOG…) chưa rõ ứng với trường nào của API đối tác → ghi theo mọi trường mã
+        for (const k of ORDER_KEYS) if (o[k]) STORE.orders[String(o[k]).trim()] = items;
       }
       STORE.orderDays[d] = new Date().toISOString();
     }
@@ -337,15 +341,19 @@ export function mountTenHoaDon(app, { json, guard, wrap, DATA_DIR, fetchWithTime
     }
     for (const r of rules) {
       const q = r.queue[r.activeIdx || 0], since = Date.parse(q.activatedAt), ma = String(r.maSP).trim().toLowerCase();
+      const tenSP = normName(r.tenSP);
+      // Dòng hàng của SP này: đúng mã SP, hoặc (phòng khi itemCode không phải mã SP) đúng tên sản phẩm gốc
+      const isMine = ([c, , name]) => String(c).toLowerCase() === ma || (!!name && normName(name) === tenSP);
       let qty = 0, soHD = 0, thieu = 0;
+      const don = [], thieuDon = [];
       for (const h of invs) {
         if (Date.parse(String(h.ngayTao).slice(0, 23) + '+07:00') < since) continue;
         const items = itemsOf(h);
-        if (!items) { thieu++; continue; }
-        const n = items.filter(([c]) => c.toLowerCase() === ma).reduce((s, [, x]) => s + x, 0);
-        if (n) { qty += n; soHD++; }
+        if (!items) { thieu++; if (thieuDon.length < 10) thieuDon.push(h.maDonHang); continue; }
+        const n = items.filter(isMine).reduce((s, [, x]) => s + x, 0);
+        if (n) { qty += n; soHD++; if (don.length < 30) don.push({ ma: h.maDonHang, sl: n }); }
       }
-      q.hd = { qty, soHD, thieu, from: q.activatedAt, at: new Date().toISOString(), err: '' };
+      q.hd = { qty, soHD, thieu, don, thieuDon, from: q.activatedAt, at: new Date().toISOString(), err: '' };
     }
     save();
   }
@@ -562,6 +570,42 @@ export function mountTenHoaDon(app, { json, guard, wrap, DATA_DIR, fetchWithTime
       return res.json({ ok: false, message: e.message });
     }
     res.json({ ok: true });
+  }));
+
+  // Chẩn đoán đếm hoá đơn cho một đơn (chỉ đọc): /api/ton-kho/hd/debug-don?ma=DHLOG…
+  // Cho biết hoá đơn của đơn, đơn tìm được qua API đối tác (chỉ các trường mã), dòng hàng, và có khớp mã SP không.
+  app.get('/api/ton-kho/hd/debug-don', guard, wrap(async (req, res) => {
+    const ma = String(req.query.ma || '').trim();
+    if (!ma) return res.json({ ok: false, message: 'Thêm ?ma=<mã đơn DHLOG…>' });
+    const out = { ma, ngayTrongMa: dayOfCode(ma) };
+    try {
+      const today = new Date().toISOString();
+      const j = await sbPost(INV_SEARCH, { pageInfo: { page: 1, pageSize: 20 }, sorts: [], keyword: ma, actionType: null, typeDonHang: null,
+        typeInvoice: null, trangThaiGuiSMS: null, trangThaiGuiZNS: null, idDonHang: null,
+        tuNgay: `${vnDay(new Date(Date.now() - 90 * 86400e3).toISOString())}T00:00:00`, denNgay: `${vnDay(today)}T23:59:59`, status_Nhap: null, isNhap: null });
+      out.hoaDon = (j?.data || []).map(h => ({ maDonHang: h.maDonHang, idDonHang: h.idDonHang, actionCode: h.actionCode, isDelete: h.isDelete,
+        ngayTao: h.ngayTao, invNo: h.invNo, tongSoLuongSanPham: h.tongSoLuongSanPham }));
+    } catch (e) { out.loiHoaDon = e.message; }
+    out.trongCache = STORE.orders?.[ma] || null;
+    if (typeof global.__sandboxOrders !== 'function') out.loiDon = 'Chưa có SANDBOX_TOKEN (API đơn hàng).';
+    else if (out.ngayTrongMa) {
+      try {
+        const d = out.ngayTrongMa, prev = new Date(Date.parse(d + 'T00:00:00Z') - 86400e3).toISOString().slice(0, 10);
+        const { data } = await global.__sandboxOrders(prev, d);
+        out.soDonTrongNgay = data.length;
+        const idHD = out.hoaDon?.[0]?.idDonHang;
+        const o = data.find(x => Object.values(x).some(v => typeof v === 'string' && (v.trim() === ma || (idHD && v === idHD))));
+        out.donTimThay = o ? {
+          ma: Object.fromEntries(ORDER_KEYS.filter(k => o[k] != null).map(k => [k, o[k]])),
+          truongChuaMa: Object.keys(o).filter(k => typeof o[k] === 'string' && o[k].trim() === ma),
+          details: (o.details || []).map(x => ({ itemCode: x.itemCode, itemName: x.itemName, quantity: x.quantity })),
+        } : null;
+        if (!o) out.viDuMaDon = data.slice(0, 3).map(x => Object.fromEntries(ORDER_KEYS.filter(k => x[k] != null).map(k => [k, x[k]])));
+      } catch (e) { out.loiDon = e.message; }
+    }
+    out.sanPham = STORE.rules.map(r => ({ tenSP: r.tenSP, maSP: r.maSP, dangDung: r.queue[r.activeIdx || 0]?.ten,
+      batDauDem: r.queue[r.activeIdx || 0]?.activatedAt, hd: r.queue[r.activeIdx || 0]?.hd }));
+    res.json({ ok: true, ...out });
   }));
 
   // Tìm sản phẩm trên Sandbox theo tên hoặc mã (chỉ đọc) — gợi ý cho ô tên sản phẩm
