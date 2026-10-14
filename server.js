@@ -3186,7 +3186,7 @@ async function productQtyByUser(since, until, marketingUserId, extra) {
   const j = await r.json().catch(() => ({}));
   const d = (j && j.data) || {};
   const arr = Array.isArray(d.productGridTable) ? d.productGridTable : [];
-  return arr.map(o => ({ ten: (o.tenSanPham || '').trim(), soLuong: +o.soLuongSanPham || 0 }));
+  return arr.map(o => ({ ten: (o.tenSanPham || '').trim(), soLuong: +o.soLuongSanPham || 0, doanhSo: +o.doanhSo || 0 }));
 }
 
 // Gọi báo cáo sản phẩm + tham số lọc thêm; trả tổng doanh số & số lượng
@@ -3272,47 +3272,30 @@ const SALARY_SAMPLE = {
 };
 
 /* Phần TikTok + Shopee của dòng Admin (đơn không gán NV marketing) theo trạng thái giao/thanh toán.
-   Lấy id các nguồn có tên TikTok/Shopee từ báo cáo "Leads theo nguồn", rồi gọi lại báo cáo lương
-   (theo nhân sự) và báo cáo sản phẩm có lọc strIdNguonDuLieu. Chưa đối chiếu với Sandbox thật
-   nên tự kiểm tra: lọc bị bỏ qua (tổng không giảm) hoặc không ra đơn nào dù nguồn có đơn giao → ok:false. */
+   Lấy id các nguồn có tên TikTok/Shopee từ báo cáo "Leads theo nguồn" (trường `id`), rồi gọi báo cáo
+   sản phẩm lọc `strIdNguonDuLieu` = các id nối dấu phẩy + idUserMkts = Admin → doanh số & số lượng
+   từng SP (giá vốn). Đã đối chiếu 14/10/2026 tháng 8: Shopee 85.252.625 + TikTok 39.894.000 = 125.146.625.
+   Báo cáo lương theo nhân sự BỎ QUA strIdNguonDuLieu (chỉ nhận idLandingSanPham, mỗi lần 1 id). */
 const TTSP_TIKTOK = /tik\s*tok|tiktok|tt\s*shop/i, TTSP_SHOPEE = /shopee|shoppe/i;
-function nguonIdOf(r) {
-  for (const k of ['idNguonDuLieu', 'nguonDuLieuId', 'idLanding', 'landingId', 'idLandingSanPham', 'id'])
-    if (r[k] != null && r[k] !== '') return String(r[k]);
-  return '';
-}
-async function ttspAdminPortion(since, until, { p, vals, tongKhongLoc, adminId, priceOf }) {
+async function ttspAdminPortion(since, until, { p, vals, adminId, priceOf }) {
   const src = await sandboxSourceReport(since, until);
   const srcRows = (((src.json || {}).data || {}).tableData) || [];
-  const nguon = srcRows.map(r => ({ ten: String(r.landingTen || r.tenNguon || r.ten || '').trim(), id: nguonIdOf(r), giao: Number(r.lgtTongDonGiao) || 0 }))
+  const nguon = srcRows.map(r => ({ ten: String(r.landingTen || r.tenNguon || r.ten || '').trim(), id: r.id ? String(r.id) : '' }))
     .filter(x => TTSP_TIKTOK.test(x.ten) || TTSP_SHOPEE.test(x.ten));
-  const base = { dt: 0, gv: 0, soDon: 0, soSP: 0, nguon: nguon.map(x => x.ten) };
+  const base = { dt: 0, gv: 0, soSP: 0, nguon: [] };
   if (!nguon.length) return { ok: true, ...base };
-  if (nguon.some(x => !x.id)) return { ok: false, ...base, loi: 'Không đọc được id nguồn TikTok/Shopee', rowKeys: Object.keys(srcRows[0] || {}) };
+  if (nguon.some(x => !x.id)) return { ok: false, ...base, loi: 'Không đọc được id nguồn TikTok/Shopee' };
+  if (!adminId) return { ok: false, ...base, loi: 'Không thấy id Admin trong báo cáo' };
   const extra = { strIdNguonDuLieu: [...new Set(nguon.map(x => x.id))].join(',') };
-
-  const reps = await Promise.all(vals.map(v => sandboxReportEx(since, until, { [p]: v, ...extra })));
-  if (reps.some(j => !(j && (j.success ?? j.Success)))) return { ok: false, ...base, loi: 'Sandbox báo lỗi khi lọc theo nguồn: ' + JSON.stringify(reps.find(j => !(j && (j.success ?? j.Success)))).slice(0, 200) };
-  const rows = reps.flatMap(reportRowsEx);
-  const tongLoc = rows.reduce((s, r) => s + r.doanhthu, 0);
-  if (tongKhongLoc > 0 && tongLoc >= tongKhongLoc) return { ok: false, ...base, loi: 'Sandbox bỏ qua bộ lọc nguồn (tổng doanh thu không giảm)' };
-  if (tongLoc === 0 && nguon.some(x => x.giao > 0)) return { ok: false, ...base, loi: 'Lọc theo nguồn không ra đơn nào dù nguồn TikTok/Shopee có đơn giao' };
-
-  const adm = rows.filter(r => normProd(r.name) === normProd('Admin'));
-  const out = {
-    ok: true, ...base,
-    dt: adm.reduce((s, r) => s + r.doanhthu, 0),
-    soDon: adm.reduce((s, r) => s + r.soDon, 0),
-    soSP: adm.reduce((s, r) => s + r.soSP, 0),
-    // Đơn TikTok/Shopee đã gán nhân viên thì vẫn tính cho người đó như bình thường
-    daGanNV: rows.filter(r => normProd(r.name) !== normProd('Admin') && r.doanhthu > 0).map(r => ({ name: r.name, dt: r.doanhthu })),
+  const items = (await Promise.all(vals.map(v => productQtyByUser(since, until, adminId, { [p]: v, ...extra })))).flat();
+  return {
+    ok: true,
+    dt: Math.round(items.reduce((s, x) => s + x.doanhSo, 0)),
+    gv: Math.round(items.reduce((s, x) => s + x.soLuong * priceOf(x.ten), 0)),
+    soSP: items.reduce((s, x) => s + x.soLuong, 0),
+    // Chỉ liệt kê nguồn có contact trong tháng để dễ đối chiếu
+    nguon: srcRows.filter(r => (+r.soContact || +r.lgtTongDonGiao) && nguon.some(x => x.id === String(r.id))).map(r => String(r.landingTen).trim()),
   };
-  // Giá vốn tính giống dòng Admin trong bảng lương (Admin không có id → giá vốn 0)
-  if (adminId) {
-    const lists = await Promise.all(vals.map(v => productQtyByUser(since, until, adminId, { [p]: v, ...extra })));
-    out.gv = Math.round(lists.flat().reduce((s, pr) => s + pr.soLuong * priceOf(pr.ten), 0));
-  }
-  return out;
 }
 
 // Bảng lương: /api/salary/report?since=2026-05-01&until=2026-05-31
@@ -3358,9 +3341,9 @@ async function buildSalaryReport(since, until) {
     // Chạy song song với phần tính giá vốn bên dưới.
     const adm = map[normProd('Admin')];
     const ttspP = useConfig
-      ? ttspAdminPortion(since, until, { p, vals: [castVal(SALARY_VAL_GIAO), castVal(SALARY_VAL_TT)], tongKhongLoc: Object.values(map).reduce((s, e) => s + e.doanhthu, 0), adminId: adm && adm.id, priceOf })
-        .catch(e => ({ ok: false, loi: e.message, dt: 0, gv: 0, soDon: 0, soSP: 0 }))
-      : Promise.resolve({ ok: false, loi: 'Chỉ có khi lấy dữ liệu live', dt: 0, gv: 0, soDon: 0, soSP: 0 });
+      ? ttspAdminPortion(since, until, { p, vals: [castVal(SALARY_VAL_GIAO), castVal(SALARY_VAL_TT)], adminId: adm && adm.id, priceOf })
+        .catch(e => ({ ok: false, loi: e.message, dt: 0, gv: 0, soSP: 0 }))
+      : Promise.resolve({ ok: false, loi: 'Chỉ có khi lấy dữ liệu live', dt: 0, gv: 0, soSP: 0 });
     // Giá vốn CHÍNH XÁC: số lượng từng SP theo đúng trạng thái (giao + thanh toán) × giá nhập
     const giaoVal = castVal(SALARY_VAL_GIAO), ttVal = castVal(SALARY_VAL_TT);
     const tasks = [];

@@ -373,9 +373,8 @@ function renderTtsp(){
   const names=['Admin',...LIST.map(e=>e.name).filter(n=>normKey(n)!=='admin')];
   if(c.to&&!names.some(n=>normKey(n)===normKey(c.to))) names.push(c.to);
   const auto=a.ok
-    ?'tự động: DT <b>'+vnd(a.dt)+'</b> · GV <b>'+vnd(a.gv)+'</b> · '+vnd(a.soDon)+' đơn'
-      +(a.nguon&&a.nguon.length?' <span class="muted">('+a.nguon.length+' nguồn: '+esc(a.nguon.join(', '))+')</span>':' <span class="muted">(không có nguồn TikTok/Shopee)</span>')
-      +(a.daGanNV&&a.daGanNV.length?'<br><span class="muted">Đơn TikTok/Shopee đã gán NV (vẫn tính cho người đó): '+a.daGanNV.map(r=>esc(r.name)+' '+vnd(r.dt)).join(', ')+'</span>':'')
+    ?'tự động: DT <b>'+vnd(a.dt)+'</b> · GV <b>'+vnd(a.gv)+'</b> · '+vnd(a.soSP)+' SP'
+      +(a.nguon&&a.nguon.length?' <span class="muted">('+a.nguon.length+' nguồn: '+esc(a.nguon.join(', '))+')</span>':' <span class="muted">(không có nguồn TikTok/Shopee có đơn)</span>')
     :'<span class="err">không tách tự động được ('+esc(a.loi||'lỗi')+') — nhập tay số bên dưới</span>';
   box.innerHTML='🛒 <b>Doanh thu TikTok + Shopee</b> (đơn không gán NV, nằm trong dòng Admin) — '+auto
     +'<br>Ghi nhận cho: <select id="tt-to">'+names.map(n=>'<option'+(normKey(n)===normKey(c.to||'Admin')?' selected':'')+'>'+esc(n)+'</option>').join('')+'</select>'

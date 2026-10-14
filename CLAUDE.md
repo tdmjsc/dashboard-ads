@@ -34,4 +34,6 @@ Một sản phẩm Sandbox nhập từ nhiều nhà cung cấp, mỗi nhà cung 
 
 Đơn TikTok/Shopee không gán NV marketing nên nằm trong dòng Admin (dòng này còn lẫn đơn khác). Mỗi tháng admin chọn người ghi nhận (lưu `salary-ttsp.json`; tháng chưa cài thì lấy người nhận của tháng trước). Phần chuyển sang nhân viên được tính vào lương 2% nhưng không tính Thưởng DTT / Top 1 / HH Leader (`tinhLuongMKT` trong `salary-calc.js`, opts `ttsp`).
 
-Số tự động: lấy id các nguồn có tên TikTok/Shopee từ báo cáo "Leads theo nguồn", rồi gọi lại báo cáo lương và báo cáo sản phẩm với `strIdNguonDuLieu` (các id nối bằng dấu phẩy) và lấy dòng Admin. **Chưa đối chiếu với Sandbox thật**: tên trường id nguồn và định dạng `strIdNguonDuLieu` là đoán. Nếu lọc bị bỏ qua hoặc lỗi, trang báo "không tách tự động được" và admin nhập tay số (ô để trống = dùng số tự động).
+Số tự động: lấy `id` các nguồn có tên TikTok/Shopee từ báo cáo "Leads theo nguồn", rồi gọi báo cáo sản phẩm `BaoCaoMktTheoSanPham` với `strIdNguonDuLieu` = các id nối dấu phẩy, `idUserMkts` = [id Admin = GUID toàn số 0], theo từng trạng thái giao/thanh toán → doanh số + số lượng từng SP (giá vốn). Đã đối chiếu 14/10/2026 tháng 8/2026: Shopee 85.252.625 + TikTok 39.894.000 = 125.146.625 (Admin tổng 132.962.625).
+- Báo cáo lương theo nhân sự `ReportLeadByNhanSuMktSearch` **bỏ qua** `strIdNguonDuLieu`; nó chỉ lọc nguồn qua `idLandingSanPham` (1 id dạng chuỗi, mảng thì ra 0).
+- Ô nhập tay trên trang ghi đè số tự động (để trống = tự động).
