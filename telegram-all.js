@@ -18,7 +18,9 @@ import path from 'node:path';
 import crypto from 'node:crypto';
 
 const TG_MAX = 4000;          // Telegram giới hạn 4096 ký tự / tin
-const MENTION_PER_MSG = 5;    // Telegram chỉ báo cho vài người được nhắc đầu tiên trong 1 tin → chia nhỏ
+// Số người nhắc trong 1 tin (mặc định 50 → nhóm ~30 người chỉ 1 tin). Nếu người cuối danh sách
+// không nhận được thông báo, giảm bằng TG_ALL_PER_MSG trong .env (bot sẽ chia thành nhiều tin).
+const MENTION_PER_MSG = Math.max(1, Number(process.env.TG_ALL_PER_MSG) || 50);
 const COOLDOWN_MS = 30 * 1000; // mỗi nhóm gọi @all tối đa 1 lần / 30 giây (chống spam)
 
 export function mountTgAll(app, { express, DATA_DIR, fetchWithTimeout, token = process.env.TELEGRAM_ALL_BOT_TOKEN || '' }) {

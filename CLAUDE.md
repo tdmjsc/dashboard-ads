@@ -40,6 +40,6 @@ Số tự động: lấy `id` các nguồn có tên TikTok/Shopee từ báo cáo
 
 ## Bot Telegram "chat all" (`telegram-all.js`)
 
-Gõ `@all` hoặc `/all` trong nhóm có bot → bot nhắc tên mọi thành viên (5 người / tin, mỗi nhóm tối đa 1 lần / 30 giây). Token riêng `TELEGRAM_ALL_BOT_TOKEN` trong `.env`; không có token thì bot tắt. Nhận tin qua webhook `/tg-all/webhook` (loại trừ khỏi middleware đăng nhập, kiểm tra header secret_token); máy chủ tự `setWebhook` lúc khởi động. Đừng chạy bản dev có cùng token: nó sẽ chiếm webhook của máy chủ thật.
+Gõ `@all` hoặc `/all` trong nhóm có bot → bot nhắc tên mọi thành viên (mặc định 50 người / tin, chỉnh bằng `TG_ALL_PER_MSG`; chưa kiểm chứng Telegram có báo đủ cho mọi người được nhắc trong 1 tin không; mỗi nhóm tối đa 1 lần / 30 giây). Token riêng `TELEGRAM_ALL_BOT_TOKEN` trong `.env`; không có token thì bot tắt. Nhận tin qua webhook `/tg-all/webhook` (loại trừ khỏi middleware đăng nhập, kiểm tra header secret_token); máy chủ tự `setWebhook` lúc khởi động. Đừng chạy bản dev có cùng token: nó sẽ chiếm webhook của máy chủ thật.
 
 Telegram không cho bot lấy danh sách thành viên → bot ghi nhớ người đã nhắn / vào / rời nhóm (`DATA_DIR/tg-all.json`). Cần tắt privacy mode (BotFather /setprivacy) hoặc cho bot làm admin để bot thấy mọi tin. Xem tình trạng: `/api/tg-all` (admin).
