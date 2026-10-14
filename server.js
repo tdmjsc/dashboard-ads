@@ -570,7 +570,9 @@ app.get('/logout', (req, res) => req.session.destroy(() => res.redirect('/login'
       loadOwners, normProd, detectEmployee,
       exposeCounter: (fn) => { global.__thaiOrderCounts = fn; } });
     // Expose cho Thailand salary sync
-    global.__SALARY_MANUAL = SALARY_MANUAL;
+    // Getter: saveManual / khôi phục backup gán SALARY_MANUAL sang object mới, nên phải luôn
+    // trả object hiện tại (giữ object lúc khởi động thì số đồng bộ Thái ghi vào bản cũ, không được lưu).
+    Object.defineProperty(global, '__SALARY_MANUAL', { get: () => SALARY_MANUAL, configurable: true });
     global.__saveManual = saveManual;
   } catch (e) {
     console.error('[thailand] KHÔNG gắn được module (app chính vẫn chạy bình thường):', e.message);
