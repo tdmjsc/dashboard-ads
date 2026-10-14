@@ -3143,7 +3143,10 @@ const LUONG_TY_LE = Number(process.env.LUONG_TY_LE || 0.02);
 const PHI_SHIP_DON = Number(process.env.PHI_SHIP_DON || 30000);
 const QC_TAX = Number(process.env.QC_TAX || 0.11);   // 11% thuế VAT cộng vào chi phí quảng cáo
 // Chỉ hiện nhân viên trong danh sách EMPLOYEES + "Admin"; tên khác (vd khách lẻ) bị ẩn.
-const SALARY_ALLOW = new Set([...EMPLOYEES.map(e => normProd(e.full)), normProd('Admin')]);
+// Tính lại mỗi lần (danh sách sửa được ở menu Nhân viên, không cần khởi động lại máy chủ).
+const salaryAllow = () => new Set([...EMPLOYEES.map(e => normProd(e.full)), normProd('Admin')]);
+// Nhân viên đã xoá ở menu Nhân viên (xoá mềm: active = false)
+const laNhanVienNghi = name => EMPLOYEES.some(e => normProd(e.full) === normProd(name) && e.active === false);
 const SALARY_STATUS_PARAM = process.env.SALARY_STATUS_PARAM || 'giaoHangTrangThaiMa';
 const SALARY_VAL_GIAO = process.env.SALARY_VAL_GIAO || '31';  // 31 = Đã giao hàng
 const SALARY_VAL_TT = process.env.SALARY_VAL_TT || '32';      // 32 = Đã thanh toán
@@ -3334,7 +3337,8 @@ async function buildSalaryReport(since, until) {
 
     const owners = await loadOwners(false);
     const priceOf = ten => { const o = owners[normProd(ten)]; return o ? (o.giaNhap || 0) : 0; };
-    const emps = Object.values(map).filter(e => SALARY_ALLOW.has(normProd(e.name)));
+    const allow = salaryAllow();
+    const emps = Object.values(map).filter(e => allow.has(normProd(e.name)));
 
     // Phần TikTok + Shopee nằm trong dòng Admin (để tuỳ chọn ghi nhận cho nhân viên khác).
     // Lỗi thì trả ok:false, KHÔNG làm hỏng bảng lương.
@@ -3429,8 +3433,11 @@ async function buildSalaryReport(since, until) {
       if (isUnique) top1.thuongTop1 = Math.round(top1.luong / 2);
     }
 
+    // Nhân viên đã nghỉ: chỉ hiện khi tháng đó còn số liệu (để không mất doanh thu/chi phí khỏi tổng)
+    const rowsHien = rows.filter(r => !laNhanVienNghi(r.name) || r.doanhthu || r.chiPhiQC || r.giaVon);
+    rows.length = 0; rows.push(...rowsHien);
     rows.sort((a, b) => b.luong - a.luong);
-    const roster = EMPLOYEES.filter(e => e.code).map(e => e.full).concat('Admin');
+    const roster = EMPLOYEES.filter(e => e.code && e.active !== false).map(e => e.full).concat('Admin');
     return { ok: true, since, until, nguon: useConfig ? 'live' : 'mau-t5', tyLe: LUONG_TY_LE, phiShipDon: PHI_SHIP_DON, roster, rows, teamLead: TEAM_LEAD, ttsp, lastUpdated: new Date().toISOString() };
   }
 }
