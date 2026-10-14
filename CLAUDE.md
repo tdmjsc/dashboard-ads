@@ -37,3 +37,9 @@ Một sản phẩm Sandbox nhập từ nhiều nhà cung cấp, mỗi nhà cung 
 Số tự động: lấy `id` các nguồn có tên TikTok/Shopee từ báo cáo "Leads theo nguồn", rồi gọi báo cáo sản phẩm `BaoCaoMktTheoSanPham` với `strIdNguonDuLieu` = các id nối dấu phẩy, `idUserMkts` = [id Admin = GUID toàn số 0], theo từng trạng thái giao/thanh toán → doanh số + số lượng từng SP (giá vốn). Đã đối chiếu 14/10/2026 tháng 8/2026: Shopee 85.252.625 + TikTok 39.894.000 = 125.146.625 (Admin tổng 132.962.625).
 - Báo cáo lương theo nhân sự `ReportLeadByNhanSuMktSearch` **bỏ qua** `strIdNguonDuLieu`; nó chỉ lọc nguồn qua `idLandingSanPham` (1 id dạng chuỗi, mảng thì ra 0).
 - Ô nhập tay trên trang ghi đè số tự động (để trống = tự động).
+
+## Bot Telegram "chat all" (`telegram-all.js`)
+
+Gõ `@all` hoặc `/all` trong nhóm có bot → bot nhắc tên mọi thành viên (5 người / tin, mỗi nhóm tối đa 1 lần / 30 giây). Token riêng `TELEGRAM_ALL_BOT_TOKEN` trong `.env`; không có token thì bot tắt. Nhận tin qua webhook `/tg-all/webhook` (loại trừ khỏi middleware đăng nhập, kiểm tra header secret_token); máy chủ tự `setWebhook` lúc khởi động. Đừng chạy bản dev có cùng token: nó sẽ chiếm webhook của máy chủ thật.
+
+Telegram không cho bot lấy danh sách thành viên → bot ghi nhớ người đã nhắn / vào / rời nhóm (`DATA_DIR/tg-all.json`). Cần tắt privacy mode (BotFather /setprivacy) hoặc cho bot làm admin để bot thấy mọi tin. Xem tình trạng: `/api/tg-all` (admin).

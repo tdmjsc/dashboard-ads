@@ -599,6 +599,8 @@ app.use((req, res, next) => {
   // BỎ QUA mọi đường dẫn /thailand — module Thailand TỰ LO auth riêng (webhook + login riêng)
   // (mountThailand chạy async nên route /thailand đăng ký SAU middleware này → phải loại trừ ở đây)
   if (req.path === '/thailand' || req.path.startsWith('/thailand/')) return next();
+  // Webhook bot "chat all" Telegram — tự kiểm tra secret_token (xem telegram-all.js)
+  if (req.path === '/tg-all/webhook') return next();
   // BỎ QUA mọi đường dẫn /oms — module OMS TỰ LO auth riêng
   if (req.path === '/oms' || req.path.startsWith('/oms/') || req.path === '/go-oms'
     || req.path === '/oms-admin.html' || req.path === '/sw-push.js'
@@ -4338,6 +4340,13 @@ app.post('/api/cash-flow/note', express.json(), (req, res) => {
     mountKhoBot(app, { express, DATA_DIR, fetchWithTimeout });
   } catch (e) {
     console.error('[KHOBOT] KHÔNG gắn được module (app chính vẫn chạy bình thường):', e.message);
+  }
+  // BOT TELEGRAM "CHAT ALL" — gõ @all trong nhóm để nhắc tên mọi người (xem telegram-all.js)
+  try {
+    const { mountTgAll } = await import('./telegram-all.js');
+    mountTgAll(app, { express, DATA_DIR, fetchWithTimeout });
+  } catch (e) {
+    console.error('[TGALL] KHÔNG gắn được module (app chính vẫn chạy bình thường):', e.message);
   }
 })();
 
