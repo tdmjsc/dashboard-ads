@@ -3623,7 +3623,7 @@ let SALARY_TTSP = {};
 try { SALARY_TTSP = JSON.parse(fs.readFileSync(TTSP_FILE, 'utf8')) || {}; } catch { SALARY_TTSP = {}; }
 const TTSP_METRICS = ['dt', 'qc', 'gv', 'ship'];
 function ttspCfgOf(month) {
-  if (SALARY_TTSP[month]) return { ...SALARY_TTSP[month], month };
+  if (SALARY_TTSP[month]) return { ...SALARY_TTSP[month], month, daCai: true };
   const truoc = Object.keys(SALARY_TTSP).filter(m => m < month).sort().pop();
   const cfg = { to: truoc ? SALARY_TTSP[truoc].to : 'Admin', month };
   for (const m of TTSP_METRICS) cfg[m] = null;

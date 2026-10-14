@@ -156,6 +156,8 @@ const AUTOFIELD={dt:'doanhthu',qc:'chiPhiQC',gv:'giaVon',ship:'phiShip'};
 let TYLE=0.02, AUTO=[], MAN={}, ROSTER=[], LIST=[], HHLEAD={};
 // TikTok + Shopee (đang nằm trong dòng Admin): số tự động từ server + cài đặt tháng (ghi nhận cho ai)
 let TTSP_AUTO={}, TTSP_CFG={to:'Admin'};
+// Tháng của dữ liệu đang hiển thị (lưu theo tháng này, không theo ô chọn tháng) + chống kết quả tải cũ về muộn
+let SHOWN_MONTH='', LOAD_SEQ=0;
 // Cấu hình team mặc định (phòng khi server chưa gửi teamLead)
 const TEAM_LEAD_DEFAULT={
   'Trịnh Đức Phương':['Đoàn Việt Hà','Nguyễn Duy Huân','Vũ Thuý An'],
@@ -188,7 +190,8 @@ const chSum=(m,metric)=>CH.reduce((s,c)=>s+(+m.channels[c.id][metric]||0),0);
 const chHasData=(m,cid)=>MET.some(mt=>(+m.channels[cid][mt.id]||0)!==0);
 
 async function load(){
-  const mo=$('month').value, {since,until}=monthRange(mo);
+  const mo=$('month').value, {since,until}=monthRange(mo), seq=++LOAD_SEQ;
+  SHOWN_MONTH=''; $('ttsp').style.display='none';
   $('refreshBtn').disabled=true;
   $('status').innerHTML='<span class="warn">Đang tính lương (doanh thu, chi tiêu Meta, giá vốn)… ~15–25 giây.</span>';
   $('rows').innerHTML='';
@@ -202,6 +205,8 @@ async function load(){
     const d=await rRep.json();
     if(!d.ok){$('status').innerHTML='<span class="err">'+esc(d.message||'Không lấy được dữ liệu')+'</span>';return;}
     const mj=await rMan.json().catch(()=>({data:{}}));
+    if(seq!==LOAD_SEQ) return;   // đã chọn tháng khác trong lúc tải
+    SHOWN_MONTH=mo;
     AUTO=d.rows||[]; MAN=mj.data||{}; ROSTER=d.roster||[]; TYLE=d.tyLe||0.02;
     TTSP_AUTO=d.ttsp||{}; TTSP_CFG=mj.ttsp||{to:'Admin'};
     // thuongDTT và thuongTop1 sẽ tính lại phía client trong recomputeAll
@@ -362,7 +367,7 @@ async function onEdit(e){
 async function save(emp){
   try{
     const r=await fetch('/api/salary/manual',{method:'POST',headers:{'Content-Type':'application/json'},
-      body:JSON.stringify({month:$('month').value,name:emp.name,values:manOf(emp.key)})});
+      body:JSON.stringify({month:SHOWN_MONTH,name:emp.name,values:manOf(emp.key)})});
     flash(r.ok?'Đã lưu ✓':'Lưu lỗi',!r.ok);
   }catch(err){flash('Lưu lỗi, thử lại',true);}
 }
@@ -378,7 +383,7 @@ function renderTtsp(){
     :'<span class="err">không tách tự động được ('+esc(a.loi||'lỗi')+') — nhập tay số bên dưới</span>';
   box.innerHTML='🛒 <b>Doanh thu TikTok + Shopee</b> (đơn không gán NV, nằm trong dòng Admin) — '+auto
     +'<br>Ghi nhận cho: <select id="tt-to">'+names.map(n=>'<option'+(normKey(n)===normKey(c.to||'Admin')?' selected':'')+'>'+esc(n)+'</option>').join('')+'</select>'
-    +(c.keThua?' <span class="muted">(theo tháng '+esc(c.keThua)+')</span>':'')
+    +' <span class="muted">('+(c.daCai?'đã cài cho tháng '+esc(SHOWN_MONTH):c.keThua?'tháng '+esc(SHOWN_MONTH)+' chưa cài, đang theo tháng '+esc(c.keThua):'tháng '+esc(SHOWN_MONTH)+' chưa cài')+')</span>'
     +' <span class="muted">· tính vào lương 2%, không tính Thưởng DTT / Top 1 / HH Leader</span>'
     +'<br>Số dùng (để trống = tự động): '+TT_MET.map(m=>'<span class="tt-inp">'+m.label+' <input class="cell" inputmode="numeric" data-tt="'+m.id+'" value="'+(c[m.id]!=null&&c[m.id]!==''?vnd(c[m.id]):'')+'" placeholder="'+vnd(a[m.id]||0)+'"></span>').join('');
   box.style.display='';
@@ -386,7 +391,8 @@ function renderTtsp(){
   box.querySelectorAll('input[data-tt]').forEach(el=>el.addEventListener('change',()=>{ if(el.value.trim()!=='') el.value=vnd(num(el.value)); saveTtsp(); }));
 }
 async function saveTtsp(){
-  const box=$('ttsp'), cfg={month:$('month').value, to:$('tt-to').value};
+  if(!SHOWN_MONTH) return;
+  const box=$('ttsp'), cfg={month:SHOWN_MONTH, to:$('tt-to').value};
   box.querySelectorAll('input[data-tt]').forEach(el=>{ cfg[el.getAttribute('data-tt')]=el.value.trim()===''?null:num(el.value); });
   TTSP_CFG={...cfg}; recomputeAll();
   try{
