@@ -346,6 +346,8 @@ function computeKQKD(raw){
   // Bỏ tổng phí ship TỰ ĐỘNG khỏi trang Kết quả kinh doanh: không lấy từ ads nữa,
   // không trừ vào lợi nhuận và không hiển thị dòng. (Phí ship nhập tay tháng cũ vẫn giữ.)
   const phiShip=0;
+  // Phí sàn TMĐT (nhập ở Lương MKT, kênh Sàn TMĐT) — chi phí thật, trừ vào lợi nhuận
+  const phiSan=Math.round(mkt.tong.PS||0);
 
   // ── Doanh thu đơn CHƯA SHIP = tổng kênh 'donchuaship' (nhập ở Lương MKT) ──
   // Kênh này ĐÃ nằm trong mkt.tong.DT (nên đã tính vào lương 2%). Ở kết quả kinh
@@ -365,11 +367,11 @@ function computeKQKD(raw){
   };
   luong.tong=luong.mkt+luong.ptsp+luong.sale+luong.keToan+luong.kho;
 
-  const lnTruocThue=doanhThu-nganSach-giaVon-phiShip-luong.tong-chiPhi;
+  const lnTruocThue=doanhThu-nganSach-giaVon-phiShip-phiSan-luong.tong-chiPhi;
   const thueSuat=raw.thueSuat;
   const thue=lnTruocThue>0?Math.round(lnTruocThue*thueSuat):0;
   return {doanhThu,doanhThuShip,doanhThuChuaShip,tinhDonChuaShip,
-     nganSach,giaVon,phiShip,luong,chiPhiList,chiPhi,lnTruocThue,thue,
+     nganSach,giaVon,phiShip,phiSan,luong,chiPhiList,chiPhi,lnTruocThue,thue,
      lnSauThue:lnTruocThue-thue, thueSuat, mktList:mkt.list, ptspList:ptsp.list};
 }
 
@@ -380,7 +382,7 @@ function render(){
   const bien=S.doanhThu>0?(S.lnSauThue/S.doanhThu*100):0;
   $('kpis').innerHTML=
      kpi('Tổng doanh thu', vnd(S.doanhThu)+' ₫','','')
-    +kpi('Tổng chi phí (tất cả)', vnd(S.doanhThu-S.lnTruocThue)+' ₫','ngân sách + giá vốn + ship + lương + chi phí','')
+    +kpi('Tổng chi phí (tất cả)', vnd(S.doanhThu-S.lnTruocThue)+' ₫','ngân sách + giá vốn + ship + phí sàn + lương + chi phí','')
     +kpi('Lợi nhuận trước thuế', vnd(S.lnTruocThue)+' ₫','', S.lnTruocThue>=0?'pos':'neg')
     +kpi('Lợi nhuận sau thuế', vnd(S.lnSauThue)+' ₫','biên lợi nhuận '+bien.toFixed(1)+'%',(S.lnSauThue>=0?'pos':'neg')+' hl');
 
@@ -402,6 +404,7 @@ function render(){
   h+=row('Tổng ngân sách (chi tiêu Meta +11% VAT)', -S.nganSach, 'minus', true);
   h+=row('Tổng giá vốn', -S.giaVon, 'minus', true);
   if(S.phiShip) h+=row('Tổng phí ship', -S.phiShip, 'minus', true);
+  if(S.phiSan) h+=row('Tổng phí sàn TMĐT', -S.phiSan, 'minus', true);
 
   if(S.manual){
     // Tháng nhập tay: hiện gọn, sửa ở mục "Nhập số liệu tháng cũ" bên dưới
@@ -687,7 +690,7 @@ let CMP_DATA=[], CMP_MODE='range';    // 'range' = khoảng liên tục · 'pair
 const CAL_NOW=new Date().toISOString().slice(0,7);
 const DATA_START='2026-06';           // hệ thống ads có dữ liệu từ 6/2026
 const HIST_MIN='2026-01';             // đã nhập tay T1–T5/2026 nên cho so từ 1/2026
-const CK=m=>'kqkd-sum:'+m;
+const CK=m=>'kqkd-sum2:'+m;   // đổi khoá khi thêm chỉ tiêu (v2: phí sàn) để bỏ cache cũ thiếu số
 
 function monthLabel(m){ const p=String(m).split('-'); return 'T'+(+p[1])+'/'+String(p[0]).slice(2); }
 function fmtShort(n){ n=Number(n)||0; const s=n<0?'-':''; const a=Math.abs(n);
@@ -704,10 +707,10 @@ function readCache(m){ try{const s=localStorage.getItem(CK(m)); return s?JSON.pa
 function writeCache(m,o){ try{localStorage.setItem(CK(m),JSON.stringify(o));}catch(e){} }
 // Bản gọn để cache — chỉ các con số cần cho dashboard
 function slim(m,So){ return { month:m,
-  doanhThu:So.doanhThu, nganSach:So.nganSach, giaVon:So.giaVon, phiShip:So.phiShip,
+  doanhThu:So.doanhThu, nganSach:So.nganSach, giaVon:So.giaVon, phiShip:So.phiShip, phiSan:So.phiSan||0,
   luongMkt:So.luong.mkt, luongPtsp:So.luong.ptsp, luongSale:So.luong.sale,
   luongKeToan:So.luong.keToan, luongKho:So.luong.kho, luongTong:So.luong.tong,
-  chiPhi:So.chiPhi, tongCP:So.nganSach+So.giaVon+So.phiShip+So.luong.tong+So.chiPhi,
+  chiPhi:So.chiPhi, tongCP:So.nganSach+So.giaVon+So.phiShip+(So.phiSan||0)+So.luong.tong+So.chiPhi,
   lnTruocThue:So.lnTruocThue, thue:So.thue, lnSauThue:So.lnSauThue,
   bien: So.doanhThu>0?(So.lnSauThue/So.doanhThu*100):0, at:Date.now() }; }
 
@@ -762,6 +765,7 @@ const CMP_METRICS=[
   {k:'nganSach',  lb:'Ngân sách QC', cost:true},
   {k:'giaVon',    lb:'Giá vốn',      cost:true},
   {k:'phiShip',   lb:'Phí ship',     cost:true},
+  {k:'phiSan',    lb:'Phí sàn TMĐT', cost:true},
   {k:'luongTong', lb:'Tổng lương',   cost:true},
   {k:'chiPhi',    lb:'Chi phí khác', cost:true},
   {k:'tongCP',    lb:'Tổng chi phí', cost:true},
@@ -773,7 +777,7 @@ const CMP_METRICS=[
 
 // Cộng dồn toàn bộ các tháng (bỏ tháng lỗi) → tổng cả khoảng
 function sumRange(rows){
-  const F=['doanhThu','nganSach','giaVon','phiShip','luongMkt','luongPtsp','luongSale',
+  const F=['doanhThu','nganSach','giaVon','phiShip','phiSan','luongMkt','luongPtsp','luongSale',
            'luongKeToan','luongKho','luongTong','chiPhi','tongCP','lnTruocThue','thue','lnSauThue'];
   const s={}; F.forEach(k=>s[k]=0);
   rows.forEach(r=>F.forEach(k=>{ s[k]+=Number(r[k])||0; }));
@@ -797,6 +801,7 @@ function rangeSummary(rows){
       +dkPlain('Ngân sách QC', vnd(s.nganSach)+' ₫')
       +dkPlain('Giá vốn', vnd(s.giaVon)+' ₫')
       +dkPlain('Phí ship', vnd(s.phiShip)+' ₫')
+      +(s.phiSan?dkPlain('Phí sàn TMĐT', vnd(s.phiSan)+' ₫'):'')
       +dkPlain('Tổng lương', vnd(s.luongTong)+' ₫')
       +dkPlain('Chi phí khác', vnd(s.chiPhi)+' ₫')
       +dkPlain('LN trước thuế', vnd(s.lnTruocThue)+' ₫')

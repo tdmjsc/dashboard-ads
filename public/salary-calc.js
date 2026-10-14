@@ -35,7 +35,8 @@
     return 0;
   }
 
-  function blankCh() { return { dt: 0, qc: 0, gv: 0, ship: 0 }; }
+  // phiSan (phí sàn) chỉ nhập ở kênh 'san'; là chi phí, cộng vào Phí ship khi tính lương
+  function blankCh() { return { dt: 0, qc: 0, gv: 0, ship: 0, phiSan: 0 }; }
 
   // Chuẩn hoá 1 bản ghi nhập tay (bổ sung field thiếu)
   function chuanHoaManual(o, name) {
@@ -102,7 +103,8 @@
       const DT = (+a[AUTOFIELD.dt] || 0) + chSum(m, 'dt') + ttsp.dt;
       const QC = (+a[AUTOFIELD.qc] || 0) + chSum(m, 'qc') + ttsp.qc;
       const GV = (+a[AUTOFIELD.gv] || 0) + chSum(m, 'gv') + ttsp.gv;
-      const SHIP = (+a[AUTOFIELD.ship] || 0) + chSum(m, 'ship') + ttsp.ship;
+      const PS = +m.channels.san.phiSan || 0;
+      const SHIP = (+a[AUTOFIELD.ship] || 0) + chSum(m, 'ship') + ttsp.ship + PS;
       const l2 = Math.round((DT - QC - GV - SHIP) * tyLe);
       // Phần nhận thêm từ TikTok/Shopee không tính thưởng → l2Thuong / DTT bỏ phần đó
       const nhan = dau > 0 ? ttsp : blankCh();
@@ -111,7 +113,7 @@
         name, key, m, ttsp,
         autoDT: +a[AUTOFIELD.dt] || 0, autoQC: +a[AUTOFIELD.qc] || 0,
         autoGV: +a[AUTOFIELD.gv] || 0, autoSHIP: +a[AUTOFIELD.ship] || 0,
-        manDT: chSum(m, 'dt'), manQC: chSum(m, 'qc'), manGV: chSum(m, 'gv'), manSHIP: chSum(m, 'ship'),
+        manDT: chSum(m, 'dt'), manQC: chSum(m, 'qc'), manGV: chSum(m, 'gv'), manSHIP: chSum(m, 'ship'), PS,
         DT, QC, GV, SHIP, l2, l2Thuong,
         thuongDTT: key === ADMIN_KEY ? 0 : tinhThuongDTT((DT - nhan.dt) - (GV - nhan.gv) - (SHIP - nhan.ship)),
         thuongTop1: 0, hl: 0,
@@ -122,7 +124,7 @@
     const l2ByKey = {};
     list.forEach(x => {
       const san = x.m.channels['san'] || blankCh();
-      const sanNet = (+san.dt || 0) - (+san.qc || 0) - (+san.gv || 0) - (+san.ship || 0);
+      const sanNet = (+san.dt || 0) - (+san.qc || 0) - (+san.gv || 0) - (+san.ship || 0) - (+san.phiSan || 0);
       l2ByKey[x.key] = x.l2Thuong - Math.round(sanNet * tyLe);
     });
     const teamByKey = {};
@@ -147,11 +149,11 @@
 
     // ── Tổng: doanh thu/chi phí GỒM Admin (là số công ty), lương TÁCH RIÊNG Admin ──
     const tong = {
-      DT: 0, QC: 0, GV: 0, SHIP: 0, l2: 0, hl: 0, lc: 0, th: 0, ph: 0, bh: 0, tn: 0,
+      DT: 0, QC: 0, GV: 0, SHIP: 0, PS: 0, l2: 0, hl: 0, lc: 0, th: 0, ph: 0, bh: 0, tn: 0,
       luongKhongAdmin: 0, luongAdmin: 0,
     };
     list.forEach(x => {
-      tong.DT += x.DT; tong.QC += x.QC; tong.GV += x.GV; tong.SHIP += x.SHIP;
+      tong.DT += x.DT; tong.QC += x.QC; tong.GV += x.GV; tong.SHIP += x.SHIP; tong.PS += x.PS;
       tong.l2 += x.l2; tong.hl += x.hl; tong.lc += x.m.luongCung; tong.th += x.thuong;
       tong.ph += x.m.phat; tong.bh += x.m.bhxh; tong.tn += x.tn;
       if (x.laAdmin) tong.luongAdmin += x.tn; else tong.luongKhongAdmin += x.tn;

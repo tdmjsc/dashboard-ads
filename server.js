@@ -3542,7 +3542,7 @@ function saveManual() {
   } catch (e) { console.error('[SAVE] salary-manual lỗi:', e.message); }
 }
 const SALARY_CHANNELS = ['thailan', 'pushsale', 'san', 'donchuaship'];
-const CH_METRICS = ['dt', 'qc', 'gv', 'ship'];
+const CH_METRICS = ['dt', 'qc', 'gv', 'ship', 'phiSan'];   // phiSan: chỉ kênh 'san' (Sàn TMĐT) dùng
 const numClean = v => { const n = Math.round(Number(String(v == null ? 0 : v).replace(/[^\d-]/g, '')) || 0); return isFinite(n) ? n : 0; };
 
 // Lấy dữ liệu tay theo tháng: /api/salary/manual?month=YYYY-MM

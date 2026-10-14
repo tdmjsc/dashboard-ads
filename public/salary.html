@@ -179,7 +179,9 @@ const THUONG_TYPES=[
 let AUTO_THUONG = {}; // { normKey(name): { thuongDTT, thuongTop1 } }
 
 function monthRange(m){const [y,mo]=m.split('-').map(Number);const since=`${y}-${String(mo).padStart(2,'0')}-01`;const last=new Date(y,mo,0).getDate();return {since,until:`${y}-${String(mo).padStart(2,'0')}-${String(last).padStart(2,'0')}`};}
-function blankCh(){return {dt:0,qc:0,gv:0,ship:0};}
+function blankCh(){return {dt:0,qc:0,gv:0,ship:0,phiSan:0};}
+// Kênh Sàn TMĐT có thêm ô Phí sàn
+const chMets=cid=>cid==='san'?[...MET,{id:'phiSan',label:'Phí sàn'}]:MET;
 function manOf(name){
   const k=normKey(name); let o=MAN[k]||{};
   o={name:o.name||name, channels:o.channels||{}, luongCung:+o.luongCung||0, thuong:+o.thuong||0, thuongDTT:+o.thuongDTT||0, thuongNgayTuan:+o.thuongNgayTuan||0, thuongTop1:+o.thuongTop1||0, thuongChuyenCan:+o.thuongChuyenCan||0, thuongTop1Mkt:+o.thuongTop1Mkt||0, thuongKhac:+o.thuongKhac||0, phat:+o.phat||0, bhxh:+o.bhxh||0, _hhLeader:+o._hhLeader||0};
@@ -187,7 +189,7 @@ function manOf(name){
   MAN[k]=o; return o;
 }
 const chSum=(m,metric)=>CH.reduce((s,c)=>s+(+m.channels[c.id][metric]||0),0);
-const chHasData=(m,cid)=>MET.some(mt=>(+m.channels[cid][mt.id]||0)!==0);
+const chHasData=(m,cid)=>chMets(cid).some(mt=>(+m.channels[cid][mt.id]||0)!==0);
 
 async function load(){
   const mo=$('month').value, {since,until}=monthRange(mo), seq=++LOAD_SEQ;
@@ -248,7 +250,7 @@ function detailHTML(i,emp){
     +MET.map(mt=>'<div class="frow"><span>'+mt.label+'</span><b>'+vnd(autoVal(emp.a,mt.id))+'</b></div>').join('')+'</div>';
   cards+=CH.map(c=>'<div class="chcard" id="card-'+i+'-'+c.id+'"><div class="chhead">'+c.label
     +' <span class="badge" id="bd-'+i+'-'+c.id+'" style="display:none">có DL</span></div>'
-    +MET.map(mt=>'<div class="frow"><span>'+mt.label+'</span>'+cInp(i,c.id,mt.id,m.channels[c.id][mt.id])+'</div>').join('')
+    +chMets(c.id).map(mt=>'<div class="frow"><span>'+mt.label+'</span>'+cInp(i,c.id,mt.id,m.channels[c.id][mt.id])+'</div>').join('')
     +'</div>').join('');
   return '<tr class="drow" id="det-'+i+'" style="display:none"><td colspan="12"><div class="panel">'+cards+'</div></td></tr>';
 }
@@ -295,8 +297,8 @@ function buildTable(){
 }
 function toggle(i,btn){const r=$('det-'+i);const open=r.style.display==='none';r.style.display=open?'':'none';btn.textContent=open?'−':'＋';}
 
-function srcCell(id,i,total,auto,manual,tt){
-  $(id+'-'+i).innerHTML='<div class="tot">'+vnd(total)+'</div><div class="auto">TĐ '+vnd(auto)+(manual?' · kênh '+vnd(manual):'')+(tt?' · TT/SP '+(tt>0?'+':'')+vnd(tt):'')+'</div>';
+function srcCell(id,i,total,auto,manual,tt,phiSan){
+  $(id+'-'+i).innerHTML='<div class="tot">'+vnd(total)+'</div><div class="auto">TĐ '+vnd(auto)+(manual?' · kênh '+vnd(manual):'')+(tt?' · TT/SP '+(tt>0?'+':'')+vnd(tt):'')+(phiSan?' · phí sàn '+vnd(phiSan):'')+'</div>';
 }
 /* VẼ 1 dòng — mọi con số đã được SalaryCalc tính sẵn trong emp._x.
    (Công thức nằm ở salary-calc.js, dùng chung với trang Kết quả kinh doanh) */
@@ -305,7 +307,7 @@ function recompute(i){
   const x=emp._x; if(!x) return;
   const DT=x.DT, QC=x.QC, GV=x.GV, SHIP=x.SHIP, l2=x.l2, hl=x.hl;
   srcCell('dt',i,DT,x.autoDT,x.manDT,x.ttsp.dt); srcCell('qc',i,QC,x.autoQC,x.manQC,x.ttsp.qc);
-  srcCell('gv',i,GV,x.autoGV,x.manGV,x.ttsp.gv); srcCell('ship',i,SHIP,x.autoSHIP,x.manSHIP,x.ttsp.ship);
+  srcCell('gv',i,GV,x.autoGV,x.manGV,x.ttsp.gv); srcCell('ship',i,SHIP,x.autoSHIP,x.manSHIP,x.ttsp.ship,x.PS);
   const l2e=$('l2-'+i); l2e.textContent=vnd(l2); l2e.className=l2<0?'luong neg':'luong';
   const hle=$('hl-'+i); if(hle){ hle.textContent=hl>0?vnd(hl)+'₫':'–'; }
   const tnWithHl=x.tn;
@@ -467,7 +469,7 @@ $('publishBtn').addEventListener('click', async ()=>{
     const a=e.a||{};
     // Chi tiết kênh nhập tay (auto = số từ Sandbox/Meta, kênh = nhập tay)
     const channels={};
-    CH.forEach(ch=>{ const cd=m.channels[ch.id]||{}; channels[ch.id]={dt:+cd.dt||0,qc:+cd.qc||0,gv:+cd.gv||0,ship:+cd.ship||0}; });
+    CH.forEach(ch=>{ const cd=m.channels[ch.id]||{}; channels[ch.id]={dt:+cd.dt||0,qc:+cd.qc||0,gv:+cd.gv||0,ship:+cd.ship||0,phiSan:+cd.phiSan||0}; });
     const tt=(e._x&&e._x.ttsp)||{}; if(tt.dt>0) channels.ttsp={dt:tt.dt,qc:tt.qc,gv:tt.gv,ship:tt.ship};
     return {
       name:e.name,

@@ -115,7 +115,7 @@ function renderMkt(){
   CUR.rows.forEach((row,idx)=>{
     const e=row.extra||{};
     const thuc=(row.luong||0)+(e.hoaHongLeader||0)+(e.luongCung||0)+(e.thuong||0)-(e.phat||0)-(e.bhxh||0);
-    const hasCh=row.channels&&Object.values(row.channels).some(cd=>cd.dt||cd.qc||cd.gv||cd.ship);
+    const hasCh=row.channels&&Object.values(row.channels).some(cd=>cd.dt||cd.qc||cd.gv||cd.ship||cd.phiSan);
     const isOpen=expanded[idx];
     h+=`<tr>
       <td>${hasCh?`<button class="exp" onclick="tg(${idx})">${isOpen?'−':'+'}</button>`:''}<b>${esc(row.name)}</b></td>
@@ -134,8 +134,8 @@ function renderMkt(){
     if(isOpen&&hasCh){
       let cells='<div class="ch-grid">';
       Object.entries(row.channels).forEach(([cid,cd])=>{
-        if(cd.dt||cd.qc||cd.gv||cd.ship)
-          cells+=`<div class="ch-item"><b>${CH_LABEL[cid]||cid}</b> · DT ${vnd(cd.dt)} · QC ${vnd(cd.qc)} · GV ${vnd(cd.gv)} · Ship ${vnd(cd.ship)}</div>`;
+        if(cd.dt||cd.qc||cd.gv||cd.ship||cd.phiSan)
+          cells+=`<div class="ch-item"><b>${CH_LABEL[cid]||cid}</b> · DT ${vnd(cd.dt)} · QC ${vnd(cd.qc)} · GV ${vnd(cd.gv)} · Ship ${vnd(cd.ship)}${cd.phiSan?` · Phí sàn ${vnd(cd.phiSan)}`:''}</div>`;
       });
       cells+='</div>';
       const tbParts=[];
