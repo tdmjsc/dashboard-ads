@@ -57,11 +57,21 @@
 
   const chSum = (m, metric) => CH_MKT.reduce((s, c) => s + (+m.channels[c][metric] || 0), 0);
 
+  // Doanh thu TikTok + Shopee (nằm trong dòng Admin) ghi nhận cho ai.
+  // auto = report.ttsp (số tự động), cfg = cài đặt tháng; ô nhập tay null/'' = dùng số tự động.
+  function ttspSoLieu(auto, cfg) {
+    auto = auto || {}; cfg = cfg || {};
+    const v = m => (cfg[m] != null && cfg[m] !== '') ? (+cfg[m] || 0) : (+auto[m] || 0);
+    return { to: cfg.to || 'Admin', dt: v('dt'), qc: v('qc'), gv: v('gv'), ship: v('ship') };
+  }
+
   /**
    * Tính lương Marketing cho tất cả nhân viên.
    * @param {Array}  rows     - report.rows từ /api/salary/report (dữ liệu tự động)
    * @param {Object} manual   - dữ liệu nhập tay từ /api/salary/manual, key = normKey(tên)
-   * @param {Object} opts     - { tyLe, teamLead, roster }
+   * @param {Object} opts     - { tyLe, teamLead, roster, ttsp: { auto, cfg } }
+   *   ttsp: phần TikTok + Shopee được chuyển từ Admin sang nhân viên cfg.to. Phần này được tính
+   *   vào lương 2% của người nhận nhưng KHÔNG tính vào Thưởng DTT, Top 1, HH Leader.
    * @returns {{ list: Array, tong: Object }}
    */
   function tinhLuongMKT(rows, manual, opts) {
@@ -77,33 +87,43 @@
       ? opts.roster.slice()
       : (rows || []).map(r => r.name);
 
-    // ── Vòng 1: DT/QC/GV/SHIP thực tế (tự động + kênh nhập tay) → lương 2% ──
+    // TikTok + Shopee: chỉ chuyển khi người nhận là nhân viên có trong danh sách
+    const tt = ttspSoLieu(opts.ttsp && opts.ttsp.auto, opts.ttsp && opts.ttsp.cfg);
+    const ttTo = normKey(tt.to);
+    const chuyenTT = ttTo !== ADMIN_KEY && names.some(n => normKey(n) === ttTo);
+
+    // ── Vòng 1: DT/QC/GV/SHIP thực tế (tự động + kênh nhập tay ± TikTok/Shopee) → lương 2% ──
     const list = names.map(name => {
       const key = normKey(name);
       const a = autoByKey[key] || {};
       const m = chuanHoaManual((manual || {})[key], name);
-      const DT = (+a[AUTOFIELD.dt] || 0) + chSum(m, 'dt');
-      const QC = (+a[AUTOFIELD.qc] || 0) + chSum(m, 'qc');
-      const GV = (+a[AUTOFIELD.gv] || 0) + chSum(m, 'gv');
-      const SHIP = (+a[AUTOFIELD.ship] || 0) + chSum(m, 'ship');
+      const dau = !chuyenTT ? 0 : key === ttTo ? 1 : key === ADMIN_KEY ? -1 : 0;
+      const ttsp = { dt: dau * tt.dt, qc: dau * tt.qc, gv: dau * tt.gv, ship: dau * tt.ship };
+      const DT = (+a[AUTOFIELD.dt] || 0) + chSum(m, 'dt') + ttsp.dt;
+      const QC = (+a[AUTOFIELD.qc] || 0) + chSum(m, 'qc') + ttsp.qc;
+      const GV = (+a[AUTOFIELD.gv] || 0) + chSum(m, 'gv') + ttsp.gv;
+      const SHIP = (+a[AUTOFIELD.ship] || 0) + chSum(m, 'ship') + ttsp.ship;
       const l2 = Math.round((DT - QC - GV - SHIP) * tyLe);
+      // Phần nhận thêm từ TikTok/Shopee không tính thưởng → l2Thuong / DTT bỏ phần đó
+      const nhan = dau > 0 ? ttsp : blankCh();
+      const l2Thuong = l2 - Math.round((nhan.dt - nhan.qc - nhan.gv - nhan.ship) * tyLe);
       return {
-        name, key, m,
+        name, key, m, ttsp,
         autoDT: +a[AUTOFIELD.dt] || 0, autoQC: +a[AUTOFIELD.qc] || 0,
         autoGV: +a[AUTOFIELD.gv] || 0, autoSHIP: +a[AUTOFIELD.ship] || 0,
         manDT: chSum(m, 'dt'), manQC: chSum(m, 'qc'), manGV: chSum(m, 'gv'), manSHIP: chSum(m, 'ship'),
-        DT, QC, GV, SHIP, l2,
-        thuongDTT: key === ADMIN_KEY ? 0 : tinhThuongDTT(DT - GV - SHIP),
+        DT, QC, GV, SHIP, l2, l2Thuong,
+        thuongDTT: key === ADMIN_KEY ? 0 : tinhThuongDTT((DT - nhan.dt) - (GV - nhan.gv) - (SHIP - nhan.ship)),
         thuongTop1: 0, hl: 0,
       };
     });
 
-    // ── HH Leader = ½ × tổng lương 2% của thành viên, KHÔNG tính phần từ Sàn TMĐT ──
+    // ── HH Leader = ½ × tổng lương 2% của thành viên, KHÔNG tính phần từ Sàn TMĐT, TikTok/Shopee ──
     const l2ByKey = {};
     list.forEach(x => {
       const san = x.m.channels['san'] || blankCh();
       const sanNet = (+san.dt || 0) - (+san.qc || 0) - (+san.gv || 0) - (+san.ship || 0);
-      l2ByKey[x.key] = x.l2 - Math.round(sanNet * tyLe);
+      l2ByKey[x.key] = x.l2Thuong - Math.round(sanNet * tyLe);
     });
     const teamByKey = {};
     Object.keys(teamLead).forEach(lead => { teamByKey[normKey(lead)] = teamLead[lead]; });
@@ -113,10 +133,10 @@
       x.hl = Math.round(members.reduce((s, n) => s + (l2ByKey[normKey(n)] || 0), 0) / 2);
     });
 
-    // ── Thưởng Top 1: lương 2% cao nhất, phải DUY NHẤT và > 0 → ½ lương 2% ──
-    const eligible = list.filter(x => x.l2 > 0 && x.key !== ADMIN_KEY).sort((a, b) => b.l2 - a.l2);
-    if (eligible.length && (eligible.length === 1 || eligible[0].l2 !== eligible[1].l2))
-      eligible[0].thuongTop1 = Math.round(eligible[0].l2 / 2);
+    // ── Thưởng Top 1: lương 2% cao nhất, phải DUY NHẤT và > 0 → ½ lương 2% (không gồm TikTok/Shopee) ──
+    const eligible = list.filter(x => x.l2Thuong > 0 && x.key !== ADMIN_KEY).sort((a, b) => b.l2Thuong - a.l2Thuong);
+    if (eligible.length && (eligible.length === 1 || eligible[0].l2Thuong !== eligible[1].l2Thuong))
+      eligible[0].thuongTop1 = Math.round(eligible[0].l2Thuong / 2);
 
     // ── Thực nhận ──
     list.forEach(x => {
@@ -167,7 +187,7 @@
   global.SalaryCalc = {
     normKey, roundK,
     CH_MKT, AUTOFIELD, DTT_BRACKETS,
-    tinhThuongDTT, chuanHoaManual, chSum,
+    tinhThuongDTT, chuanHoaManual, chSum, ttspSoLieu,
     tinhLuongMKT, tinhLuongPTSP,
   };
 })(typeof window !== 'undefined' ? window : globalThis);

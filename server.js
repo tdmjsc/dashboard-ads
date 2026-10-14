@@ -3271,6 +3271,50 @@ const SALARY_SAMPLE = {
   },
 };
 
+/* Phần TikTok + Shopee của dòng Admin (đơn không gán NV marketing) theo trạng thái giao/thanh toán.
+   Lấy id các nguồn có tên TikTok/Shopee từ báo cáo "Leads theo nguồn", rồi gọi lại báo cáo lương
+   (theo nhân sự) và báo cáo sản phẩm có lọc strIdNguonDuLieu. Chưa đối chiếu với Sandbox thật
+   nên tự kiểm tra: lọc bị bỏ qua (tổng không giảm) hoặc không ra đơn nào dù nguồn có đơn giao → ok:false. */
+const TTSP_TIKTOK = /tik\s*tok|tiktok|tt\s*shop/i, TTSP_SHOPEE = /shopee|shoppe/i;
+function nguonIdOf(r) {
+  for (const k of ['idNguonDuLieu', 'nguonDuLieuId', 'idLanding', 'landingId', 'idLandingSanPham', 'id'])
+    if (r[k] != null && r[k] !== '') return String(r[k]);
+  return '';
+}
+async function ttspAdminPortion(since, until, { p, vals, tongKhongLoc, adminId, priceOf }) {
+  const src = await sandboxSourceReport(since, until);
+  const srcRows = (((src.json || {}).data || {}).tableData) || [];
+  const nguon = srcRows.map(r => ({ ten: String(r.landingTen || r.tenNguon || r.ten || '').trim(), id: nguonIdOf(r), giao: Number(r.lgtTongDonGiao) || 0 }))
+    .filter(x => TTSP_TIKTOK.test(x.ten) || TTSP_SHOPEE.test(x.ten));
+  const base = { dt: 0, gv: 0, soDon: 0, soSP: 0, nguon: nguon.map(x => x.ten) };
+  if (!nguon.length) return { ok: true, ...base };
+  if (nguon.some(x => !x.id)) return { ok: false, ...base, loi: 'Không đọc được id nguồn TikTok/Shopee', rowKeys: Object.keys(srcRows[0] || {}) };
+  const extra = { strIdNguonDuLieu: [...new Set(nguon.map(x => x.id))].join(',') };
+
+  const reps = await Promise.all(vals.map(v => sandboxReportEx(since, until, { [p]: v, ...extra })));
+  if (reps.some(j => !(j && (j.success ?? j.Success)))) return { ok: false, ...base, loi: 'Sandbox báo lỗi khi lọc theo nguồn: ' + JSON.stringify(reps.find(j => !(j && (j.success ?? j.Success)))).slice(0, 200) };
+  const rows = reps.flatMap(reportRowsEx);
+  const tongLoc = rows.reduce((s, r) => s + r.doanhthu, 0);
+  if (tongKhongLoc > 0 && tongLoc >= tongKhongLoc) return { ok: false, ...base, loi: 'Sandbox bỏ qua bộ lọc nguồn (tổng doanh thu không giảm)' };
+  if (tongLoc === 0 && nguon.some(x => x.giao > 0)) return { ok: false, ...base, loi: 'Lọc theo nguồn không ra đơn nào dù nguồn TikTok/Shopee có đơn giao' };
+
+  const adm = rows.filter(r => normProd(r.name) === normProd('Admin'));
+  const out = {
+    ok: true, ...base,
+    dt: adm.reduce((s, r) => s + r.doanhthu, 0),
+    soDon: adm.reduce((s, r) => s + r.soDon, 0),
+    soSP: adm.reduce((s, r) => s + r.soSP, 0),
+    // Đơn TikTok/Shopee đã gán nhân viên thì vẫn tính cho người đó như bình thường
+    daGanNV: rows.filter(r => normProd(r.name) !== normProd('Admin') && r.doanhthu > 0).map(r => ({ name: r.name, dt: r.doanhthu })),
+  };
+  // Giá vốn tính giống dòng Admin trong bảng lương (Admin không có id → giá vốn 0)
+  if (adminId) {
+    const lists = await Promise.all(vals.map(v => productQtyByUser(since, until, adminId, { [p]: v, ...extra })));
+    out.gv = Math.round(lists.flat().reduce((s, pr) => s + pr.soLuong * priceOf(pr.ten), 0));
+  }
+  return out;
+}
+
 // Bảng lương: /api/salary/report?since=2026-05-01&until=2026-05-31
 /* Dựng báo cáo lương MKT (dữ liệu TỰ ĐỘNG) — tách thành hàm để trang
    "Kết quả kinh doanh" dùng lại, không phải gọi HTTP vòng vo.            */
@@ -3308,6 +3352,15 @@ async function buildSalaryReport(since, until) {
     const owners = await loadOwners(false);
     const priceOf = ten => { const o = owners[normProd(ten)]; return o ? (o.giaNhap || 0) : 0; };
     const emps = Object.values(map).filter(e => SALARY_ALLOW.has(normProd(e.name)));
+
+    // Phần TikTok + Shopee nằm trong dòng Admin (để tuỳ chọn ghi nhận cho nhân viên khác).
+    // Lỗi thì trả ok:false, KHÔNG làm hỏng bảng lương.
+    // Chạy song song với phần tính giá vốn bên dưới.
+    const adm = map[normProd('Admin')];
+    const ttspP = useConfig
+      ? ttspAdminPortion(since, until, { p, vals: [castVal(SALARY_VAL_GIAO), castVal(SALARY_VAL_TT)], tongKhongLoc: Object.values(map).reduce((s, e) => s + e.doanhthu, 0), adminId: adm && adm.id, priceOf })
+        .catch(e => ({ ok: false, loi: e.message, dt: 0, gv: 0, soDon: 0, soSP: 0 }))
+      : Promise.resolve({ ok: false, loi: 'Chỉ có khi lấy dữ liệu live', dt: 0, gv: 0, soDon: 0, soSP: 0 });
     // Giá vốn CHÍNH XÁC: số lượng từng SP theo đúng trạng thái (giao + thanh toán) × giá nhập
     const giaoVal = castVal(SALARY_VAL_GIAO), ttVal = castVal(SALARY_VAL_TT);
     const tasks = [];
@@ -3316,6 +3369,7 @@ async function buildSalaryReport(since, until) {
       tasks.push(e.id ? productQtyByUser(since, until, e.id, { [p]: ttVal }) : Promise.resolve([]));
     }
     const lists = await Promise.all(tasks);
+    const ttsp = await ttspP;
 
     // ── Cấu hình Team Lead ────────────────────────────────────────────
     // Hoa hồng leader = ½ × tổng lương 2% của nhân viên trong nhóm
@@ -3394,7 +3448,7 @@ async function buildSalaryReport(since, until) {
 
     rows.sort((a, b) => b.luong - a.luong);
     const roster = EMPLOYEES.filter(e => e.code).map(e => e.full).concat('Admin');
-    return { ok: true, since, until, nguon: useConfig ? 'live' : 'mau-t5', tyLe: LUONG_TY_LE, phiShipDon: PHI_SHIP_DON, roster, rows, teamLead: TEAM_LEAD, lastUpdated: new Date().toISOString() };
+    return { ok: true, since, until, nguon: useConfig ? 'live' : 'mau-t5', tyLe: LUONG_TY_LE, phiShipDon: PHI_SHIP_DON, roster, rows, teamLead: TEAM_LEAD, ttsp, lastUpdated: new Date().toISOString() };
   }
 }
 
@@ -3517,7 +3571,7 @@ app.get('/api/salary/manual', (req, res) => {
     if (!data[k]) data[k] = { name: emp.full, channels: {}, luongCung: 0, thuong: 0, phat: 0, bhxh: emp.bhxh };
     else if (!data[k].bhxh) data[k].bhxh = emp.bhxh;
   }
-  res.json({ month, channels: SALARY_CHANNELS, data });
+  res.json({ month, channels: SALARY_CHANNELS, data, ttsp: ttspCfgOf(month) });
 });
 // Xem + khôi phục backup dữ liệu nhập tay
 app.get('/api/salary/manual/backup', (req, res) => {
@@ -3576,6 +3630,38 @@ app.post('/api/salary/manual', (req, res) => {
   SALARY_MANUAL[month][k] = out;
   saveManual();
   res.json({ ok: true });
+});
+
+// ===== Doanh thu TikTok + Shopee ghi nhận cho ai (theo tháng) =====
+// { 'YYYY-MM': { to: 'Admin' | tên NV, dt, qc, gv, ship } } — dt/qc/gv/ship = null là dùng số tự động.
+// Tháng chưa cài thì lấy người nhận của tháng gần nhất trước đó (không kế thừa số nhập tay).
+const TTSP_FILE = path.join(DATA_DIR, 'salary-ttsp.json');
+let SALARY_TTSP = {};
+try { SALARY_TTSP = JSON.parse(fs.readFileSync(TTSP_FILE, 'utf8')) || {}; } catch { SALARY_TTSP = {}; }
+const TTSP_METRICS = ['dt', 'qc', 'gv', 'ship'];
+function ttspCfgOf(month) {
+  if (SALARY_TTSP[month]) return { ...SALARY_TTSP[month], month };
+  const truoc = Object.keys(SALARY_TTSP).filter(m => m < month).sort().pop();
+  const cfg = { to: truoc ? SALARY_TTSP[truoc].to : 'Admin', month };
+  for (const m of TTSP_METRICS) cfg[m] = null;
+  if (truoc) cfg.keThua = truoc;
+  return cfg;
+}
+app.post('/api/salary/ttsp', express.json(), (req, res) => {
+  const me = req.session.user || {};
+  if (me.role !== 'admin') return res.status(403).json({ ok: false, message: 'Chỉ admin' });
+  const { month, to, ...v } = req.body || {};
+  if (!/^\d{4}-\d{2}$/.test(month || '')) return res.json({ ok: false, message: 'Tháng không hợp lệ' });
+  const emp = EMPLOYEES.find(e => normProd(e.full) === normProd(to));
+  if (normProd(to) !== normProd('Admin') && !emp) return res.json({ ok: false, message: 'Không có nhân viên ' + to });
+  const cfg = { to: emp ? emp.full : 'Admin' };
+  for (const m of TTSP_METRICS) cfg[m] = (v[m] == null || v[m] === '') ? null : numClean(v[m]);
+  SALARY_TTSP[month] = cfg;
+  try {
+    try { fs.copyFileSync(TTSP_FILE, TTSP_FILE + '.bak'); } catch {}
+    fs.writeFileSync(TTSP_FILE, JSON.stringify(SALARY_TTSP));
+  } catch (e) { return res.json({ ok: false, message: 'Lưu lỗi: ' + e.message }); }
+  res.json({ ok: true, cfg: ttspCfgOf(month) });
 });
 
 /* ===================== CÔNG KHAI LƯƠNG QUA TELEGRAM =====================
@@ -3935,8 +4021,8 @@ app.get('/api/business-result', async (req, res) => {
     res.json({
       ok: true, month, since, until,
       thueSuat: THUE_SUAT,
-      mkt: { rows: repMKT.rows, roster: repMKT.roster, tyLe: repMKT.tyLe, teamLead: repMKT.teamLead },
-      mktManual: SALARY_MANUAL[month] || {},
+      mkt: { rows: repMKT.rows, roster: repMKT.roster, tyLe: repMKT.tyLe, teamLead: repMKT.teamLead, ttsp: repMKT.ttsp },
+      mktManual: SALARY_MANUAL[month] || {}, mktTtsp: ttspCfgOf(month),
       ptsp: { managers: repPTSP.managers },
       ptspManual: PTSP_MANUAL[month] || {},
       tay: kqkdOf(month),

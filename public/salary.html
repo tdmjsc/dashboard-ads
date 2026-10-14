@@ -75,6 +75,11 @@
   .frow input.cell{width:118px;}
   .empty{padding:30px;text-align:center;color:#6B7C97;font-size:14px;}
   .note{font-size:12px;color:#7C8CA6;margin-top:12px;line-height:1.6;}
+  .ttsp{font-size:12.5px;color:#C9D5E8;background:rgba(255,255,255,.03);border:1px solid rgba(255,255,255,.1);border-radius:10px;padding:10px 12px;margin:0 0 12px;line-height:1.7;}
+  .ttsp b{color:#fff;} .ttsp .muted{color:#7C8CA6;} .ttsp .err{color:#ff9b8a;}
+  .ttsp select{font-family:inherit;font-size:12.5px;color:#fff;background:#1A2332;border:1px solid rgba(255,255,255,.18);border-radius:6px;padding:4px 6px;}
+  .ttsp .tt-inp{display:inline-flex;align-items:center;gap:4px;margin-right:10px;white-space:nowrap;}
+  .ttsp input.cell{width:110px;}
   @media(max-width:680px){ h1{font-size:15px;} th,td{padding:8px 8px;font-size:12px;} input.cell{width:88px;} td.nm,th:first-child{min-width:135px;} }
   .user-badge{display:inline-flex;align-items:center;gap:6px;font-size:13px;color:#9DB2FF;background:rgba(157,178,255,.1);border:1px solid rgba(157,178,255,.2);padding:7px 12px;border-radius:9px;font-weight:600;white-space:nowrap;}
   .xfer-btn{background:none;border:none;cursor:pointer;font-size:16px;padding:2px 4px;opacity:.6;vertical-align:middle;display:none;}
@@ -116,6 +121,7 @@
 
 <main>
   <div class="status" id="status">Đang tải…</div>
+  <div class="ttsp" id="ttsp" style="display:none"></div>
   <div class="tblwrap">
     <table>
       <thead><tr>
@@ -148,6 +154,8 @@ const CH=[{id:'thailan',label:'Thái Lan'},{id:'pushsale',label:'Pushsale'},{id:
 const MET=[{id:'dt',label:'Doanh thu'},{id:'qc',label:'Chi phí QC'},{id:'gv',label:'Giá vốn'},{id:'ship',label:'Phí ship'}];
 const AUTOFIELD={dt:'doanhthu',qc:'chiPhiQC',gv:'giaVon',ship:'phiShip'};
 let TYLE=0.02, AUTO=[], MAN={}, ROSTER=[], LIST=[], HHLEAD={};
+// TikTok + Shopee (đang nằm trong dòng Admin): số tự động từ server + cài đặt tháng (ghi nhận cho ai)
+let TTSP_AUTO={}, TTSP_CFG={to:'Admin'};
 // Cấu hình team mặc định (phòng khi server chưa gửi teamLead)
 const TEAM_LEAD_DEFAULT={
   'Trịnh Đức Phương':['Đoàn Việt Hà','Nguyễn Duy Huân','Vũ Thuý An'],
@@ -195,6 +203,7 @@ async function load(){
     if(!d.ok){$('status').innerHTML='<span class="err">'+esc(d.message||'Không lấy được dữ liệu')+'</span>';return;}
     const mj=await rMan.json().catch(()=>({data:{}}));
     AUTO=d.rows||[]; MAN=mj.data||{}; ROSTER=d.roster||[]; TYLE=d.tyLe||0.02;
+    TTSP_AUTO=d.ttsp||{}; TTSP_CFG=mj.ttsp||{to:'Admin'};
     // thuongDTT và thuongTop1 sẽ tính lại phía client trong recomputeAll
     // Chỉ giữ lại thuongNgayTuan (nhập tay) từ manual data
     Object.values(MAN).forEach(m=>{ m.thuongDTT=0; m.thuongTop1=0; m.thuong=(+m.thuongNgayTuan||0)+(+m.thuongChuyenCan||0)+(+m.thuongTop1Mkt||0)+(+m.thuongKhac||0); });
@@ -203,7 +212,7 @@ async function load(){
       if(r.hoaHongLeader) HHLEAD[normKey(r.name)]=r.hoaHongLeader;
       AUTO_THUONG[normKey(r.name)]={ thuongDTT: r.thuongDTT||0, thuongTop1: r.thuongTop1||0, dtt: r.dtt||0 };
     });
-    buildList(); buildTable(); recomputeAll(); LIST.forEach((_,i)=>updateThuongPopup(i));
+    buildList(); buildTable(); renderTtsp(); recomputeAll(); LIST.forEach((_,i)=>updateThuongPopup(i));
     const t=new Date(d.lastUpdated||Date.now());
     $('status').innerHTML='Cập nhật '+t.toLocaleString('vi-VN')+'  ·  tháng '+mo+'  ·  tỷ lệ '+(TYLE*100)+'%';
     $('note').innerHTML='4 cột đầu = số <b>tự động (TĐ)</b> từ Sandbox/Meta <b>＋ các kênh khác</b> bạn nhập tay (Thái Lan, Pushsale, Sàn TMĐT, Đơn chưa ship 85%). '
@@ -281,8 +290,8 @@ function buildTable(){
 }
 function toggle(i,btn){const r=$('det-'+i);const open=r.style.display==='none';r.style.display=open?'':'none';btn.textContent=open?'−':'＋';}
 
-function srcCell(id,i,total,auto,manual){
-  $(id+'-'+i).innerHTML='<div class="tot">'+vnd(total)+'</div><div class="auto">TĐ '+vnd(auto)+(manual?' · kênh '+vnd(manual):'')+'</div>';
+function srcCell(id,i,total,auto,manual,tt){
+  $(id+'-'+i).innerHTML='<div class="tot">'+vnd(total)+'</div><div class="auto">TĐ '+vnd(auto)+(manual?' · kênh '+vnd(manual):'')+(tt?' · TT/SP '+(tt>0?'+':'')+vnd(tt):'')+'</div>';
 }
 /* VẼ 1 dòng — mọi con số đã được SalaryCalc tính sẵn trong emp._x.
    (Công thức nằm ở salary-calc.js, dùng chung với trang Kết quả kinh doanh) */
@@ -290,8 +299,8 @@ function recompute(i){
   const emp=LIST[i], m=manOf(emp.key);
   const x=emp._x; if(!x) return;
   const DT=x.DT, QC=x.QC, GV=x.GV, SHIP=x.SHIP, l2=x.l2, hl=x.hl;
-  srcCell('dt',i,DT,x.autoDT,x.manDT); srcCell('qc',i,QC,x.autoQC,x.manQC);
-  srcCell('gv',i,GV,x.autoGV,x.manGV); srcCell('ship',i,SHIP,x.autoSHIP,x.manSHIP);
+  srcCell('dt',i,DT,x.autoDT,x.manDT,x.ttsp.dt); srcCell('qc',i,QC,x.autoQC,x.manQC,x.ttsp.qc);
+  srcCell('gv',i,GV,x.autoGV,x.manGV,x.ttsp.gv); srcCell('ship',i,SHIP,x.autoSHIP,x.manSHIP,x.ttsp.ship);
   const l2e=$('l2-'+i); l2e.textContent=vnd(l2); l2e.className=l2<0?'luong neg':'luong';
   const hle=$('hl-'+i); if(hle){ hle.textContent=hl>0?vnd(hl)+'₫':'–'; }
   const tnWithHl=x.tn;
@@ -304,6 +313,7 @@ function recompute(i){
     const card=$('card-'+i+'-'+c.id), bd=$('bd-'+i+'-'+c.id);
     if(card)card.className='chcard'+(has?' has':''); if(bd)bd.style.display=has?'':'none';
     if(has)chips+='<span class="chip">'+c.label+'</span>';});
+  if(x.ttsp.dt>0) chips+='<span class="chip" title="Doanh thu TikTok + Shopee chuyển từ Admin: tính lương 2%, không tính DTT / Top 1 / HH Leader">TikTok + Shopee</span>';
   $('bdg-'+i).innerHTML=chips;
   // Cập nhật nút Thưởng (hiển thị tổng thưởng đã gồm DTT + Top1 + Ngày/Tuần)
   const tbtn=$('tb-'+i);
@@ -322,6 +332,7 @@ function recomputeAll(){
   // Trang "Kết quả kinh doanh" gọi đúng hàm này nên số liệu luôn khớp nhau.
   const R=SalaryCalc.tinhLuongMKT(AUTO, MAN, {
     tyLe:TYLE, teamLead:TEAM_LEAD, roster:LIST.map(e=>e.name),
+    ttsp:{auto:TTSP_AUTO, cfg:TTSP_CFG},
   });
   // Đưa kết quả về LIST/MAN để phần vẽ và popup thưởng dùng
   R.list.forEach((x,i)=>{
@@ -355,6 +366,38 @@ async function save(emp){
     flash(r.ok?'Đã lưu ✓':'Lưu lỗi',!r.ok);
   }catch(err){flash('Lưu lỗi, thử lại',true);}
 }
+// ── Doanh thu TikTok + Shopee: ghi nhận cho Admin hay 1 nhân viên ──
+const TT_MET=[{id:'dt',label:'DT'},{id:'gv',label:'Giá vốn'},{id:'ship',label:'Ship'},{id:'qc',label:'QC'}];
+function renderTtsp(){
+  const a=TTSP_AUTO||{}, c=TTSP_CFG||{}, box=$('ttsp');
+  const names=['Admin',...LIST.map(e=>e.name).filter(n=>normKey(n)!=='admin')];
+  if(c.to&&!names.some(n=>normKey(n)===normKey(c.to))) names.push(c.to);
+  const auto=a.ok
+    ?'tự động: DT <b>'+vnd(a.dt)+'</b> · GV <b>'+vnd(a.gv)+'</b> · '+vnd(a.soDon)+' đơn'
+      +(a.nguon&&a.nguon.length?' <span class="muted">('+a.nguon.length+' nguồn: '+esc(a.nguon.join(', '))+')</span>':' <span class="muted">(không có nguồn TikTok/Shopee)</span>')
+      +(a.daGanNV&&a.daGanNV.length?'<br><span class="muted">Đơn TikTok/Shopee đã gán NV (vẫn tính cho người đó): '+a.daGanNV.map(r=>esc(r.name)+' '+vnd(r.dt)).join(', ')+'</span>':'')
+    :'<span class="err">không tách tự động được ('+esc(a.loi||'lỗi')+') — nhập tay số bên dưới</span>';
+  box.innerHTML='🛒 <b>Doanh thu TikTok + Shopee</b> (đơn không gán NV, nằm trong dòng Admin) — '+auto
+    +'<br>Ghi nhận cho: <select id="tt-to">'+names.map(n=>'<option'+(normKey(n)===normKey(c.to||'Admin')?' selected':'')+'>'+esc(n)+'</option>').join('')+'</select>'
+    +(c.keThua?' <span class="muted">(theo tháng '+esc(c.keThua)+')</span>':'')
+    +' <span class="muted">· tính vào lương 2%, không tính Thưởng DTT / Top 1 / HH Leader</span>'
+    +'<br>Số dùng (để trống = tự động): '+TT_MET.map(m=>'<span class="tt-inp">'+m.label+' <input class="cell" inputmode="numeric" data-tt="'+m.id+'" value="'+(c[m.id]!=null&&c[m.id]!==''?vnd(c[m.id]):'')+'" placeholder="'+vnd(a[m.id]||0)+'"></span>').join('');
+  box.style.display='';
+  $('tt-to').addEventListener('change',saveTtsp);
+  box.querySelectorAll('input[data-tt]').forEach(el=>el.addEventListener('change',()=>{ if(el.value.trim()!=='') el.value=vnd(num(el.value)); saveTtsp(); }));
+}
+async function saveTtsp(){
+  const box=$('ttsp'), cfg={month:$('month').value, to:$('tt-to').value};
+  box.querySelectorAll('input[data-tt]').forEach(el=>{ cfg[el.getAttribute('data-tt')]=el.value.trim()===''?null:num(el.value); });
+  TTSP_CFG={...cfg}; recomputeAll();
+  try{
+    const r=await fetch('/api/salary/ttsp',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(cfg)});
+    const d=await r.json().catch(()=>({}));
+    if(d.ok){ TTSP_CFG=d.cfg; renderTtsp(); }
+    flash(d.ok?'Đã lưu ✓':(d.message||'Lưu lỗi'),!d.ok);
+  }catch(err){flash('Lưu lỗi, thử lại',true);}
+}
+
 function flash(msg,bad){const s=$('status'),old=s.getAttribute('data-base')||s.innerHTML;s.setAttribute('data-base',old);s.innerHTML='<span class="'+(bad?'err':'ok')+'">'+esc(msg)+'</span>';clearTimeout(saveTimer);saveTimer=setTimeout(()=>{s.innerHTML=s.getAttribute('data-base');},1400);}
 
 
@@ -420,6 +463,7 @@ $('publishBtn').addEventListener('click', async ()=>{
     // Chi tiết kênh nhập tay (auto = số từ Sandbox/Meta, kênh = nhập tay)
     const channels={};
     CH.forEach(ch=>{ const cd=m.channels[ch.id]||{}; channels[ch.id]={dt:+cd.dt||0,qc:+cd.qc||0,gv:+cd.gv||0,ship:+cd.ship||0}; });
+    const tt=(e._x&&e._x.ttsp)||{}; if(tt.dt>0) channels.ttsp={dt:tt.dt,qc:tt.qc,gv:tt.gv,ship:tt.ship};
     return {
       name:e.name,
       doanhthu:c.DT||0, chiPhiQC:c.QC||0, giaVon:c.GV||0, phiShip:c.SHIP||0,

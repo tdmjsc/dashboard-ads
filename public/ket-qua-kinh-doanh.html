@@ -335,6 +335,7 @@ function computeKQKD(raw){
 
   const mkt=SalaryCalc.tinhLuongMKT(raw.mkt.rows, raw.mktManual, {
     tyLe: raw.mkt.tyLe, teamLead: raw.mkt.teamLead, roster: raw.mkt.roster,
+    ttsp: { auto: raw.mkt.ttsp, cfg: raw.mktTtsp },
   });
   const ptsp=SalaryCalc.tinhLuongPTSP(raw.ptsp.managers, raw.ptspManual);
   const chiPhiList=Array.isArray(tay.chiPhiList)?tay.chiPhiList:[];
