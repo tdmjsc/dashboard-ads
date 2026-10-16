@@ -1621,10 +1621,10 @@ export function mountOMS(app, { mysql, express }) {
 
   // ---- Đồng bộ tài khoản ads (users.js) → oms_users ----
   // Chỉ TẠO tài khoản còn thiếu, không sửa/xoá tài khoản đã có (giữ chỉnh sửa, Vô hiệu của admin OMS).
-  // Đã có = trùng username HOẶC trùng họ tên. admin ads → tự là admin OMS nên bỏ qua;
-  // product (phát triển SP) không có vai trò tương ứng bên OMS nên bỏ qua; viewer → marketing.
+  // Đã có = trùng username HOẶC trùng họ tên. Chỉ đồng bộ admin ads (gồm kế toán) → admin, viewer → marketing;
+  // vai trò khác (product…) bỏ qua.
   // Xoá tài khoản bên OMS thì lần khởi động sau sẽ được tạo lại → muốn chặn thì bấm "Vô hiệu".
-  // Chạy 1 lần mỗi tiến trình, ở lần tự đăng nhập OMS đầu tiên (autoSetOmsUser). Lỗi thì lần sau thử lại.
+  // Chạy lúc khởi động và ở lần tự đăng nhập OMS đầu tiên (autoSetOmsUser); 1 lần mỗi tiến trình, lỗi thì lần sau thử lại.
   let adsUsersSynced = null;
   function syncAdsUsersOnce() {
     if (!adsUsersSynced) adsUsersSynced = (async () => {
@@ -1640,12 +1640,13 @@ export function mountOMS(app, { mysql, express }) {
     const names = new Set(existing.flatMap(r => [r.username, r.ho_ten]).filter(Boolean));
     const created = [];
     for (const u of USERS) {
-      if (!u?.user || !u.pass || u.role !== 'viewer') continue;
+      const role = { admin: 'admin', viewer: 'marketing' }[u?.role];
+      if (!u?.user || !u.pass || !role) continue;
       const hoTen = u.salaryName || (u.employees?.length === 1 ? u.employees[0] : '') || u.user;
       if (names.has(u.user) || names.has(hoTen)) continue;
       // INSERT IGNORE: nhiều tiến trình cùng chạy thì username UNIQUE chặn trùng
       const r = await db('INSERT IGNORE INTO oms_users (username, password, ho_ten, role) VALUES (?,?,?,?)',
-        [u.user, u.pass, hoTen, 'marketing']);
+        [u.user, u.pass, hoTen, role]);
       if (r.affectedRows) created.push(u.user);
       names.add(u.user); names.add(hoTen);
     }
@@ -1663,6 +1664,7 @@ export function mountOMS(app, { mysql, express }) {
 
   // Bắt đầu cronjob
   try { scheduleCronjob(); } catch(e) {}
+  if (getPool()) setTimeout(syncAdsUsersOnce, 5000);
 
   // ---- Inject nút "Lưu đơn VN" vào trang chủ dashboard ----
   app.get('/api/oms-button', (req, res) => {
