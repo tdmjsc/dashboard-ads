@@ -317,6 +317,7 @@ export function mountOMS(app, { mysql, express }) {
   async function autoSetOmsUser(req) {
     if (req.session?.omsUser) return;
     if (!req.session?.user) return;
+    if (getPool()) await syncAdsUsersOnce();
 
     const mainUser = req.session.user;
     const mainUsername = mainUser.user || '';
@@ -1617,6 +1618,39 @@ export function mountOMS(app, { mysql, express }) {
     res.set('Expires', '0');
     next();
   });
+
+  // ---- Đồng bộ tài khoản ads (users.js) → oms_users ----
+  // Chỉ TẠO tài khoản còn thiếu, không sửa/xoá tài khoản đã có (giữ chỉnh sửa, Vô hiệu của admin OMS).
+  // Đã có = trùng username HOẶC trùng họ tên. admin ads → tự là admin OMS nên bỏ qua;
+  // product (phát triển SP) không có vai trò tương ứng bên OMS nên bỏ qua; viewer → marketing.
+  // Xoá tài khoản bên OMS thì lần khởi động sau sẽ được tạo lại → muốn chặn thì bấm "Vô hiệu".
+  // Chạy 1 lần mỗi tiến trình, ở lần tự đăng nhập OMS đầu tiên (autoSetOmsUser). Lỗi thì lần sau thử lại.
+  let adsUsersSynced = null;
+  function syncAdsUsersOnce() {
+    if (!adsUsersSynced) adsUsersSynced = (async () => {
+      await ensureTables(getPool());
+      await syncAdsUsers();
+    })().catch(e => { adsUsersSynced = null; console.error('[OMS] Đồng bộ tài khoản ads lỗi:', e.message); });
+    return adsUsersSynced;
+  }
+  async function syncAdsUsers() {
+    let USERS = [];
+    try { USERS = (await import('./users.js')).USERS || []; } catch(e) { return; }
+    const existing = await db('SELECT username, ho_ten FROM oms_users');
+    const names = new Set(existing.flatMap(r => [r.username, r.ho_ten]).filter(Boolean));
+    const created = [];
+    for (const u of USERS) {
+      if (!u?.user || !u.pass || u.role !== 'viewer') continue;
+      const hoTen = u.salaryName || (u.employees?.length === 1 ? u.employees[0] : '') || u.user;
+      if (names.has(u.user) || names.has(hoTen)) continue;
+      // INSERT IGNORE: nhiều tiến trình cùng chạy thì username UNIQUE chặn trùng
+      const r = await db('INSERT IGNORE INTO oms_users (username, password, ho_ten, role) VALUES (?,?,?,?)',
+        [u.user, u.pass, hoTen, 'marketing']);
+      if (r.affectedRows) created.push(u.user);
+      names.add(u.user); names.add(hoTen);
+    }
+    if (created.length) console.log('[OMS] Đã tạo tài khoản từ ads:', created.join(', '));
+  }
 
   // Ensure tables khi có request đầu tiên
   let tableReady = false;
