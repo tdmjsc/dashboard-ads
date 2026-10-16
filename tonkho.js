@@ -6,10 +6,10 @@
 //  Mount vào server.js: mountTonKho(app, { express, DATA_DIR, fetchWithTimeout })
 //  Dữ liệu lưu ở DATA_DIR/ton-kho.json (ngoài project, không mất khi deploy).
 // =====================================================================
-import fs from 'node:fs';
 import path from 'node:path';
 import { parsePastedRequest, fetchInventory, tokenExpiry, renewSession } from './misa-tonkho.js';
 import { mountTenHoaDon } from './ten-hoa-don.js';
+import { jsonStore } from './json-store.js';
 
 // Các trạng thái OMS được tính là "đã bán" khi đo tốc độ bán
 const TRANG_THAI_BAN = ['Đã chốt', 'Đang ship', 'Ship thành công'];
@@ -85,13 +85,14 @@ export function normalizeMisaRow(r, itemDict = {}, stockDict = {}) {
 
 export function mountTonKho(app, { express, DATA_DIR, fetchWithTimeout }) {
   const FILE = path.join(DATA_DIR, 'ton-kho.json');
-  let STORE = { config: {}, token: null, hkd: null, snapshot: null, history: [], settings: {}, lastSync: null, alerted: {}, lastAlert: null, authAlertAt: '' };
-  try { STORE = { ...STORE, ...JSON.parse(fs.readFileSync(FILE, 'utf8')) }; } catch {}
-  const save = () => {
-    // File chứa mã kết nối / token đăng nhập MISA → chỉ chủ tài khoản hosting đọc được
-    try { fs.writeFileSync(FILE, JSON.stringify(STORE, null, 1), { mode: 0o600 }); fs.chmodSync(FILE, 0o600); }
-    catch (e) { console.error('[TONKHO] lưu file lỗi:', e.message); }
-  };
+  // Nhiều tiến trình (Passenger) dùng chung file: đọc lại trước mỗi việc (reload), mọi lần ghi qua commit()
+  // chỉ sửa đúng trường cần đổi trên bản mới nhất (xem json-store.js). Cấu hình / mức tồn tối thiểu… không bị
+  // tiến trình giữ bản cũ ghi đè; số tồn (snapshot/history) do lần đồng bộ sau cùng ghi.
+  // File chứa mã kết nối / token đăng nhập MISA → quyền 600 (chỉ chủ tài khoản hosting đọc được).
+  const db = jsonStore(FILE, () => ({ config: {}, token: null, hkd: null, snapshot: null, history: [], settings: {}, lastSync: null, alerted: {}, lastAlert: null, authAlertAt: '' }), { tag: 'TONKHO' });
+  let STORE = db.read();
+  const reload = () => { STORE = db.read(); };
+  const commit = fn => { const r = db.commit(fn); STORE = r.s; return r.out; };
   const cfg = () => ({ ...DEFAULT_CONFIG, ...STORE.config });
 
   const isAdmin = req => req.session?.user?.role === 'admin';
@@ -136,8 +137,7 @@ export function mountTonKho(app, { express, DATA_DIR, fetchWithTimeout }) {
     if (typeof d === 'string') { try { d = JSON.parse(d); } catch { /* bản thân chuỗi là token */ } }
     const token = typeof d === 'string' ? d : (d?.access_token || d?.AccessToken || d?.token || '');
     if (!token) throw new Error('Kết nối MISA thành công nhưng không thấy access_token trong phản hồi.');
-    STORE.token = { value: token, at: Date.now() };
-    save();
+    commit(s => { s.token = { value: token, at: Date.now() }; });
     return token;
   }
 
@@ -190,12 +190,13 @@ export function mountTonKho(app, { express, DATA_DIR, fetchWithTimeout }) {
     }
   }
 
-  function setSnapshot(items, source) {
+  // Gọi bên trong commit(): s là bản mới nhất đọc từ file
+  function setSnapshot(s, items, source) {
     const at = new Date().toISOString();
-    STORE.snapshot = { at, source, items };
-    const totalQty = items.reduce((s, x) => s + x.qty, 0);
-    const totalAmount = items.reduce((s, x) => s + x.amount, 0);
-    STORE.history = [...(STORE.history || []), { at, source, totalQty, totalAmount, n: items.length }].slice(-200);
+    s.snapshot = { at, source, items };
+    const totalQty = items.reduce((sum, x) => sum + x.qty, 0);
+    const totalAmount = items.reduce((sum, x) => sum + x.amount, 0);
+    s.history = [...(s.history || []), { at, source, totalQty, totalAmount, n: items.length }].slice(-200);
   }
 
   // ===================== CẢNH BÁO TỒN THẤP QUA TELEGRAM (bot nhóm kho) =====================
@@ -233,20 +234,22 @@ export function mountTonKho(app, { express, DATA_DIR, fetchWithTimeout }) {
     // .finally chạy sau khi đã gán `alerting`, kể cả khi thân hàm không chờ gì (không có mã mới để báo)
     alerting = (async () => {
       {
+        reload();
         if (!STORE.snapshot) return;
         const low = lowItems(), lowKeys = new Set(low.map(g => g.key));
-        const alerted = STORE.alerted || {};
-        for (const k of Object.keys(alerted)) if (!lowKeys.has(k)) delete alerted[k];
-        STORE.alerted = alerted;
-        const fresh = low.filter(g => !alerted[g.key]);
-        if (fresh.length) {
-          const r = await notify(alertText(`⚠️ <b>Tồn kho thấp</b> (dưới ${alertTh()})`, fresh));
-          const at = new Date().toISOString();
+        const fresh = low.filter(g => !(STORE.alerted || {})[g.key]);
+        // Gửi tin (chờ mạng) trước, rồi mới ghi kết quả lên bản mới nhất
+        const r = fresh.length ? await notify(alertText(`⚠️ <b>Tồn kho thấp</b> (dưới ${alertTh()})`, fresh)) : null;
+        const at = new Date().toISOString();
+        commit(s => {
+          const alerted = s.alerted || {};
+          for (const k of Object.keys(alerted)) if (!lowKeys.has(k)) delete alerted[k];
+          s.alerted = alerted;
+          if (!fresh.length) return;
           // Gửi không được (chưa chọn nhóm, lỗi mạng…) thì KHÔNG đánh dấu → lần đồng bộ sau thử lại
-          if (r && r.ok) { for (const g of fresh) alerted[g.key] = { at, qty: g.qty }; STORE.lastAlert = { at, ok: true, n: fresh.length }; }
-          else STORE.lastAlert = { at, ok: false, message: (r && r.error) || 'Không gửi được Telegram' };
-        }
-        save();
+          if (r && r.ok) { for (const g of fresh) alerted[g.key] = { at, qty: g.qty }; s.lastAlert = { at, ok: true, n: fresh.length }; }
+          else s.lastAlert = { at, ok: false, message: (r && r.error) || 'Không gửi được Telegram' };
+        });
       }
     })().finally(() => { alerting = null; });
     return alerting;
@@ -254,15 +257,16 @@ export function mountTonKho(app, { express, DATA_DIR, fetchWithTimeout }) {
   // Số tồn vừa đổi (đồng bộ MISA hoặc nhập Excel): xoá cờ hết phiên và kiểm tra tồn thấp, chạy ngầm
   let tenHoaDon = null; // module Tên xuất hoá đơn theo lô, gắn ở cuối hàm
   function afterSnapshot() {
-    if (STORE.authAlertAt) { STORE.authAlertAt = ''; save(); }
+    if (STORE.authAlertAt) commit(s => { if (!s.authAlertAt) return false; s.authAlertAt = ''; });
     checkLowStock().catch(e => console.warn('[TONKHO] cảnh báo tồn thấp lỗi:', e.message));
     tenHoaDon?.checkAll(); // tồn MISA đổi → xem tên xuất hoá đơn đang dùng đã hết chưa
   }
   // Phiên MISA hết hạn thì số tồn đứng yên và cảnh báo ngừng hoạt động → báo 1 lần
   async function alertAuthExpired() {
+    reload();
     if (STORE.lastSync?.kind !== 'auth' || STORE.authAlertAt) return;
     const r = await notify('🔑 <b>Phiên MISA đã hết hạn</b>\nSố tồn kho đang đứng yên nên cảnh báo tồn thấp tạm ngừng. Quản trị viên vào Tồn kho → Cấu hình MISA và dán lại request paging_filter.');
-    if (r && r.ok) { STORE.authAlertAt = new Date().toISOString(); save(); }
+    if (r && r.ok) commit(s => { s.authAlertAt = new Date().toISOString(); });
   }
 
   let syncing = null;
@@ -270,6 +274,7 @@ export function mountTonKho(app, { express, DATA_DIR, fetchWithTimeout }) {
     if (syncing) return syncing;
     syncing = (async () => {
       try {
+        reload();
         const c = cfg();
         const raw = await fetchAll('get_list_inventory_balance');
         const needDict = raw.some(r => !pick(r, ['inventory_item_name', 'item_name', 'name']));
@@ -278,14 +283,12 @@ export function mountTonKho(app, { express, DATA_DIR, fetchWithTimeout }) {
           : [{}, {}];
         const items = raw.map(r => normalizeMisaRow(r, itemDict, stockDict))
           .filter(x => x.code || x.name);
-        setSnapshot(items, 'misa');
-        STORE.lastSync = { at: new Date().toISOString(), ok: true, n: items.length };
-        save();
+        const lastSync = { at: new Date().toISOString(), ok: true, n: items.length };
+        commit(s => { setSnapshot(s, items, 'misa'); s.lastSync = lastSync; });
         afterSnapshot();
-        return STORE.lastSync;
+        return lastSync;
       } catch (e) {
-        STORE.lastSync = { at: new Date().toISOString(), ok: false, message: e.message };
-        save();
+        commit(s => { s.lastSync = { at: new Date().toISOString(), ok: false, message: e.message }; });
         throw e;
       } finally { syncing = null; }
     })();
@@ -298,6 +301,8 @@ export function mountTonKho(app, { express, DATA_DIR, fetchWithTimeout }) {
     if (syncing) return syncing;
     syncing = (async () => {
       try {
+        reload();
+        if (!STORE.hkd) throw new Error('Chưa kết nối MISA Hộ kinh doanh.');
         let r;
         try { r = await fetchInventory(STORE.hkd, fetchWithTimeout); }
         catch (e) {
@@ -307,15 +312,13 @@ export function mountTonKho(app, { express, DATA_DIR, fetchWithTimeout }) {
           r = await fetchInventory(STORE.hkd, fetchWithTimeout);
         }
         const items = r.items.filter(x => x.code || x.name);
-        setSnapshot(items, 'misa-hkd');
-        STORE.lastSync = { at: new Date().toISOString(), ok: true, n: items.length };
-        save();
+        const lastSync = { at: new Date().toISOString(), ok: true, n: items.length };
+        commit(s => { setSnapshot(s, items, 'misa-hkd'); s.lastSync = lastSync; });
         afterSnapshot();
-        return STORE.lastSync;
+        return lastSync;
       } catch (e) {
         // kind === 'auth' → cả token lẫn phiên AMIS đều hết, cần dán lại request
-        STORE.lastSync = { at: new Date().toISOString(), ok: false, message: e.message, kind: e.kind || '' };
-        save();
+        commit(s => { s.lastSync = { at: new Date().toISOString(), ok: false, message: e.message, kind: e.kind || '' }; });
         alertAuthExpired().catch(() => {});
         throw e;
       } finally { syncing = null; }
@@ -323,16 +326,22 @@ export function mountTonKho(app, { express, DATA_DIR, fetchWithTimeout }) {
     return syncing;
   }
   // Xin token MISA mới và lưu lại (kèm cookie đã được MISA nối dài). Ném lỗi kind='auth' nếu không được.
+  // Chỉ ghi kết quả nếu trong lúc chờ MISA chưa ai dán request khác / gỡ kết nối (so savedAt).
   async function renewHkd() {
+    reload();
+    const cur = STORE.hkd;
+    const same = s => s.hkd && s.hkd.savedAt === cur.savedAt;
     try {
-      STORE.hkd = await renewSession(STORE.hkd, fetchWithTimeout);
-      STORE.hkd.lastRenewError = '';
-      save();
-      console.log('[TONKHO] đã tự gia hạn phiên MISA (lần ' + STORE.hkd.renewCount + ')');
+      const next = await renewSession(cur, fetchWithTimeout);
+      next.lastRenewError = '';
+      commit(s => { if (!same(s)) return false; s.hkd = next; });
+      console.log('[TONKHO] đã tự gia hạn phiên MISA (lần ' + next.renewCount + ')');
     } catch (e) {
-      STORE.hkd.lastRenewError = e.message; STORE.hkd.lastRenewErrorAt = new Date().toISOString();
-      STORE.hkd.lastRenewTrace = e.trace || [];
-      save();
+      commit(s => {
+        if (!same(s)) return false;
+        s.hkd.lastRenewError = e.message; s.hkd.lastRenewErrorAt = new Date().toISOString();
+        s.hkd.lastRenewTrace = e.trace || [];
+      });
       throw e;
     }
   }
@@ -341,6 +350,7 @@ export function mountTonKho(app, { express, DATA_DIR, fetchWithTimeout }) {
 
   // Tự đồng bộ định kỳ (kiểm tra mỗi phút, chạy khi tới hạn)
   setInterval(() => {
+    reload(); // tiến trình khác có thể vừa đồng bộ / đổi cấu hình
     const c = cfg();
     if (!c.autoMinutes) return;
     if (STORE.hkd) { if (STORE.lastSync?.kind === 'auth') return; } // hết phiên: chờ admin dán lại
@@ -393,6 +403,9 @@ export function mountTonKho(app, { express, DATA_DIR, fetchWithTimeout }) {
   // ===================== ROUTES =====================
   const json = express.json({ limit: '5mb' });
 
+  // Mọi route đọc bản mới nhất trước khi xử lý
+  app.use('/api/ton-kho', (req, res, next) => { reload(); next(); });
+
   app.get('/api/ton-kho', guard, wrap(async (req, res) => {
     const c = cfg();
     const days = Math.max(1, Math.min(180, Number(req.query.days) || c.salesDays));
@@ -422,17 +435,20 @@ export function mountTonKho(app, { express, DATA_DIR, fetchWithTimeout }) {
 
   app.post('/api/ton-kho/config', guard, json, (req, res) => {
     const b = req.body || {};
-    const next = { ...STORE.config };
-    for (const k of ['apiUrl', 'appId', 'orgCompanyCode', 'branchId']) if (b[k] !== undefined) next[k] = String(b[k]).trim();
+    // Chỉ đổi các trường được gửi lên, trên cấu hình mới nhất
+    const patch = {};
+    for (const k of ['apiUrl', 'appId', 'orgCompanyCode', 'branchId']) if (b[k] !== undefined) patch[k] = String(b[k]).trim();
     // Chỉ ghi đè mã kết nối khi người dùng nhập mã mới (không phải chuỗi đã che)
-    if (b.accessCode && !String(b.accessCode).includes('•')) next.accessCode = String(b.accessCode).trim();
+    if (b.accessCode && !String(b.accessCode).includes('•')) patch.accessCode = String(b.accessCode).trim();
     for (const k of ['autoMinutes', 'salesDays', 'dictItemType', 'dictStockType'])
-      if (b[k] !== undefined && b[k] !== '') next[k] = Math.max(0, Number(b[k]) || 0);
-    if (!/^https:\/\/[^/]+\.misa\.vn\/?$/.test(next.apiUrl || DEFAULT_CONFIG.apiUrl))
-      return res.json({ ok: false, message: 'API URL phải là tên miền *.misa.vn (https).' });
-    STORE.config = next;
-    STORE.token = null;
-    save();
+      if (b[k] !== undefined && b[k] !== '') patch[k] = Math.max(0, Number(b[k]) || 0);
+    const bad = commit(s => {
+      const next = { ...s.config, ...patch };
+      if (!/^https:\/\/[^/]+\.misa\.vn\/?$/.test(next.apiUrl || DEFAULT_CONFIG.apiUrl)) return false;
+      s.config = next;
+      s.token = null;
+    }) === false;
+    if (bad) return res.json({ ok: false, message: 'API URL phải là tên miền *.misa.vn (https).' });
     res.json({ ok: true });
   });
 
@@ -446,15 +462,13 @@ export function mountTonKho(app, { express, DATA_DIR, fetchWithTimeout }) {
     let parsed;
     try { parsed = parsePastedRequest(req.body?.raw); }
     catch (e) { return res.json({ ok: false, message: e.message }); }
-    STORE.hkd = { ...parsed, savedAt: new Date().toISOString(), savedBy: req.session?.user?.user || '' };
-    save();
+    commit(s => { s.hkd = { ...parsed, savedAt: new Date().toISOString(), savedBy: req.session?.user?.user || '' }; });
     try { const r = await syncFromHkd(); res.json({ ok: true, n: r.n }); }
     catch (e) { res.json({ ok: false, saved: true, message: e.message }); }
   });
   // Bật/tắt tự gia hạn phiên (mặc định tắt — xem DEFAULT_CONFIG.hkdAutoRenew)
   app.post('/api/ton-kho/hkd-auto-renew', guard, json, (req, res) => {
-    STORE.config = { ...STORE.config, hkdAutoRenew: req.body?.on === true };
-    save();
+    commit(s => { s.config = { ...s.config, hkdAutoRenew: req.body?.on === true }; });
     res.json({ ok: true, on: STORE.config.hkdAutoRenew });
   });
   // Thử tự gia hạn phiên ngay (để biết cơ chế có chạy với tài khoản này không), rồi đồng bộ lại
@@ -465,8 +479,7 @@ export function mountTonKho(app, { express, DATA_DIR, fetchWithTimeout }) {
     catch (e) { res.json({ ok: false, renewed: true, message: 'Đã lấy được token mới nhưng đồng bộ lỗi: ' + e.message }); }
   });
   app.post('/api/ton-kho/hkd-config/delete', guard, (req, res) => {
-    STORE.hkd = null;
-    save();
+    commit(s => { s.hkd = null; });
     res.json({ ok: true });
   });
 
@@ -492,8 +505,7 @@ export function mountTonKho(app, { express, DATA_DIR, fetchWithTimeout }) {
   app.post('/api/ton-kho/alert-config', guard, json, (req, res) => {
     const th = Math.floor(Number(req.body?.alertThreshold));
     if (!(th >= 1 && th <= 1000000)) return res.json({ ok: false, message: 'Ngưỡng phải là số nguyên từ 1 trở lên.' });
-    STORE.config = { ...STORE.config, alertThreshold: th };
-    save();
+    commit(s => { s.config = { ...s.config, alertThreshold: th }; });
     afterSnapshot(); // ngưỡng đổi → xét lại ngay
     res.json({ ok: true, threshold: th });
   });
@@ -518,8 +530,7 @@ export function mountTonKho(app, { express, DATA_DIR, fetchWithTimeout }) {
       qty: num(r.qty), amount: num(r.amount),
     })).filter(x => x.code || x.name);
     if (!items.length) return res.json({ ok: false, message: 'Không có dòng hợp lệ (cần ít nhất Mã hàng hoặc Tên hàng).' });
-    setSnapshot(items, 'excel');
-    save();
+    commit(s => setSnapshot(s, items, 'excel'));
     afterSnapshot();
     res.json({ ok: true, n: items.length });
   });
@@ -528,18 +539,19 @@ export function mountTonKho(app, { express, DATA_DIR, fetchWithTimeout }) {
   app.post('/api/ton-kho/setting', guard, json, (req, res) => {
     const { key, min, alias } = req.body || {};
     if (!key) return res.json({ ok: false, message: 'Thiếu mã hàng' });
-    STORE.settings = STORE.settings || {};
-    const s = STORE.settings[key] || {};
-    if (min !== undefined) s.min = Math.max(0, num(min));
-    if (alias !== undefined) s.alias = String(alias).slice(0, 500);
-    STORE.settings[key] = s;
-    save();
+    commit(s => {
+      s.settings = s.settings || {};
+      const st = s.settings[key] || {};
+      if (min !== undefined) st.min = Math.max(0, num(min));
+      if (alias !== undefined) st.alias = String(alias).slice(0, 500);
+      s.settings[key] = st;
+    });
     res.json({ ok: true });
   });
 
   // Tên xuất hoá đơn theo lô (ten-hoa-don.js) — dùng chung tồn MISA và bot nhóm kho
   tenHoaDon = mountTenHoaDon(app, { json, guard, wrap, DATA_DIR, fetchWithTimeout,
-    getStockItems: () => STORE.snapshot?.items || [], notify });
+    getStockItems: () => (reload(), STORE.snapshot?.items || []), notify });
 
   console.log('[TONKHO] đã gắn module tồn kho');
 }

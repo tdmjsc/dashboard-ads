@@ -9,19 +9,18 @@
 //  • Phần khác của máy chủ gửi tin bằng:  await global.__khoNotify('<nội dung HTML>')
 //    → trả về { ok, error }. Không ném lỗi, nên gọi ở đâu cũng an toàn.
 
-import fs from 'node:fs';
 import path from 'node:path';
+import { jsonStore } from './json-store.js';
 
 const TG_MAX = 4000; // Telegram giới hạn 4096 ký tự / tin
 
 export function mountKhoBot(app, { express, DATA_DIR, fetchWithTimeout, token = process.env.TELEGRAM_KHO_BOT_TOKEN || '' }) {
   const FILE = path.join(DATA_DIR, 'kho-bot.json');
-  let STORE = { chatId: '', chatTitle: '', savedAt: '', savedBy: '', lastSend: null };
-  try { STORE = { ...STORE, ...JSON.parse(fs.readFileSync(FILE, 'utf8')) }; } catch {}
-  const save = () => {
-    try { fs.writeFileSync(FILE, JSON.stringify(STORE, null, 1)); }
-    catch (e) { console.error('[KHOBOT] lưu file lỗi:', e.message); }
-  };
+  // Nhiều tiến trình dùng chung file: đọc lại trước mỗi việc, ghi qua commit() (xem json-store.js)
+  const db = jsonStore(FILE, () => ({ chatId: '', chatTitle: '', savedAt: '', savedBy: '', lastSend: null }), { mode: 0o644, tag: 'KHOBOT' });
+  let STORE = db.read();
+  const reload = () => { STORE = db.read(); };
+  const commit = fn => { const r = db.commit(fn); STORE = r.s; return r.out; };
 
   async function tg(method, body) {
     if (!token) return { ok: false, description: 'Chưa khai TELEGRAM_KHO_BOT_TOKEN trên máy chủ.' };
@@ -40,6 +39,7 @@ export function mountKhoBot(app, { express, DATA_DIR, fetchWithTimeout, token = 
   async function send(text, { html = true } = {}) {
     text = String(text || '').trim();
     if (!text) return { ok: false, error: 'Tin nhắn trống.' };
+    reload();
     if (!STORE.chatId) return { ok: false, error: 'Chưa chọn nhóm kho.' };
     if (text.length > TG_MAX) text = text.slice(0, TG_MAX - 1) + '…';
     const body = { chat_id: STORE.chatId, text, disable_web_page_preview: true };
@@ -48,12 +48,13 @@ export function mountKhoBot(app, { express, DATA_DIR, fetchWithTimeout, token = 
     // Nhóm được nâng lên "siêu nhóm" thì Telegram đổi Chat ID → tự cập nhật và gửi lại
     const moved = j && j.parameters && j.parameters.migrate_to_chat_id;
     if (!j.ok && moved) {
-      STORE.chatId = String(moved);
-      j = await tg('sendMessage', { ...body, chat_id: STORE.chatId });
+      const oldId = body.chat_id;
+      commit(s => { if (s.chatId !== oldId) return false; s.chatId = String(moved); });
+      j = await tg('sendMessage', { ...body, chat_id: String(moved) });
     }
-    STORE.lastSend = { at: new Date().toISOString(), ok: !!j.ok, error: j.ok ? '' : (j.description || 'Telegram từ chối tin nhắn') };
-    save();
-    return { ok: !!j.ok, error: STORE.lastSend.error };
+    const lastSend = { at: new Date().toISOString(), ok: !!j.ok, error: j.ok ? '' : (j.description || 'Telegram từ chối tin nhắn') };
+    commit(s => { s.lastSend = lastSend; });
+    return { ok: !!j.ok, error: lastSend.error };
   }
   global.__khoNotify = text => send(text, { html: true }).catch(e => ({ ok: false, error: e.message }));
 
@@ -73,6 +74,7 @@ export function mountKhoBot(app, { express, DATA_DIR, fetchWithTimeout, token = 
     catch (e) { console.error('[KHOBOT]', e.message); res.status(500).json({ ok: false, message: 'Lỗi máy chủ.' }); }
   };
   const json = express.json({ limit: '100kb' });
+  app.use('/api/ton-kho/bot', (req, res, next) => { reload(); next(); });
 
   const view = async () => ({
     ok: true, hasToken: !!token, bot: await getBot(),
@@ -103,7 +105,7 @@ export function mountKhoBot(app, { express, DATA_DIR, fetchWithTimeout, token = 
   // Chọn nhóm nhận tin
   app.post('/api/ton-kho/bot/group', guard, json, wrap(async (req, res) => {
     const raw = String(req.body?.id ?? '').trim();
-    if (raw === '') { STORE.chatId = ''; STORE.chatTitle = ''; save(); return res.json(await view()); }
+    if (raw === '') { commit(s => { s.chatId = ''; s.chatTitle = ''; }); return res.json(await view()); }
     // Nhận Chat ID (vd -1001234567890) hoặc link nhóm trên Telegram Web (…/#-1234567890).
     // Telegram Web có bản hiển thị ID siêu nhóm thiếu tiền tố -100, nên thử lần lượt các dạng.
     const m = raw.match(/(-?\d{5,20})\s*$/);
@@ -117,9 +119,10 @@ export function mountKhoBot(app, { express, DATA_DIR, fetchWithTimeout, token = 
       if (j.ok && ['group', 'supergroup'].includes(j.result?.type)) { id = c; break; }
     }
     if (!id) return res.json({ ok: false, message: 'Bot không thấy nhóm này. Kiểm tra đã thêm bot vào nhóm chưa và đã chép đúng link của nhóm đó.' });
-    STORE.chatId = id; STORE.chatTitle = j.result?.title || '';
-    STORE.savedAt = new Date().toISOString(); STORE.savedBy = req.session?.user?.user || '';
-    save();
+    commit(s => {
+      s.chatId = id; s.chatTitle = j.result?.title || '';
+      s.savedAt = new Date().toISOString(); s.savedBy = req.session?.user?.user || '';
+    });
     res.json(await view());
   }));
 

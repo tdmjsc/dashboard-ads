@@ -13,9 +13,9 @@
 //    (mặc định https://ads.tdmjsc.com), kiểm tra header secret_token.
 //  • Thành viên lưu ở DATA_DIR/tg-all.json. Xem tình trạng: GET /api/tg-all (admin).
 
-import fs from 'node:fs';
 import path from 'node:path';
 import crypto from 'node:crypto';
+import { jsonStore } from './json-store.js';
 
 const TG_MAX = 4000;          // Telegram giới hạn 4096 ký tự / tin
 // Số người nhắc trong 1 tin (mặc định 50 → nhóm ~30 người chỉ 1 tin). Nếu người cuối danh sách
@@ -26,16 +26,12 @@ const COOLDOWN_MS = 30 * 1000; // mỗi nhóm gọi @all tối đa 1 lần / 30 
 export function mountTgAll(app, { express, DATA_DIR, fetchWithTimeout, token = process.env.TELEGRAM_ALL_BOT_TOKEN || '' }) {
   const FILE = path.join(DATA_DIR, 'tg-all.json');
   // { chats: { [chatId]: { title, members: { [userId]: { name, username, at } } } } }
-  let STORE = { chats: {} };
-  try { STORE = { chats: {}, ...JSON.parse(fs.readFileSync(FILE, 'utf8')) }; } catch {}
-  let saveTimer = null;
-  const save = () => {
-    clearTimeout(saveTimer);
-    saveTimer = setTimeout(() => {
-      try { fs.writeFileSync(FILE, JSON.stringify(STORE)); }
-      catch (e) { console.error('[TGALL] lưu file lỗi:', e.message); }
-    }, 2000);
-  };
+  // Nhiều tiến trình dùng chung file: đọc lại trước mỗi tin, mỗi thay đổi ghi qua commit() trên bản mới nhất
+  // (xem json-store.js) — không ghi cả bộ nhớ ra file, kẻo xoá người tiến trình khác vừa ghi nhớ.
+  const db = jsonStore(FILE, () => ({ chats: {} }), { mode: 0o644, space: 0, tag: 'TGALL' });
+  let STORE = db.read();
+  const reload = () => { STORE = db.read(); };
+  const commit = fn => { const r = db.commit(fn); STORE = r.s; return r.out; };
   const SECRET = token ? crypto.createHash('sha256').update('tg-all:' + token).digest('hex').slice(0, 48) : '';
   const lastCall = {};   // chatId → thời điểm gọi @all gần nhất
   let me = null;         // thông tin bot (getMe)
@@ -55,23 +51,24 @@ export function mountTgAll(app, { express, DATA_DIR, fetchWithTimeout, token = p
 
   const esc = s => String(s == null ? '' : s).replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
   const nameOf = u => [u.first_name, u.last_name].filter(Boolean).join(' ').trim() || (u.username ? '@' + u.username : 'Thành viên');
-  const chatOf = c => {
+  // Gọi bên trong commit(): s là bản mới nhất đọc từ file
+  const chatOf = (s, c) => {
     const id = String(c.id);
-    if (!STORE.chats[id]) STORE.chats[id] = { title: '', members: {} };
-    if (c.title) STORE.chats[id].title = c.title;
-    return STORE.chats[id];
+    if (!s.chats[id]) s.chats[id] = { title: '', members: {} };
+    if (c.title) s.chats[id].title = c.title;
+    return s.chats[id];
   };
   function remember(chat, u) {
     if (!u || u.is_bot) return;
-    const m = chatOf(chat).members, id = String(u.id), name = nameOf(u), username = u.username || '';
-    const old = m[id];
+    const id = String(u.id), name = nameOf(u), username = u.username || '';
+    const old = ((STORE.chats[String(chat.id)] || {}).members || {})[id];
     if (old && old.name === name && old.username === username && Date.now() - Date.parse(old.at) < 864e5) return;
-    m[id] = { name, username, at: new Date().toISOString() };
-    save();
+    commit(s => { chatOf(s, chat).members[id] = { name, username, at: new Date().toISOString() }; });
   }
   function forget(chat, u) {
     const c = STORE.chats[String(chat.id)];
-    if (c && u && c.members[String(u.id)]) { delete c.members[String(u.id)]; save(); }
+    if (c && u && c.members[String(u.id)])
+      commit(s => { const sc = s.chats[String(chat.id)]; if (!sc || !sc.members[String(u.id)]) return false; delete sc.members[String(u.id)]; });
   }
 
   // "@all" ở bất kỳ đâu trong tin, hoặc lệnh /all (kể cả /all@tenbot)
@@ -105,12 +102,13 @@ export function mountTgAll(app, { express, DATA_DIR, fetchWithTimeout, token = p
   }
 
   async function onUpdate(u) {
+    reload();
     const msg = u.message || u.edited_message;
     if (msg && msg.chat && (msg.chat.type === 'group' || msg.chat.type === 'supergroup')) {
       // Nhóm được nâng lên siêu nhóm → Telegram đổi Chat ID: chuyển danh sách sang id mới
       if (msg.migrate_to_chat_id) {
         const oldId = String(msg.chat.id), newId = String(msg.migrate_to_chat_id);
-        if (STORE.chats[oldId]) { STORE.chats[newId] = STORE.chats[oldId]; delete STORE.chats[oldId]; save(); }
+        if (STORE.chats[oldId]) commit(s => { if (!s.chats[oldId]) return false; s.chats[newId] = s.chats[oldId]; delete s.chats[oldId]; });
         return;
       }
       remember(msg.chat, msg.from);
@@ -129,8 +127,8 @@ export function mountTgAll(app, { express, DATA_DIR, fetchWithTimeout, token = p
     // Bot bị xoá khỏi nhóm → bỏ danh sách nhóm đó
     if (u.my_chat_member) {
       const { chat, new_chat_member: n } = u.my_chat_member;
-      if (['left', 'kicked'].includes(n.status) && STORE.chats[String(chat.id)]) { delete STORE.chats[String(chat.id)]; save(); }
-      else if (chat.title) { chatOf(chat); save(); }
+      if (['left', 'kicked'].includes(n.status) && STORE.chats[String(chat.id)]) commit(s => { delete s.chats[String(chat.id)]; });
+      else if (chat.title) commit(s => { chatOf(s, chat); });
     }
   }
 
@@ -144,6 +142,7 @@ export function mountTgAll(app, { express, DATA_DIR, fetchWithTimeout, token = p
   // Tình trạng bot + các nhóm đã biết (admin)
   app.get('/api/tg-all', async (req, res) => {
     if (((req.session && req.session.user) || {}).role !== 'admin') return res.status(403).json({ ok: false });
+    reload();
     const info = token ? await tg('getWebhookInfo') : null;
     res.json({
       ok: !!token, bot: me && { username: me.username, docMoiTinNhom: me.can_read_all_group_messages },
