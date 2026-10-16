@@ -130,10 +130,34 @@ export function mountTenHoaDon(app, { json, guard, wrap, DATA_DIR, fetchWithTime
   // Từng mất dữ liệu (10/2026): tiến trình giữ bản cũ ghi đè cả file, xoá các sản phẩm vừa thêm ở tiến trình khác.
   // Vì vậy: đọc lại file trước mỗi việc (reload) và mọi lần ghi đi qua commit(): đọc file mới nhất → sửa → ghi
   // ngay (đồng bộ, không await ở giữa). Việc gọi mạng lâu thì làm trước, rồi commit phần kết quả theo id.
+  // Bản sao mỗi giờ (giữ 72 bản) ở DATA_DIR/ten-hoa-don.bak/ — giống salary-manual.json.bak: dữ liệu ở
+  // DATA_DIR không nằm trong backup hằng ngày của Hostinger, mất là không lấy lại được.
+  const BAK_DIR = path.join(DATA_DIR, 'ten-hoa-don.bak');
+  function snapshot() {
+    try {
+      if (!fs.existsSync(FILE)) return;
+      const name = path.join(BAK_DIR, new Date().toISOString().slice(0, 13) + '.json');
+      if (fs.existsSync(name)) return;
+      fs.mkdirSync(BAK_DIR, { recursive: true, mode: 0o700 });
+      fs.copyFileSync(FILE, name); fs.chmodSync(name, 0o600);
+      const old = fs.readdirSync(BAK_DIR).filter(f => f.endsWith('.json')).sort();
+      for (const f of old.slice(0, Math.max(0, old.length - 72))) fs.unlinkSync(path.join(BAK_DIR, f));
+    } catch (e) { console.warn('[TENHD] sao lưu lỗi:', e.message); }
+  }
+  // Khởi động: file chính mất / hỏng → khôi phục từ bản sao mới nhất đọc được
+  (() => {
+    try { JSON.parse(fs.readFileSync(FILE, 'utf8')); return; } catch (e) { if (e.code === 'ENOENT' && !fs.existsSync(BAK_DIR)) return; }
+    try {
+      for (const f of fs.readdirSync(BAK_DIR).filter(f => f.endsWith('.json')).sort().reverse()) {
+        try { JSON.parse(fs.readFileSync(path.join(BAK_DIR, f), 'utf8')); fs.copyFileSync(path.join(BAK_DIR, f), FILE); console.log('[TENHD] khôi phục từ bản sao', f); return; } catch {}
+      }
+    } catch {}
+  })();
   const readStore = () => { try { return { rules: [], ...JSON.parse(fs.readFileSync(FILE, 'utf8')) }; } catch { return { rules: [] }; } };
   let STORE = readStore();
   const reload = () => { STORE = readStore(); };
   function commit(fn) {
+    snapshot();
     const s = readStore();
     const out = fn(s);
     try {

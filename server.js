@@ -4352,6 +4352,34 @@ app.post('/api/cash-flow/note', express.json(), (req, res) => {
   }
 })();
 
+/* ===================== SAO LƯU DỮ LIỆU VÀO CHỖ HOSTINGER CÓ BACKUP =====================
+   Backup hằng ngày của Hostinger chỉ chụp thư mục domains/, KHÔNG có DATA_DIR (/home/…/data) → từng mất dữ liệu
+   Tên xuất HĐ (10/2026) mà không có bản nào để khôi phục. Mỗi 6 giờ chép các file .json (+ .bak) trong DATA_DIR
+   sang domains/ads.tdmjsc.com/data-backup/YYYY-MM-DD/ (ngoài nodejs/ nên deploy không đụng, ngoài public_html
+   và public/ nên không ai tải được qua web), giữ 14 ngày. Có chứa cookie/token → thư mục 700, file 600.
+   Khôi phục: chép file từ bản backup Hostinger của ngày cần về DATA_DIR rồi restart app. */
+const DATA_BACKUP_DIR = process.env.DATA_BACKUP_DIR || path.join(__dirname, '..', 'data-backup');
+function backupDataDir() {
+  try {
+    const day = new Date(Date.now() + 7 * 3600e3).toISOString().slice(0, 10); // ngày giờ VN
+    const dest = path.join(DATA_BACKUP_DIR, day);
+    fs.mkdirSync(dest, { recursive: true, mode: 0o700 });
+    fs.chmodSync(DATA_BACKUP_DIR, 0o700);
+    let n = 0;
+    for (const f of fs.readdirSync(DATA_DIR)) {
+      if (!/\.(json|bak)$/.test(f)) continue;
+      const src = path.join(DATA_DIR, f);
+      if (!fs.statSync(src).isFile()) continue;
+      fs.copyFileSync(src, path.join(dest, f)); fs.chmodSync(path.join(dest, f), 0o600); n++;
+    }
+    const days = fs.readdirSync(DATA_BACKUP_DIR).filter(d => /^\d{4}-\d{2}-\d{2}$/.test(d)).sort();
+    for (const d of days.slice(0, Math.max(0, days.length - 14))) fs.rmSync(path.join(DATA_BACKUP_DIR, d), { recursive: true, force: true });
+    console.log(`[DATA-BACKUP] ${n} file → ${dest}`);
+  } catch (e) { console.error('[DATA-BACKUP] lỗi:', e.message); }
+}
+setTimeout(backupDataDir, 60e3).unref?.();
+setInterval(backupDataDir, 6 * 3600e3).unref?.();
+
 app.use(express.static(path.join(__dirname, 'public')));
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => console.log(`Đang chạy: http://localhost:${PORT}`));
