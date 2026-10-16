@@ -553,8 +553,9 @@ function xferSalary(i){
   let h='<div class="xfer-modal" id="xferModal" onclick="if(event.target===this)this.remove()">';
   h+='<div class="xfer-box">';
   h+='<h3>💸 Chuyển lương — '+esc(emp.name)+'</h3>';
-  h+='<div class="xfer-row"><span class="xfer-label">Số tiền</span><span class="xfer-val">'+vnd(amount)+' ₫</span></div>';
-  h+='<div class="xfer-row"><span class="xfer-label">Nội dung</span><span style="font-size:13px;">'+esc(desc)+'</span></div>';
+  h+='<div class="xfer-row"><span class="xfer-label">Số tiền</span><input class="xfer-inp xfer-val" id="xf-amt" inputmode="numeric" value="'+vnd(amount)+'" data-def="'+vnd(amount)+'" oninput="xfFmtAmt(this)"><span class="xfer-val">₫</span></div>';
+  h+='<div class="xfer-row"><span class="xfer-label">Nội dung</span><input class="xfer-inp" id="xf-desc" maxlength="80" value="'+esc(desc)+'" data-def="'+esc(desc)+'"></div>';
+  h+='<div style="font-size:11px;color:#9FB0C8;text-align:right;margin-top:-4px;">Sửa được số tiền và nội dung · <a href="#" onclick="xfReset();return false;" style="color:#9DB2FF;">Khôi phục mặc định</a></div>';
   h+='<hr style="border-color:rgba(255,255,255,.08);margin:12px 0;">';
 
   h+='<div style="font-size:12px;color:#7BE3B5;margin-bottom:6px;font-weight:600;">Ngân hàng của bạn (gửi)</div>';
@@ -578,16 +579,22 @@ function xferSalary(i){
   h+='</div></div></div>';
   document.body.insertAdjacentHTML('beforeend',h);
 
-  if(bank.bankBin && bank.accountNo) showXferQR(bank.bankBin,bank.accountNo,emp.name,amount,desc);
-  $('xf-bank').addEventListener('change',()=>updateXferQR(i));
-  $('xf-acc').addEventListener('input',()=>updateXferQR(i));
+  ['xf-bank','xf-acc','xf-amt','xf-desc'].forEach(id=>$(id).addEventListener(id==='xf-bank'?'change':'input',()=>xfRefresh(emp.name)));
+  xfRefresh(emp.name);
 }
 
-function updateXferQR(i){
-  const emp=LIST[i]; const c=emp._c||{};
-  const desc=makeDesc(emp.name);
+// Số tiền / nội dung trong hộp chuyển lương: sửa được, mặc định là lương + nội dung tự tạo
+function xfAmount(){ return +String(($('xf-amt')||{}).value||'').replace(/\D/g,'')||0; }
+function xfDesc(){ return boDau((($('xf-desc')||{}).value||'').trim()); }
+function xfFmtAmt(el){ const n=+String(el.value).replace(/\D/g,'')||0; el.value=n?vnd(n):''; }
+function xfReset(){
+  const a=$('xf-amt'), d=$('xf-desc');
+  a.value=a.dataset.def; d.value=d.dataset.def;
+  a.dispatchEvent(new Event('input'));
+}
+function xfRefresh(name){
   const bin=$('xf-bank').value, acc=$('xf-acc').value;
-  if(bin&&acc) showXferQR(bin,acc,emp.name,c.tn||0,desc);
+  if(bin&&acc) showXferQR(bin,acc,name,xfAmount(),xfDesc());
   else $('xf-qr').innerHTML='';
 }
 
@@ -600,18 +607,17 @@ function showXferQR(bin,acc,name,amount,desc){
 }
 
 function xferCopy(i){
-  const emp=LIST[i]; const c=emp._c||{};
-  const desc=makeDesc(emp.name);
+  const desc=xfDesc(), amount=xfAmount();
   const bankBin=$('xf-bank').value; const bankObj=ALL_BANKS.find(b=>b.bin===bankBin);
   const acc=$('xf-acc').value||'';
-  const txt=desc+'\nSố tiền: '+vnd(c.tn||0)+' ₫'+(bankObj?'\nNgân hàng: '+bankObj.name:'')+(acc?'\nSTK: '+acc:'');
+  const txt=desc+'\nSố tiền: '+vnd(amount)+' ₫'+(bankObj?'\nNgân hàng: '+bankObj.name:'')+(acc?'\nSTK: '+acc:'');
   navigator.clipboard.writeText(txt).then(()=>alert('Đã copy nội dung chuyển khoản')).catch(()=>{});
 }
 
 async function xferGo(i){
-  const emp=LIST[i]; const c=emp._c||{};
-  const amount=c.tn||0;
-  const desc=makeDesc(emp.name);
+  const emp=LIST[i];
+  const amount=xfAmount();
+  const desc=xfDesc();
   const myBankShort=$('xf-mybank').value;
   const recipBin=$('xf-bank').value, recipAcc=$('xf-acc').value;
 
@@ -624,6 +630,7 @@ async function xferGo(i){
   }
   if(!myBankShort){alert('Vui lòng chọn ngân hàng của bạn');return;}
   if(!recipBin||!recipAcc){alert('Vui lòng chọn ngân hàng nhận và nhập STK');return;}
+  if(!amount){alert('Vui lòng nhập số tiền');return;}
 
   const url=buildTransferUrl(myBankShort, recipBin, recipAcc, emp.name.toUpperCase(), amount, desc);
   window.location.href=url;
