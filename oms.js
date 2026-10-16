@@ -328,12 +328,12 @@ export function mountOMS(app, { mysql, express }) {
     }
 
     // Tìm user OMS khớp với tài khoản dashboard chính
-    // So sánh: username, hoặc tên hiển thị (salaryName, manager, employees[0])
+    // Chỉ so theo username và salaryName của chính người đó.
+    // KHÔNG dùng manager / employees: đó là tên người khác (trưởng nhóm / nhân viên dưới quyền),
+    // ghép theo đó sẽ đăng nhập nhầm sang tài khoản OMS của họ.
     try {
       const searchNames = [mainUsername];
       if (mainUser.salaryName) searchNames.push(mainUser.salaryName);
-      if (mainUser.manager) searchNames.push(mainUser.manager);
-      if (mainUser.employees?.length) searchNames.push(...mainUser.employees);
 
       for (const name of searchNames) {
         if (!name) continue;
