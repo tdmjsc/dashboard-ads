@@ -126,14 +126,27 @@ export function decide(rule, stock) {
 
 export function mountTenHoaDon(app, { json, guard, wrap, DATA_DIR, fetchWithTimeout, getStockItems, notify }) {
   const FILE = path.join(DATA_DIR, 'ten-hoa-don.json');
-  let STORE = { rules: [] };
-  try { STORE = { ...STORE, ...JSON.parse(fs.readFileSync(FILE, 'utf8')) }; } catch {}
-  const save = () => {
-    try { fs.writeFileSync(FILE, JSON.stringify(STORE, null, 1), { mode: 0o600 }); fs.chmodSync(FILE, 0o600); }
-    catch (e) { console.error('[TENHD] lưu file lỗi:', e.message); }
-  };
+  // Máy chủ (Passenger) có thể chạy nhiều tiến trình cùng lúc, mỗi tiến trình một bản STORE trong bộ nhớ.
+  // Từng mất dữ liệu (10/2026): tiến trình giữ bản cũ ghi đè cả file, xoá các sản phẩm vừa thêm ở tiến trình khác.
+  // Vì vậy: đọc lại file trước mỗi việc (reload) và mọi lần ghi đi qua commit(): đọc file mới nhất → sửa → ghi
+  // ngay (đồng bộ, không await ở giữa). Việc gọi mạng lâu thì làm trước, rồi commit phần kết quả theo id.
+  const readStore = () => { try { return { rules: [], ...JSON.parse(fs.readFileSync(FILE, 'utf8')) }; } catch { return { rules: [] }; } };
+  let STORE = readStore();
+  const reload = () => { STORE = readStore(); };
+  function commit(fn) {
+    const s = readStore();
+    const out = fn(s);
+    try {
+      const tmp = FILE + '.' + process.pid + '.tmp';
+      fs.writeFileSync(tmp, JSON.stringify(s, null, 1), { mode: 0o600 });
+      fs.renameSync(tmp, FILE); // ghi file tạm rồi đổi tên: không để file dở dang
+    } catch (e) { console.error('[TENHD] lưu file lỗi:', e.message); }
+    STORE = s;
+    return out;
+  }
   const tgEsc = s => String(s ?? '').replace(/[&<>]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;' }[c]));
   const findRule = id => STORE.rules.find(r => r.id === id);
+  const findIn = (s, id) => s.rules.find(r => r.id === id);
 
   // Tồn MISA hiện tại gộp theo mã hàng (cùng khoá với trang Tồn kho)
   function stockMap() {
@@ -361,27 +374,36 @@ export function mountTenHoaDon(app, { json, guard, wrap, DATA_DIR, fetchWithTime
     return (Array.isArray(j?.data) ? j.data : []).filter(x => String(x.ma || '').trim().toLowerCase() === ma && x.id).map(x => x.id);
   }
 
+  // Dòng hàng của các đơn: cache = STORE.orders (mã đơn → dòng hàng). Trả về { itemsOf, fetched } — fetched là
+  // các đơn vừa đọc, để commit gộp vào file.
   async function orderItems(invoices) {
     // Cache cũ (lấy từ API đối tác) có thể sai khoá → bỏ khi đổi sang API web
-    if (STORE.ordersV !== 2) { STORE.orders = {}; STORE.ordersV = 2; delete STORE.orderDays; }
+    const cache = STORE.ordersV === 2 ? { ...(STORE.orders || {}) } : {};
+    const fetched = {};
     const key = h => h.maDonHang || h.idDonHang;
-    const need = [...new Set(invoices.filter(h => h.maDonHang && !STORE.orders[key(h)]).map(key))];
+    const need = [...new Set(invoices.filter(h => h.maDonHang && !cache[key(h)]).map(key))];
     // Gọi 4 đơn song song; đơn lỗi thì để lần sau
     for (let i = 0; i < need.length; i += 4) {
       await Promise.all(need.slice(i, i + 4).map(async ma => {
-        try { const j = await sbPost(ORDER_BY_CODE, { MaDon: ma }); if (j?.data) STORE.orders[ma] = linesOf(j.data); }
+        try { const j = await sbPost(ORDER_BY_CODE, { MaDon: ma }); if (j?.data) cache[ma] = fetched[ma] = linesOf(j.data); }
         catch (e) { console.warn('[TENHD] đọc đơn', ma, e.message); }
       }));
     }
+    return { itemsOf: h => cache[key(h)] || null, cache, fetched };
+  }
+  function mergeOrders(s, fetched) {
+    if (s.ordersV !== 2) { s.orders = {}; s.ordersV = 2; delete s.orderDays; }
+    s.orders = { ...(s.orders || {}), ...fetched };
     // Bỏ cache đơn cũ hơn 120 ngày
     const cut = new Date(Date.now() - 120 * 86400e3).toISOString().slice(0, 10);
-    for (const k of Object.keys(STORE.orders)) { const d = dayOfCode(k); if (d && d < cut) delete STORE.orders[k]; }
-    return h => STORE.orders[key(h)] || null;
+    for (const k of Object.keys(s.orders)) { const d = dayOfCode(k); if (d && d < cut) delete s.orders[k]; }
   }
 
-  // Cập nhật entry.hd = { qty, soHD, thieu, from, at, err } cho tên đang dùng của các sản phẩm có mã SP
+  // Cập nhật entry.hd = { qty, soHD, thieu, from, at, err } cho tên đang dùng của các sản phẩm có mã SP.
+  // Làm trên bản sao, xong mới commit theo id sản phẩm (chỉ khi tên đang dùng vẫn như lúc bắt đầu đếm).
   async function refreshInvoiced() {
-    const rules = STORE.rules.filter(r => hdOn(r) && r.queue?.length);
+    reload();
+    const rules = JSON.parse(JSON.stringify(STORE.rules.filter(r => hdOn(r) && r.queue?.length)));
     if (!rules.length) return;
     for (const r of rules) {
       const q = r.queue[r.activeIdx || 0]; if (!q.activatedAt) q.activatedAt = new Date().toISOString();
@@ -390,12 +412,24 @@ export function mountTenHoaDon(app, { json, guard, wrap, DATA_DIR, fetchWithTime
       if (r.sbId && (!r.sbBranchIds?.length || !r.sbBranchAt || Date.now() - Date.parse(r.sbBranchAt) > 6 * 3600e3))
         try { r.sbBranchIds = await branchProductIds(r); r.sbBranchAt = new Date().toISOString(); } catch (e) { console.warn('[TENHD] SP chi nhánh', e.message); }
     }
+    // Ghi kết quả của từng sản phẩm vào file mới nhất
+    const apply = fetched => commit(s => {
+      if (fetched) mergeOrders(s, fetched);
+      for (const r of rules) {
+        const t = findIn(s, r.id); if (!t?.queue?.length) continue;
+        const q = r.queue[r.activeIdx || 0], tq = t.queue[t.activeIdx || 0];
+        Object.assign(t, { sbId: r.sbId, sbBranchIds: r.sbBranchIds, sbBranchAt: r.sbBranchAt, sbIds: r.sbIds });
+        if (!tq || tq.ten !== q.ten) continue; // tên đang dùng đã đổi trong lúc đếm → bỏ kết quả cũ
+        if (!tq.activatedAt) tq.activatedAt = q.activatedAt;
+        tq.hd = q.hd;
+      }
+    });
     const from = rules.map(r => r.queue[r.activeIdx || 0].activatedAt).sort()[0];
-    let invs, itemsOf;
-    try { invs = await invoicesSince(from); itemsOf = await orderItems(invs); }
+    let invs, itemsOf, cache, fetched;
+    try { invs = await invoicesSince(from); ({ itemsOf, cache, fetched } = await orderItems(invs)); }
     catch (e) {
       for (const r of rules) { const q = r.queue[r.activeIdx || 0]; q.hd = { ...(q.hd || { qty: null }), err: e.message, at: new Date().toISOString() }; }
-      save(); return;
+      apply(null); return;
     }
     for (const r of rules) {
       const q = r.queue[r.activeIdx || 0], since = Date.parse(q.activatedAt), ma = String(r.maSP).trim().toLowerCase();
@@ -405,7 +439,7 @@ export function mountTenHoaDon(app, { json, guard, wrap, DATA_DIR, fetchWithTime
       const direct = ([c, , , idsp, , idCha]) => String(c).toLowerCase() === ma
         || (!!r.sbId && (idCha === r.sbId || idsp === r.sbId));
       const ids = new Set([...(r.sbIds || []), ...(r.sbBranchIds || [])]);
-      for (const items of Object.values(STORE.orders || {})) for (const l of items || []) if (l[3] && direct(l)) ids.add(l[3]);
+      for (const items of Object.values(cache)) for (const l of items || []) if (l[3] && direct(l)) ids.add(l[3]);
       r.sbIds = [...ids].filter(x => !(r.sbBranchIds || []).includes(x)).slice(0, 50);
       const isMine = l => direct(l) || (!!l[3] && ids.has(l[3])) || (!!l[2] && normName(l[2]) === tenSP);
       let qty = 0, soHD = 0, thieu = 0;
@@ -419,7 +453,7 @@ export function mountTenHoaDon(app, { json, guard, wrap, DATA_DIR, fetchWithTime
       }
       q.hd = { qty, soHD, thieu, don, thieuDon, from: q.activatedAt, at: new Date().toISOString(), err: '' };
     }
-    save();
+    apply(fetched);
   }
 
   async function pushName(rule, ten) {
@@ -444,27 +478,34 @@ export function mountTenHoaDon(app, { json, guard, wrap, DATA_DIR, fetchWithTime
   }
 
   // Kích hoạt tên thứ idx: đẩy sang Sandbox rồi mới ghi nhận (đẩy lỗi thì giữ tên cũ)
-  async function activate(rule, idx, by, reason) {
-    const q = rule.queue[idx];
-    const from = rule.queue[rule.activeIdx || 0]?.ten || '';
-    await pushName(rule, q.ten);
+  async function activate(ruleId, idx, by, reason) {
+    reload();
+    const rule0 = findRule(ruleId);
+    const ten = rule0?.queue?.[idx]?.ten;
+    if (!ten) throw new Error('Không tìm thấy sản phẩm hoặc tên xuất hoá đơn.');
+    await pushName(rule0, ten);
     const { m } = stockMap();
-    // Tên cũ nhập tay: chốt lại số còn thực tế, để lần sau quay lại không tính lại từ đầu
-    const prev = rule.queue[rule.activeIdx || 0];
-    if (prev && prev !== q && isSet(prev.soLuong)) {
-      const rem = remainingOf(prev, m, true).remaining;
-      if (rem !== null) prev.soLuong = Math.max(0, rem);
-      prev.baseline = null;
-    }
-    if (prev && prev !== q) delete prev.hd;
-    // Tên mới: đếm hoá đơn từ lúc này
-    if (hdOn(rule)) q.hd = { qty: 0, soHD: 0, thieu: 0, from: new Date().toISOString(), at: new Date().toISOString(), err: '' };
-    q.baseline = q.misaKey && m.has(q.misaKey) ? m.get(q.misaKey) : null;
-    q.activatedAt = new Date().toISOString();
-    rule.activeIdx = idx;
-    rule.lastError = ''; rule.errorAlertAt = ''; rule.hetAlertAt = '';
-    addHistory(rule, { from, to: q.ten, by, reason, ok: true });
-    save();
+    commit(s => {
+      const rule = findIn(s, ruleId); if (!rule) return;
+      const i = rule.queue.findIndex(x => x.ten === ten); if (i < 0) return;
+      const q = rule.queue[i];
+      const from = rule.queue[rule.activeIdx || 0]?.ten || '';
+      // Tên cũ nhập tay: chốt lại số còn thực tế, để lần sau quay lại không tính lại từ đầu
+      const prev = rule.queue[rule.activeIdx || 0];
+      if (prev && prev !== q && isSet(prev.soLuong)) {
+        const rem = remainingOf(prev, m, true).remaining;
+        if (rem !== null) prev.soLuong = Math.max(0, rem);
+        prev.baseline = null;
+      }
+      if (prev && prev !== q) delete prev.hd;
+      // Tên mới: đếm hoá đơn từ lúc này
+      if (hdOn(rule)) q.hd = { qty: 0, soHD: 0, thieu: 0, from: new Date().toISOString(), at: new Date().toISOString(), err: '' };
+      q.baseline = q.misaKey && m.has(q.misaKey) ? m.get(q.misaKey) : null;
+      q.activatedAt = new Date().toISOString();
+      rule.activeIdx = i;
+      rule.lastError = ''; rule.errorAlertAt = ''; rule.hetAlertAt = '';
+      addHistory(rule, { from, to: q.ten, by, reason, ok: true });
+    });
   }
 
   /* ---------- Kiểm tra tự động sau mỗi lần cập nhật tồn ---------- */
@@ -474,33 +515,40 @@ export function mountTenHoaDon(app, { json, guard, wrap, DATA_DIR, fetchWithTime
     checking = (async () => {
       await refreshInvoiced().catch(e => console.warn('[TENHD] đếm hoá đơn lỗi:', e.message));
       const { m } = stockMap();
-      for (const rule of STORE.rules) {
-        if (!rule.auto || !rule.queue?.length) continue;
+      reload();
+      for (const id of STORE.rules.map(r => r.id)) {
+        reload(); // mỗi sản phẩm đọc lại file: tiến trình khác có thể vừa sửa / xoá
+        const rule = findRule(id);
+        if (!rule || !rule.auto || !rule.queue?.length) continue;
         const d = decide(rule, m);
+        const patch = fn => commit(s => { const t = findIn(s, id); if (t) fn(t); });
         if (d.action === 'doi') {
           const cur = rule.queue[rule.activeIdx || 0], nxt = rule.queue[d.next];
           const curRem = remainingOf(cur, m, true), curSL = num(cur.soLuong); // activate() sẽ sửa cur.soLuong
           try {
-            await activate(rule, d.next, 'tự động', `"${cur.ten}" hết số lượng được xuất`);
+            await activate(id, d.next, 'tự động', `"${cur.ten}" hết số lượng được xuất`);
             await notify(`🧾 Sản phẩm <b>${tgEsc(rule.tenSP)}</b>: xuất hoá đơn dưới tên "<b>${tgEsc(cur.ten)}</b>" `
               + `về ${curRem.remaining > 0 ? `còn ${curRem.remaining}` : '0'}, đã tự chuyển tên xuất hoá đơn sang "<b>${tgEsc(nxt.ten)}</b>".`
               + (curRem.source === 'hd' ? `\n(Đã xuất HĐ dưới tên "${tgEsc(cur.ten)}": ${curRem.used}/${curSL})` : ''));
           } catch (e) {
-            // Cùng một lỗi lặp lại mỗi lần đồng bộ thì chỉ ghi lịch sử 1 lần
-            if (rule.lastError !== e.message) addHistory(rule, { from: cur.ten, to: nxt.ten, by: 'tự động', ok: false, message: e.message });
-            rule.lastError = e.message; rule.lastErrorAt = new Date().toISOString();
             // Báo lỗi tối đa 6 giờ/lần để không spam nhóm
+            let alerted = false;
             if (!rule.errorAlertAt || Date.now() - Date.parse(rule.errorAlertAt) > 6 * 3600e3) {
               const r = await notify(`⚠️ <b>Không đổi được tên xuất hoá đơn</b>\nSản phẩm: <b>${tgEsc(rule.tenSP)}</b>\n`
                 + `"${tgEsc(cur.ten)}" đã hết nhưng chưa đổi được sang "${tgEsc(nxt.ten)}": ${tgEsc(e.message)}\nVào trang Tên xuất hoá đơn để xử lý.`);
-              if (r && r.ok) rule.errorAlertAt = new Date().toISOString();
+              alerted = !!(r && r.ok);
             }
-            save();
+            patch(t => {
+              // Cùng một lỗi lặp lại mỗi lần đồng bộ thì chỉ ghi lịch sử 1 lần
+              if (t.lastError !== e.message) addHistory(t, { from: cur.ten, to: nxt.ten, by: 'tự động', ok: false, message: e.message });
+              t.lastError = e.message; t.lastErrorAt = new Date().toISOString();
+              if (alerted) t.errorAlertAt = new Date().toISOString();
+            });
           }
         } else if (d.action === 'het' && !rule.hetAlertAt) {
           const r = await notify(`⛔ <b>Hết tên xuất hoá đơn</b>\nSản phẩm: <b>${tgEsc(rule.tenSP)}</b>: mọi tên trong danh sách đều đã hết số lượng được xuất. Cần nhập thêm hàng hoặc thêm tên mới.`);
-          if (r && r.ok) { rule.hetAlertAt = new Date().toISOString(); save(); }
-        } else if (d.action === 'giu' && rule.hetAlertAt) { rule.hetAlertAt = ''; save(); }
+          if (r && r.ok) patch(t => { t.hetAlertAt = new Date().toISOString(); });
+        } else if (d.action === 'giu' && rule.hetAlertAt) patch(t => { t.hetAlertAt = ''; });
       }
     })().catch(e => console.warn('[TENHD] kiểm tra lỗi:', e.message)).finally(() => { checking = null; });
     return checking;
@@ -526,6 +574,7 @@ export function mountTenHoaDon(app, { json, guard, wrap, DATA_DIR, fetchWithTime
 
   /* ---------- ROUTES (chỉ admin, nằm dưới /api/ton-kho nên đã có chặn quyền ở server.js) ---------- */
   app.get('/api/ton-kho/hd', guard, (req, res) => {
+    reload();
     const { m, info } = stockMap();
     res.json({
       ok: true, rules: STORE.rules.map(r => view(r, m)),
@@ -552,29 +601,32 @@ export function mountTenHoaDon(app, { json, guard, wrap, DATA_DIR, fetchWithTime
     if (!queue.length) return res.json({ ok: false, message: 'Cần ít nhất một tên xuất hoá đơn.' });
     if (new Set(queue.map(q => normName(q.ten))).size !== queue.length) return res.json({ ok: false, message: 'Có tên xuất hoá đơn bị trùng.' });
 
-    let rule = b.id ? findRule(b.id) : null;
-    if (b.id && !rule) return res.json({ ok: false, message: 'Không tìm thấy sản phẩm.' });
     const { m } = stockMap();
-    if (!rule) {
-      rule = { id: Date.now().toString(36) + Math.random().toString(36).slice(2, 6), queue: [], activeIdx: 0, history: [] };
-      STORE.rules.push(rule);
-    }
-    // Giữ mốc (tồn MISA lúc lưu) của các tên cũ; tên nào đổi số lượng tay thì lấy lại mốc từ bây giờ
-    const old = new Map(rule.queue.map(q => [normName(q.ten), q]));
-    const activeTen = normName(rule.queue[rule.activeIdx || 0]?.ten || '');
-    rule.queue = queue.map(q => {
-      const o = old.get(normName(q.ten));
-      const changed = !o || o.soLuong !== q.soLuong || o.misaKey !== q.misaKey;
-      return { ...q, baseline: changed ? (q.misaKey && m.has(q.misaKey) ? m.get(q.misaKey) : null) : o.baseline,
-        activatedAt: o?.activatedAt || '', ...(o?.hd ? { hd: o.hd } : {}) };
+    const rule = commit(s => {
+      let rule = b.id ? findIn(s, b.id) : null;
+      if (b.id && !rule) return null;
+      if (!rule) {
+        rule = { id: Date.now().toString(36) + Math.random().toString(36).slice(2, 6), queue: [], activeIdx: 0, history: [] };
+        s.rules.push(rule);
+      }
+      // Giữ mốc (tồn MISA lúc lưu) của các tên cũ; tên nào đổi số lượng tay thì lấy lại mốc từ bây giờ
+      const old = new Map(rule.queue.map(q => [normName(q.ten), q]));
+      const activeTen = normName(rule.queue[rule.activeIdx || 0]?.ten || '');
+      rule.queue = queue.map(q => {
+        const o = old.get(normName(q.ten));
+        const changed = !o || o.soLuong !== q.soLuong || o.misaKey !== q.misaKey;
+        return { ...q, baseline: changed ? (q.misaKey && m.has(q.misaKey) ? m.get(q.misaKey) : null) : o.baseline,
+          activatedAt: o?.activatedAt || '', ...(o?.hd ? { hd: o.hd } : {}) };
+      });
+      const ai = rule.queue.findIndex(q => normName(q.ten) === activeTen);
+      rule.activeIdx = ai >= 0 ? ai : 0;
+      rule.tenSP = tenSP;
+      rule.maSP = maSP;
+      rule.auto = b.auto !== false;
+      rule.buffer = Math.max(0, num(b.buffer));
+      return rule;
     });
-    const ai = rule.queue.findIndex(q => normName(q.ten) === activeTen);
-    rule.activeIdx = ai >= 0 ? ai : 0;
-    rule.tenSP = tenSP;
-    rule.maSP = maSP;
-    rule.auto = b.auto !== false;
-    rule.buffer = Math.max(0, num(b.buffer));
-    save();
+    if (!rule) return res.json({ ok: false, message: 'Không tìm thấy sản phẩm.' });
     checkAll();
     const active = rule.queue[rule.activeIdx].ten;
     res.json({ ok: true, id: rule.id, warning: sb && normName(sb.tenXuatHoaDon) !== normName(active)
@@ -582,55 +634,51 @@ export function mountTenHoaDon(app, { json, guard, wrap, DATA_DIR, fetchWithTime
   }));
 
   app.post('/api/ton-kho/hd/delete', guard, json, (req, res) => {
-    STORE.rules = STORE.rules.filter(r => r.id !== req.body?.id);
-    save();
+    commit(s => { s.rules = s.rules.filter(r => r.id !== req.body?.id); });
     res.json({ ok: true });
   });
 
   // Dán request Sandbox: { id, kind: 'save'|'detail', raw }  — hoặc chọn trường: { id, field }
-  app.post('/api/ton-kho/hd/request', guard, json, (req, res) => {
-    const rule = findRule(req.body?.id);
-    if (!rule) return res.json({ ok: false, message: 'Không tìm thấy sản phẩm.' });
+  app.post('/api/ton-kho/hd/request', guard, json, (req, res) => res.json(commit(s => {
+    const rule = findIn(s, req.body?.id);
+    if (!rule) return { ok: false, message: 'Không tìm thấy sản phẩm.' };
     const { kind, raw, field } = req.body;
     if (field !== undefined && !raw) {
-      if (!rule.save) return res.json({ ok: false, message: 'Chưa dán request Lưu.' });
-      if (getPath(rule.save.body, field) === undefined) return res.json({ ok: false, message: `Không có trường "${field}" trong request.` });
+      if (!rule.save) return { ok: false, message: 'Chưa dán request Lưu.' };
+      if (getPath(rule.save.body, field) === undefined) return { ok: false, message: `Không có trường "${field}" trong request.` };
       rule.save.field = String(field);
       rule.save.wrapKey = rule.save.field.includes('.') ? rule.save.field.split('.')[0] : '';
-      save();
-      return res.json({ ok: true });
+      return { ok: true };
     }
     let r;
     try { r = parseSandboxRequest(raw, kind === 'detail' ? 'detail' : 'save'); }
-    catch (e) { return res.json({ ok: false, message: e.message }); }
+    catch (e) { return { ok: false, message: e.message }; }
     r.savedAt = new Date().toISOString();
-    if (kind === 'detail') { rule.detail = r; save(); return res.json({ ok: true }); }
+    if (kind === 'detail') { rule.detail = r; return { ok: true }; }
     r.fields = findInvoiceFields(r.body).map(f => f.path);
     r.field = r.fields[0] || '';
     r.wrapKey = r.field.includes('.') ? r.field.split('.')[0] : '';
     rule.save = r;
-    save();
-    res.json({ ok: true, fields: r.fields, field: r.field,
-      message: r.field ? '' : 'Không tự tìm thấy trường tên xuất hoá đơn — hãy nhập tên trường.' });
-  });
+    return { ok: true, fields: r.fields, field: r.field,
+      message: r.field ? '' : 'Không tự tìm thấy trường tên xuất hoá đơn — hãy nhập tên trường.' };
+  })));
 
-  app.post('/api/ton-kho/hd/request/delete', guard, json, (req, res) => {
-    const rule = findRule(req.body?.id);
-    if (!rule) return res.json({ ok: false, message: 'Không tìm thấy sản phẩm.' });
+  app.post('/api/ton-kho/hd/request/delete', guard, json, (req, res) => res.json(commit(s => {
+    const rule = findIn(s, req.body?.id);
+    if (!rule) return { ok: false, message: 'Không tìm thấy sản phẩm.' };
     if (req.body.kind === 'detail') rule.detail = null; else rule.save = null;
-    save();
-    res.json({ ok: true });
-  });
+    return { ok: true };
+  })));
 
   // Đổi tay sang tên thứ idx (đẩy sang Sandbox ngay)
   app.post('/api/ton-kho/hd/activate', guard, json, wrap(async (req, res) => {
+    reload();
     const rule = findRule(req.body?.id);
     const idx = Number(req.body?.idx);
     if (!rule || !(idx >= 0 && idx < rule.queue.length)) return res.json({ ok: false, message: 'Dữ liệu không hợp lệ.' });
-    try { await activate(rule, idx, req.session?.user?.user || 'admin', 'đổi tay'); }
+    try { await activate(rule.id, idx, req.session?.user?.user || 'admin', 'đổi tay'); }
     catch (e) {
-      addHistory(rule, { from: rule.queue[rule.activeIdx || 0]?.ten, to: rule.queue[idx].ten, by: req.session?.user?.user, ok: false, message: e.message });
-      save();
+      commit(s => { const t = findIn(s, rule.id); if (t) addHistory(t, { from: rule.queue[rule.activeIdx || 0]?.ten, to: rule.queue[idx].ten, by: req.session?.user?.user, ok: false, message: e.message }); });
       return res.json({ ok: false, message: e.message });
     }
     res.json({ ok: true });
@@ -641,6 +689,7 @@ export function mountTenHoaDon(app, { json, guard, wrap, DATA_DIR, fetchWithTime
   app.get('/api/ton-kho/hd/debug-don', guard, wrap(async (req, res) => {
     const ma = String(req.query.ma || '').trim();
     if (!ma) return res.json({ ok: false, message: 'Thêm ?ma=<mã đơn DHLOG…>' });
+    reload();
     const out = { ma, ngayTrongMa: dayOfCode(ma) };
     try {
       const today = new Date().toISOString();
@@ -706,6 +755,7 @@ export function mountTenHoaDon(app, { json, guard, wrap, DATA_DIR, fetchWithTime
   // Gửi thử: gửi lại dữ liệu sản phẩm y nguyên (tên đang ghi trên Sandbox, không phải tên trong
   // hàng đợi) để kiểm tra request còn chạy mà không đổi gì
   app.post('/api/ton-kho/hd/test', guard, json, wrap(async (req, res) => {
+    reload();
     const rule = findRule(req.body?.id);
     if (!rule) return res.json({ ok: false, message: 'Không tìm thấy sản phẩm.' });
     let ten;
@@ -718,8 +768,7 @@ export function mountTenHoaDon(app, { json, guard, wrap, DATA_DIR, fetchWithTime
       ten = getPath(body, rule.save.field);
       await sandboxFetch(rule.save, body);
     } catch (e) { return res.json({ ok: false, message: e.message }); }
-    rule.lastError = '';
-    save();
+    commit(s => { const t = findIn(s, rule.id); if (t) t.lastError = ''; });
     const active = rule.queue[rule.activeIdx || 0]?.ten;
     res.json({ ok: true, ten, active,
       warning: active && normName(ten) !== normName(active)
@@ -732,7 +781,7 @@ export function mountTenHoaDon(app, { json, guard, wrap, DATA_DIR, fetchWithTime
   }));
 
   // Hoá đơn được phát hành suốt ngày (không theo lịch đồng bộ MISA) → tự đếm và kiểm tra mỗi 20 phút
-  setInterval(() => { if (STORE.rules.some(hdOn)) checkAll(); }, 20 * 60e3).unref?.();
+  setInterval(() => { reload(); if (STORE.rules.some(hdOn)) checkAll(); }, 20 * 60e3).unref?.();
 
   return { checkAll };
 }
