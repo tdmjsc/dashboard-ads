@@ -700,9 +700,15 @@ export function mountOMS(app, { mysql, express }) {
     }
     // warehouse + admin: thấy tất cả
 
+    // max_id: id lớn nhất của mọi đơn (không lọc quyền) → trang dùng làm mốc lúc mở,
+    // kể cả khi tài khoản chưa có đơn nào (trước đây mốc = 0 thì không bao giờ báo).
+    // Lấy trước rồi chỉ trả đơn id <= max_id để đơn về giữa 2 câu truy vấn không bị bỏ qua.
+    const [mx] = await db('SELECT MAX(id) as max_id FROM oms_orders');
+    const maxId = mx?.max_id || 0;
+    where.push('id <= ?'); params.push(maxId);
     const orders = await db(`SELECT id, ten_kh, sdt, san_pham, tong_tien, trang_thai, sale_phu_trach, nv_marketing
-      FROM oms_orders WHERE ${where.join(' AND ')} ORDER BY id DESC LIMIT 10`, params);
-    res.json({ orders, count: orders.length });
+      FROM oms_orders WHERE ${where.join(' AND ')} ORDER BY id DESC LIMIT 50`, params);
+    res.json({ orders, count: orders.length, max_id: maxId });
   }));
 
   // Helper: lấy danh sách NV marketing mà user được xem (team lead → cả team)
@@ -1867,8 +1873,8 @@ self.addEventListener('push', function(event) {
       body: data.body,
       icon: '/favicon.ico',
       badge: '/favicon.ico',
-      tag: 'oms-new-order',
-      renotify: true,
+      // Mỗi đơn một tag: tag chung làm đơn sau thay đơn trước, 2 đơn về gần nhau chỉ còn 1 thông báo
+      tag: data.tag || ('oms-' + Date.now() + '-' + Math.random().toString(36).slice(2, 6)),
       vibrate: [200, 100, 200]
     })
   );

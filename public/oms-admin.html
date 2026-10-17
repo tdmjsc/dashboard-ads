@@ -2178,14 +2178,17 @@ async function autoAssign(){
 
 // ========== THÔNG BÁO ĐƠN MỚI (Web Push + In-app) ==========
 let lastSeenOrderId = 0;
+let notifReady = false;
 let notifInterval = null;
 let pushRegistration = null;
 
 async function initNotifications() {
   try {
-    const r = await fetch(API+'/orders?limit=1');
+    // Mốc = id lớn nhất hiện có. Không lấy từ /orders?limit=1: danh sách đó lọc theo quyền
+    // (tài khoản chưa có đơn → mốc 0 → không bao giờ báo) và xếp theo ngày về, không theo id.
+    const r = await fetch(API+'/new-orders?since_id=999999999');
     const d = await r.json();
-    if(d.orders?.length) lastSeenOrderId = d.orders[0].id;
+    if(r.ok) { lastSeenOrderId = d.max_id || 0; notifReady = true; }
   } catch(e) {}
   if(notifInterval) clearInterval(notifInterval);
   notifInterval = setInterval(checkNewOrders, 30000);
@@ -2276,12 +2279,19 @@ async function testPush() {
 }
 
 async function checkNewOrders() {
-  if(!lastSeenOrderId || !currentUser) return;
+  if(!currentUser) return;
   try {
+    if(!notifReady) {
+      // Lần lấy mốc lúc mở trang bị lỗi → lấy lại, chưa báo gì
+      const r0 = await fetch(API+'/new-orders?since_id=999999999');
+      const d0 = await r0.json();
+      if(r0.ok) { lastSeenOrderId = d0.max_id || 0; notifReady = true; }
+      return;
+    }
     const r = await fetch(API+'/new-orders?since_id='+lastSeenOrderId);
     const d = await r.json();
+    if(d.max_id > lastSeenOrderId) lastSeenOrderId = d.max_id;
     if(d.count > 0) {
-      lastSeenOrderId = Math.max(...d.orders.map(o=>o.id));
       d.orders.forEach(o => showOrderToast(o));
       const badge = document.getElementById('notifBadge');
       badge.textContent = d.count; badge.style.display = 'flex';
