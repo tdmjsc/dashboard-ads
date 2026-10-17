@@ -611,6 +611,16 @@ export function mountOMS(app, { mysql, express }) {
        d.gia_ban || 0, (d.gia_ban || 0) * (d.so_luong || 1),
        d.ghi_chu || '', d.sale_phu_trach || '']);
 
+    // Push notification (giống đơn về từ webhook)
+    try {
+      if (app._omsPush) {
+        app._omsPush(
+          (d.san_pham || 'Sản phẩm') + ' — Có đơn mới!',
+          `${d.ten_kh || ''} — ${d.san_pham || 'Sản phẩm'} (tạo tay)`
+        );
+      }
+    } catch(e) {}
+
     res.json({ ok: true, id: result.insertId });
   }));
 
