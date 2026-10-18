@@ -43,7 +43,7 @@ final class PushManager: NSObject, WKScriptMessageHandler {
         UNUserNotificationCenter.current().requestAuthorization(options: [.alert, .sound, .badge]) { granted, _ in
             DispatchQueue.main.async {
                 guard granted else {
-                    self.alert("Thông báo đang bị tắt cho TDM Ads. Bật trong Cài đặt → Thông báo → TDM Ads.", openSettings: true)
+                    self.alert("Thông báo đang bị tắt cho TDMJSC. Bật trong Cài đặt → Thông báo → TDMJSC.", openSettings: true)
                     return
                 }
                 self.enabled = true
