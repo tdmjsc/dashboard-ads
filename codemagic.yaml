@@ -6,7 +6,7 @@ workflows:
     instance_type: mac_mini_m2
     max_build_duration: 30
     integrations:
-      app_store_connect: tdm_asc   # tên API key App Store Connect đã thêm trong Codemagic (Team → Integrations)
+      app_store_connect: "Wecoway ASC"   # tên API key App Store Connect trong Codemagic (Settings → Integrations → Developer Portal)
     environment:
       xcode: latest
       ios_signing:
@@ -17,7 +17,7 @@ workflows:
         XCODE_SCHEME: TDMAds
         # Apple ID dạng số của app (App Store Connect → App Information → Apple ID).
         # Để trống thì số build lấy theo bộ đếm build của Codemagic.
-        APP_STORE_APPLE_ID: ""
+        APP_STORE_APPLE_ID: "6824187178"
     triggering:
       events:
         - push

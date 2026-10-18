@@ -21,9 +21,9 @@ Build chạy trên máy Mac của Codemagic (Xcode mới nhất), cấu hình �
 3. **API key:** App Store Connect → Users and Access → Integrations → App Store Connect API → Team Keys → + , quyền **App Manager**. Tải file `.p8` (chỉ tải được 1 lần), ghi lại Issuer ID và Key ID.
 4. **Codemagic** (codemagic.io, đăng nhập bằng GitHub):
    - Add application → chọn repo này → loại **codemagic.yaml**.
-   - Team settings → **Integrations → Developer Portal → Connect**: tên key đặt đúng **`tdm_asc`**, nhập Issuer ID, Key ID, file `.p8`.
+   - Team settings → **Integrations → Developer Portal → Connect**: tên key phải trùng với `integrations.app_store_connect` trong `codemagic.yaml` (hiện là **`Wecoway ASC`**, key 2FC2ZW5DXL), nhập Issuer ID, Key ID, file `.p8`.
    - Team settings → **Code signing identities**:
-     - tab iOS certificates → **Generate certificate** (loại Apple Distribution, dùng key `tdm_asc`). Lưu lại file/mật khẩu nếu nó cho tải.
+     - tab iOS certificates → **Generate certificate** (loại Apple Distribution, dùng key `Wecoway ASC`). Lưu lại file/mật khẩu nếu nó cho tải.
      - tab iOS provisioning profiles → **Fetch profiles** (hoặc để Codemagic tự tạo khi build) loại App Store cho `com.tdmjsc.ads`.
 5. Trong app trên Codemagic → **Start new build** → nhánh `main`, workflow **iOS → TestFlight**. Xong (~10 phút) thì App Store Connect cần thêm 5–30 phút xử lý.
 
