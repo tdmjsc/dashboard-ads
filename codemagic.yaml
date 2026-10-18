@@ -1,0 +1,56 @@
+# Codemagic: build app iOS "TDM Ads" (thư mục ios/) và tải lên TestFlight cho tester nội bộ.
+# Hướng dẫn cài đặt: ios/README.md
+workflows:
+  ios-testflight:
+    name: iOS → TestFlight
+    instance_type: mac_mini_m2
+    max_build_duration: 30
+    integrations:
+      app_store_connect: tdm_asc   # tên API key App Store Connect đã thêm trong Codemagic (Team → Integrations)
+    environment:
+      xcode: latest
+      ios_signing:
+        distribution_type: app_store
+        bundle_identifier: com.tdmjsc.ads
+      vars:
+        XCODE_PROJECT: ios/TDMAds.xcodeproj
+        XCODE_SCHEME: TDMAds
+        # Apple ID dạng số của app (App Store Connect → App Information → Apple ID).
+        # Để trống thì số build lấy theo bộ đếm build của Codemagic.
+        APP_STORE_APPLE_ID: ""
+    triggering:
+      events:
+        - push
+      branch_patterns:
+        - pattern: main
+          include: true
+      cancel_previous_builds: true
+    when:
+      changeset:
+        # Sửa web thì không cần build app (app chỉ mở ads.tdmjsc.com). Hết hạn 90 ngày thì bấm Start new build.
+        includes:
+          - ios/
+          - codemagic.yaml
+    scripts:
+      - name: Cài hồ sơ ký
+        script: xcode-project use-profiles --project "$XCODE_PROJECT"
+      - name: Build IPA
+        script: |
+          LATEST=0
+          if [ -n "$APP_STORE_APPLE_ID" ]; then
+            LATEST=$(app-store-connect get-latest-testflight-build-number "$APP_STORE_APPLE_ID" 2>/dev/null || echo 0)
+          fi
+          NEW=$(( LATEST >= BUILD_NUMBER ? LATEST + 1 : BUILD_NUMBER ))
+          echo "Số build: $NEW"
+          xcode-project build-ipa \
+            --project "$XCODE_PROJECT" \
+            --scheme "$XCODE_SCHEME" \
+            --archive-xcargs "CURRENT_PROJECT_VERSION=$NEW"
+    artifacts:
+      - build/ios/ipa/*.ipa
+      - /tmp/xcodebuild_logs/*.log
+    publishing:
+      app_store_connect:
+        auth: integration
+        # Chỉ tải lên. Tester nội bộ (nhóm bật Automatic Distribution) tự nhận bản mới, không qua duyệt.
+        submit_to_testflight: false

@@ -10,21 +10,28 @@ App đã có sẵn: giữ đăng nhập (cookie 30 ngày của web), kéo xuốn
 
 Chưa có: thông báo đẩy. Web push không chạy trong app; muốn có thì phải làm push native (APNs).
 
-## Yêu cầu
+## Build và tải lên bằng Codemagic
 
-- Từ 4/2026 App Store Connect chỉ nhận bản build làm bằng **Xcode 26** trở lên, mà Xcode 26 cần **macOS 15.6** trở lên. Máy hiện tại chạy Xcode 16.2 / macOS 14 nên build và chạy simulator được, nhưng **không tải lên được**.
-- Tài khoản Apple Developer (đã có).
+Build chạy trên máy Mac của Codemagic (Xcode mới nhất), cấu hình ở `codemagic.yaml` (gốc repo), workflow **iOS → TestFlight**. Máy mình không cần Xcode 26.
 
-## Lần đầu
+### Cài đặt lần đầu
 
-1. **Tạo app trên App Store Connect** (appstoreconnect.apple.com → Apps → + → New App):
-   - Platform iOS, Name `TDM Ads` (tên phải chưa ai dùng trên App Store; trùng thì đặt `TDM Ads Nội bộ`).
-   - Bundle ID: tạo `com.tdmjsc.ads` ở developer.apple.com → Identifiers nếu chưa có. Nếu muốn đổi Bundle ID thì sửa cả `PRODUCT_BUNDLE_IDENTIFIER` trong Xcode.
-   - SKU: `tdm-ads`.
-2. **Mở project:** `open ios/TDMAds.xcodeproj` → chọn target **TDMAds** → tab **Signing & Capabilities** → **Team** chọn team công ty (để "Automatically manage signing").
-3. **Archive:** chọn thiết bị đích **Any iOS Device (arm64)** → menu **Product → Archive**.
-4. **Tải lên:** khi cửa sổ Organizer mở → **Distribute App** → **TestFlight Internal Only** → Distribute.
-5. Đợi khoảng 5–30 phút để Apple xử lý xong (có email báo).
+1. **Bundle ID:** developer.apple.com → Certificates, IDs & Profiles → Identifiers → + → App IDs → App → Bundle ID `com.tdmjsc.ads` (Explicit), không cần bật capability nào.
+2. **Tạo app trên App Store Connect** (appstoreconnect.apple.com → Apps → + → New App): iOS, Name `TDM Ads` (trùng thì đặt `TDM Ads Nội bộ`), Bundle ID `com.tdmjsc.ads`, SKU `tdm-ads`. Ghi lại **Apple ID** dạng số (App Information) → điền vào `APP_STORE_APPLE_ID` trong `codemagic.yaml` (không bắt buộc, dùng để số build luôn lớn hơn bản trên TestFlight).
+3. **API key:** App Store Connect → Users and Access → Integrations → App Store Connect API → Team Keys → + , quyền **App Manager**. Tải file `.p8` (chỉ tải được 1 lần), ghi lại Issuer ID và Key ID.
+4. **Codemagic** (codemagic.io, đăng nhập bằng GitHub):
+   - Add application → chọn repo này → loại **codemagic.yaml**.
+   - Team settings → **Integrations → Developer Portal → Connect**: tên key đặt đúng **`tdm_asc`**, nhập Issuer ID, Key ID, file `.p8`.
+   - Team settings → **Code signing identities**:
+     - tab iOS certificates → **Generate certificate** (loại Apple Distribution, dùng key `tdm_asc`). Lưu lại file/mật khẩu nếu nó cho tải.
+     - tab iOS provisioning profiles → **Fetch profiles** (hoặc để Codemagic tự tạo khi build) loại App Store cho `com.tdmjsc.ads`.
+5. Trong app trên Codemagic → **Start new build** → nhánh `main`, workflow **iOS → TestFlight**. Xong (~10 phút) thì App Store Connect cần thêm 5–30 phút xử lý.
+
+### Khi nào build lại
+
+- Push lên `main` có sửa `ios/` hoặc `codemagic.yaml` → Codemagic tự build và tải lên.
+- Sửa web thì **không** build (app tự lấy web mới).
+- Bản build TestFlight hết hạn sau 90 ngày → khoảng 80 ngày một lần vào Codemagic bấm **Start new build**. Số build tự tăng.
 
 ## Mời nhân viên
 
@@ -32,10 +39,9 @@ Chưa có: thông báo đẩy. Web push không chạy trong app; muốn có thì
 - **TestFlight → Internal Testing → +** tạo nhóm (vd `Nhân viên`), thêm người, bật **Automatic Distribution** để bản build mới tự đến tay mọi người.
 - Nhân viên cài app **TestFlight** từ App Store → mở email mời → **Accept** → **Install**. Trong TestFlight bật **Automatic Updates**.
 
-## Tải bản mới (khi sửa `ios/` hoặc gần 90 ngày)
+## Build bằng Xcode trên máy (dự phòng)
 
-1. Tăng **Build** (`CURRENT_PROJECT_VERSION`) lên 1 trong tab General của target. Nếu đổi lớn thì tăng cả **Version**.
-2. Product → Archive → Distribute App → TestFlight Internal Only.
+Từ 4/2026 App Store Connect chỉ nhận bản build bằng Xcode 26 (cần macOS 15.6+). Có máy đủ đời thì: `open ios/TDMAds.xcodeproj` → Signing & Capabilities chọn Team → Any iOS Device → Product → Archive → Distribute App → TestFlight Internal Only. Nhớ tăng Build lớn hơn bản đã tải lên.
 
 ## Build thử trên simulator (không cần tài khoản)
 
