@@ -4343,6 +4343,13 @@ app.post('/api/cash-flow/note', express.json(), (req, res) => {
   } catch (e) {
     console.error('[KHOBOT] KHÔNG gắn được module (app chính vẫn chạy bình thường):', e.message);
   }
+  // ĐƠN LỖI SHOPEE/TIKTOK TRÊN SANDBOX → nhắn bot nhóm kho (xem don-loi-san.js)
+  try {
+    const { mountDonLoiSan } = await import('./don-loi-san.js');
+    mountDonLoiSan(app, { DATA_DIR, fetchWithTimeout });
+  } catch (e) {
+    console.error('[DONLOI] KHÔNG gắn được module (app chính vẫn chạy bình thường):', e.message);
+  }
   // BOT TELEGRAM "CHAT ALL" — gõ @all trong nhóm để nhắc tên mọi người (xem telegram-all.js)
   try {
     const { mountTgAll } = await import('./telegram-all.js');
