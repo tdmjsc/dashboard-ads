@@ -1794,7 +1794,7 @@ export function mountOMS(app, { mysql, express }) {
   }));
 
   // API: đăng ký subscription
-  app.post('/oms/api/push/subscribe', jsonParser, wrap(async (req, res) => {
+  app.post('/oms/api/push/subscribe', omsAuth, jsonParser, wrap(async (req, res) => {
     await ensurePushTable();
     const { endpoint, keys } = req.body;
     if (!endpoint || !keys?.p256dh || !keys?.auth) return res.status(400).json({ error: 'Thiếu subscription' });
@@ -1809,7 +1809,7 @@ export function mountOMS(app, { mysql, express }) {
   }));
 
   // API: app iOS gửi device token (gọi từ trong WKWebView nên có cookie phiên → biết ai)
-  app.post('/oms/api/push/apns-register', jsonParser, wrap(async (req, res) => {
+  app.post('/oms/api/push/apns-register', omsAuth, jsonParser, wrap(async (req, res) => {
     await ensurePushTable();
     const token = String(req.body?.token || '').toLowerCase();
     if (!/^[0-9a-f]{32,200}$/.test(token)) return res.status(400).json({ error: 'Token không hợp lệ' });
@@ -1823,21 +1823,21 @@ export function mountOMS(app, { mysql, express }) {
     res.json({ ok: true, apns_configured: apnsConfigured(), devices: n });
   }));
 
-  app.post('/oms/api/push/apns-unregister', jsonParser, wrap(async (req, res) => {
+  app.post('/oms/api/push/apns-unregister', omsAuth, jsonParser, wrap(async (req, res) => {
     const token = String(req.body?.token || '').toLowerCase();
     if (token) await db('DELETE FROM oms_apns_tokens WHERE token=?', [token]);
     res.json({ ok: true });
   }));
 
   // API: huỷ subscription
-  app.post('/oms/api/push/unsubscribe', jsonParser, wrap(async (req, res) => {
+  app.post('/oms/api/push/unsubscribe', omsAuth, jsonParser, wrap(async (req, res) => {
     const { endpoint } = req.body;
     if (endpoint) await db('DELETE FROM oms_push_subs WHERE endpoint=?', [endpoint]);
     res.json({ ok: true });
   }));
 
-  // API: DEBUG
-  app.get('/oms/api/push/debug', wrap(async (req, res) => {
+  // API: DEBUG (lộ tên người đăng ký → chỉ admin)
+  app.get('/oms/api/push/debug', requireRole('admin'), wrap(async (req, res) => {
     await ensurePushTable();
     const ready = await webpushReady;
     const keys = await getVapidKeys();
@@ -1857,7 +1857,7 @@ export function mountOMS(app, { mysql, express }) {
   }));
 
   // API: TEST — gửi push test ngay
-  app.post('/oms/api/push/test', jsonParser, wrap(async (req, res) => {
+  app.post('/oms/api/push/test', requireRole('admin'), jsonParser, wrap(async (req, res) => {
     await webpushReady;
     await ensurePushTable();
     const apnsResults = await sendApnsToAll('🧪 Test thông báo OMS', 'Push notification hoạt động!');

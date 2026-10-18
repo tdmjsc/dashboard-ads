@@ -2264,6 +2264,7 @@ async function requestNotifPermission() {
     // Verify
     try {
       const r = await fetch(API+'/push/debug');
+      if (!r.ok) { alert('✅ Đã bật thông báo!'); return; } // trang kiểm tra chỉ dành cho admin
       const d = await r.json();
       if (d.subscription_count > 0) alert('✅ Đã bật thông báo! (' + d.subscription_count + ' thiết bị)');
       else alert('⚠️ Đã cho phép nhưng chưa đăng ký được. Thử tải lại trang.');
