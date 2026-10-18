@@ -8,7 +8,16 @@ Chỉ phải tải bản build mới khi:
 
 App đã có sẵn: giữ đăng nhập (cookie 30 ngày của web), kéo xuống để tải lại, vuốt từ mép trái để quay lại, tự tải lại khi mở lại app sau hơn 10 phút, link ngoài mở bằng Safari, hiện `alert`/`confirm` của web, tải file (CSV, ảnh QR) ra bảng chia sẻ, màn hình "Thử lại" khi mất mạng.
 
-Chưa có: thông báo đẩy. Web push không chạy trong app; muốn có thì phải làm push native (APNs).
+## Thông báo đẩy (đơn OMS mới)
+
+Web push không chạy trong WKWebView nên app dùng push native (APNs). Mở trang OMS trong app → bấm 🔔 → app xin quyền, gửi token lên `/oms/api/push/apns-register` (bảng `oms_apns_tokens`). Máy chủ gửi qua `apns.js` cùng lúc với web push (`sendPushToAll` trong `oms.js`). Bấm vào thông báo → mở `/go-oms`. Trong Cài đặt iOS chỉ hiện mục **Thông báo** sau khi app đã xin quyền lần đầu (bấm 🔔). Kiểm tra: `/oms/api/push/debug` (`apns_count`, `apns_config_error`), nút test push của OMS gửi cả tới app.
+
+Cài đặt một lần:
+1. developer.apple.com → Identifiers → `com.tdmjsc.ads` → bật **Push Notifications** → Save.
+2. Hồ sơ ký cũ không có quyền push: Codemagic → Code signing identities → iOS provisioning profiles → xoá profile App Store cũ của `com.tdmjsc.ads` (và xoá trên developer.apple.com → Profiles) rồi **Fetch profiles** / để build tự tạo mới. Build báo lỗi `aps-environment` là do còn profile cũ.
+3. developer.apple.com → **Keys** → + → tick **Apple Push Notifications service (APNs)** → tải file `.p8` (chỉ tải được 1 lần), ghi Key ID. Team ID ở Membership.
+4. `.env` trên máy chủ: `APNS_KEY_ID=…`, `APNS_TEAM_ID=…`, và `APNS_KEY_FILE=/home/…/AuthKey_XXXX.p8` (hoặc `APNS_KEY` = nội dung file, xuống dòng viết `\n`). Khởi động lại Node.
+5. Build mới (push `ios/` lên `main`), cài bản mới từ TestFlight, mở OMS → 🔔.
 
 ## Build và tải lên bằng Codemagic
 
@@ -16,7 +25,7 @@ Build chạy trên máy Mac của Codemagic (Xcode mới nhất), cấu hình �
 
 ### Cài đặt lần đầu
 
-1. **Bundle ID:** developer.apple.com → Certificates, IDs & Profiles → Identifiers → + → App IDs → App → Bundle ID `com.tdmjsc.ads` (Explicit), không cần bật capability nào.
+1. **Bundle ID:** developer.apple.com → Certificates, IDs & Profiles → Identifiers → + → App IDs → App → Bundle ID `com.tdmjsc.ads` (Explicit), bật capability **Push Notifications**.
 2. **Tạo app trên App Store Connect** (appstoreconnect.apple.com → Apps → + → New App): iOS, Name `TDM Ads` (trùng thì đặt `TDM Ads Nội bộ`), Bundle ID `com.tdmjsc.ads`, SKU `tdm-ads`. Ghi lại **Apple ID** dạng số (App Information) → điền vào `APP_STORE_APPLE_ID` trong `codemagic.yaml` (không bắt buộc, dùng để số build luôn lớn hơn bản trên TestFlight).
 3. **API key:** App Store Connect → Users and Access → Integrations → App Store Connect API → Team Keys → + , quyền **App Manager**. Tải file `.p8` (chỉ tải được 1 lần), ghi lại Issuer ID và Key ID.
 4. **Codemagic** (codemagic.io, đăng nhập bằng GitHub):

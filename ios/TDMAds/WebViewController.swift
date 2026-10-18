@@ -1,4 +1,5 @@
 import UIKit
+import UserNotifications
 @preconcurrency import WebKit
 
 // App chỉ là khung mở ads.tdmjsc.com: mọi chức năng nằm trên web, deploy web là app có bản mới.
@@ -14,6 +15,8 @@ final class WebViewController: UIViewController {
     private let refresh = UIRefreshControl()
     private let errorView = UIStackView()
     private var backgroundedAt: Date?
+    private var pushToken: String?
+    private var pushRequestedByUser = false
 
     override var preferredStatusBarStyle: UIStatusBarStyle { .lightContent }
 
@@ -25,6 +28,8 @@ final class WebViewController: UIViewController {
         config.websiteDataStore = .default() // giữ cookie đăng nhập giữa các lần mở app
         config.allowsInlineMediaPlayback = true
         config.applicationNameForUserAgent = "TDMAdsApp/1.0 Mobile/15E148 Safari/604.1"
+        // Nút 🔔 của web gọi window.webkit.messageHandlers.tdmPush.postMessage('enable') (WKWebView không có Web Push).
+        config.userContentController.add(PushMessageProxy(self), name: "tdmPush")
 
         webView = WKWebView(frame: .zero, configuration: config)
         webView.navigationDelegate = self
@@ -69,6 +74,72 @@ final class WebViewController: UIViewController {
         if Date().timeIntervalSince(t) >= Self.reloadAfterBackground || !errorView.isHidden {
             pullToRefresh()
         }
+    }
+
+    // MARK: - Thông báo đẩy (APNs)
+
+    fileprivate func enablePushFromWeb() {
+        pushRequestedByUser = true
+        let center = UNUserNotificationCenter.current()
+        center.getNotificationSettings { s in
+            DispatchQueue.main.async {
+                if s.authorizationStatus == .denied { return self.askOpenSettings() }
+                center.requestAuthorization(options: [.alert, .sound, .badge]) { granted, _ in
+                    DispatchQueue.main.async {
+                        if granted { UIApplication.shared.registerForRemoteNotifications() } else { self.askOpenSettings() }
+                    }
+                }
+            }
+        }
+    }
+
+    private func askOpenSettings() {
+        pushRequestedByUser = false
+        let a = UIAlertController(title: "Thông báo đang tắt",
+                                  message: "Vào Cài đặt → TDM Ads → Thông báo → bật Cho phép thông báo.",
+                                  preferredStyle: .alert)
+        a.addAction(UIAlertAction(title: "Để sau", style: .cancel))
+        a.addAction(UIAlertAction(title: "Mở Cài đặt", style: .default) { _ in
+            if let url = URL(string: UIApplication.openSettingsURLString) { UIApplication.shared.open(url) }
+        })
+        present(a, animated: true)
+    }
+
+    func didReceivePushToken(_ token: String) {
+        pushToken = token
+        sendPushTokenToServer()
+    }
+
+    func didFailPushRegistration(_ error: Error) {
+        guard pushRequestedByUser else { return }
+        pushRequestedByUser = false
+        alert("Không đăng ký được thông báo: \(error.localizedDescription)")
+    }
+
+    // Gửi token kèm cookie đăng nhập của trang (gọi fetch trong web). Gọi lại mỗi lần tải trang
+    // để token gắn đúng tài khoản đang đăng nhập; chỉ báo kết quả khi người dùng vừa bấm 🔔.
+    private func sendPushTokenToServer() {
+        guard isViewLoaded, let token = pushToken, let url = webView.url, isAppURL(url) else { return }
+        let announce = pushRequestedByUser
+        pushRequestedByUser = false
+        let js = """
+        fetch('/oms/api/push/apns-register', {method: 'POST', credentials: 'include',
+          headers: {'Content-Type': 'application/json'}, body: JSON.stringify({token: '\(token)'})})
+          .then(r => r.json().then(d => ({ok: r.ok, d})))
+          .then(({ok, d}) => {
+            if (!\(announce)) return;
+            if (!ok) alert('⚠️ Chưa bật được thông báo: ' + (d.error || 'lỗi máy chủ'));
+            else if (d.config_error) alert('⚠️ Máy đã đăng ký, nhưng máy chủ chưa cấu hình gửi thông báo: ' + d.config_error);
+            else alert('✅ Đã bật thông báo trên máy này');
+          })
+          .catch(e => { if (\(announce)) alert('⚠️ Chưa bật được thông báo: ' + e.message); });
+        """
+        webView.evaluateJavaScript(js, completionHandler: nil)
+    }
+
+    func openFromNotification(_ path: String) {
+        guard let url = URL(string: path, relativeTo: Self.startURL)?.absoluteURL, isAppURL(url) else { return }
+        webView.load(URLRequest(url: url))
     }
 
     // MARK: - Màn hình mất mạng
@@ -176,6 +247,7 @@ extension WebViewController: WKNavigationDelegate {
 
     func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
         refresh.endRefreshing()
+        sendPushTokenToServer()
     }
 
     func webView(_ webView: WKWebView, didFail navigation: WKNavigation!, withError error: Error) {
@@ -212,7 +284,7 @@ extension WebViewController: WKDownloadDelegate {
         alert("Tải file không được: \(error.localizedDescription)")
     }
 
-    private func alert(_ message: String) {
+    fileprivate func alert(_ message: String) {
         let a = UIAlertController(title: nil, message: message, preferredStyle: .alert)
         a.addAction(UIAlertAction(title: "OK", style: .default))
         present(a, animated: true)
@@ -256,5 +328,17 @@ extension WebViewController: WKUIDelegate {
         a.addAction(UIAlertAction(title: "Huỷ", style: .cancel) { _ in completionHandler(nil) })
         a.addAction(UIAlertAction(title: "OK", style: .default) { _ in completionHandler(a.textFields?.first?.text) })
         present(a, animated: true)
+    }
+}
+
+// WKUserContentController giữ handler bằng tham chiếu mạnh → dùng proxy weak để tránh giữ WebViewController mãi.
+private final class PushMessageProxy: NSObject, WKScriptMessageHandler {
+    weak var target: WebViewController?
+    init(_ target: WebViewController) { self.target = target }
+
+    func userContentController(_ controller: WKUserContentController, didReceive message: WKScriptMessage) {
+        guard let host = message.frameInfo.request.url?.host?.lowercased(),
+              host == WebViewController.appHost || host.hasSuffix("." + WebViewController.appHost) else { return }
+        if message.body as? String == "enable" { target?.enablePushFromWeb() }
     }
 }

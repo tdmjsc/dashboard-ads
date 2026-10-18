@@ -2252,6 +2252,8 @@ async function subscribePush() {
 }
 
 async function requestNotifPermission() {
+  // App iOS "TDM Ads" (WKWebView không có Web Push): app tự xin quyền và gửi token APNs lên máy chủ
+  if (window.webkit?.messageHandlers?.tdmPush) { window.webkit.messageHandlers.tdmPush.postMessage('enable'); return; }
   if (!('Notification' in window)) { alert('Trình duyệt không hỗ trợ thông báo'); return; }
   const p = await Notification.requestPermission();
   if (p === 'granted') {
