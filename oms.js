@@ -1732,6 +1732,12 @@ export function mountOMS(app, { mysql, express }) {
         updated_at DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
       ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4`);
     } catch(e) {}
+    // Đăng ký từ hồi endpoint chưa đòi đăng nhập (người lạ cũng nhận được thông báo đơn mới).
+    // Giờ subscribe/apns-register bắt buộc omsAuth nên không phát sinh thêm.
+    try {
+      await getPool().query("DELETE FROM oms_push_subs WHERE username='anonymous' OR username=''");
+      await getPool().query("DELETE FROM oms_apns_tokens WHERE username='anonymous' OR username=''");
+    } catch(e) {}
   }
 
   // Gửi APNs tới mọi token, xoá token Apple báo đã chết (gỡ app...)
