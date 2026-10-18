@@ -25,11 +25,14 @@ final class WebViewController: UIViewController {
         config.websiteDataStore = .default() // giữ cookie đăng nhập giữa các lần mở app
         config.allowsInlineMediaPlayback = true
         config.applicationNameForUserAgent = "TDMAdsApp/1.0 Mobile/15E148 Safari/604.1"
+        config.userContentController.add(PushManager.shared, name: "tdmPush") // nút 🔔 OMS → thông báo native
 
         webView = WKWebView(frame: .zero, configuration: config)
         webView.navigationDelegate = self
         webView.uiDelegate = self
         webView.allowsBackForwardNavigationGestures = true
+        PushManager.shared.webView = webView
+        PushManager.shared.presenter = self
         webView.isOpaque = false
         webView.backgroundColor = view.backgroundColor
         webView.scrollView.backgroundColor = view.backgroundColor
@@ -176,6 +179,7 @@ extension WebViewController: WKNavigationDelegate {
 
     func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
         refresh.endRefreshing()
+        PushManager.shared.sync()
     }
 
     func webView(_ webView: WKWebView, didFail navigation: WKNavigation!, withError error: Error) {

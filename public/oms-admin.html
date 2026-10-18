@@ -2251,7 +2251,11 @@ async function subscribePush() {
   } catch(e) { console.error('[OMS] Subscribe error:', e.message); }
 }
 
+// App iOS TDM Ads (WKWebView) không có web push: nhờ app xin quyền + gửi device token APNs về /push/apns-register
+const IN_IOS_APP = !!(window.webkit && window.webkit.messageHandlers && window.webkit.messageHandlers.tdmPush);
+
 async function requestNotifPermission() {
+  if (IN_IOS_APP) { window.webkit.messageHandlers.tdmPush.postMessage('enable'); return; }
   if (!('Notification' in window)) { alert('Trình duyệt không hỗ trợ thông báo'); return; }
   const p = await Notification.requestPermission();
   if (p === 'granted') {

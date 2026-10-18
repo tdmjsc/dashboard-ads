@@ -10,6 +10,15 @@ final class AppDelegate: UIResponder, UIApplicationDelegate {
         window.rootViewController = WebViewController()
         window.makeKeyAndVisible()
         self.window = window
+        PushManager.shared.appDidLaunch()
         return true
+    }
+
+    func application(_ application: UIApplication, didRegisterForRemoteNotificationsWithDeviceToken deviceToken: Data) {
+        PushManager.shared.didRegister(deviceToken: deviceToken)
+    }
+
+    func application(_ application: UIApplication, didFailToRegisterForRemoteNotificationsWithError error: Error) {
+        PushManager.shared.didFailToRegister(error)
     }
 }

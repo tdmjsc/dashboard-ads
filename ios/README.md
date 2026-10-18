@@ -8,7 +8,7 @@ Chỉ phải tải bản build mới khi:
 
 App đã có sẵn: giữ đăng nhập (cookie 30 ngày của web), kéo xuống để tải lại, vuốt từ mép trái để quay lại, tự tải lại khi mở lại app sau hơn 10 phút, link ngoài mở bằng Safari, hiện `alert`/`confirm` của web, tải file (CSV, ảnh QR) ra bảng chia sẻ, màn hình "Thử lại" khi mất mạng.
 
-Chưa có: thông báo đẩy. Web push không chạy trong app; muốn có thì phải làm push native (APNs).
+Thông báo đẩy: WKWebView không có web push, nên app dùng push native (APNs). Trên trang OMS admin bấm 🔔 → app xin quyền iOS, gửi device token về `/oms/api/push/apns-register` (bảng `oms_apns_tokens`). Máy chủ gửi qua APNs (`apns.js`) mỗi lần gửi web push. Máy chủ cần `APNS_KEY_ID` + `APNS_KEY_P8` (hoặc `APNS_KEY_FILE`) trong `.env`, lấy từ khoá APNs trên developer.apple.com → Keys. Xem tình trạng: `/oms/api/push/debug`. App ID phải bật capability **Push Notifications** và profile phải tạo lại sau khi bật (rồi Fetch lại vào Codemagic).
 
 ## Build và tải lên bằng Codemagic
 

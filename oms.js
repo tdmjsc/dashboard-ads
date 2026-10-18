@@ -3,6 +3,7 @@
 //  Pattern giống thailand.js: AN TOÀN, lazy DB, try/catch toàn bộ
 //  Mount vào server.js: mountOMS(app, { mysql, express })
 // =====================================================================
+import { sendApns, apnsConfigured } from './apns.js';
 
 // ---- Trạng thái đơn hàng hợp lệ ----
 const TRANG_THAI = ['Đơn mới', 'Đã chốt', 'Đang ship', 'Ship thành công', 'Hoàn thành công', 'Không mua',
@@ -1721,6 +1722,31 @@ export function mountOMS(app, { mysql, express }) {
         UNIQUE KEY uq_endpoint (endpoint(500))
       ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4`);
     } catch(e) {}
+    // Device token của app iOS TDM Ads (app là WKWebView, không dùng được web push → gửi qua APNs, apns.js)
+    try {
+      await getPool().query(`CREATE TABLE IF NOT EXISTS oms_apns_tokens (
+        token VARCHAR(200) PRIMARY KEY,
+        user_id INT DEFAULT 0,
+        username VARCHAR(120) DEFAULT '',
+        created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+        updated_at DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
+      ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4`);
+    } catch(e) {}
+  }
+
+  // Gửi APNs tới mọi token, xoá token Apple báo đã chết (gỡ app...)
+  async function sendApnsToAll(title, body) {
+    await ensurePushTable();
+    const rows = await db('SELECT token, username FROM oms_apns_tokens');
+    if (!rows.length) return [];
+    const results = await sendApns(rows.map(r => r.token), title, body);
+    for (const r of results) {
+      const u = rows.find(x => x.token === r.token)?.username || '';
+      r.username = u;
+      if (r.dead) await db('DELETE FROM oms_apns_tokens WHERE token=?', [r.token]);
+      else if (!r.ok) console.error('[OMS] APNs send error:', u, r.status, r.reason);
+    }
+    return results;
   }
 
   // VAPID keys: sinh 1 lần, lưu DB
@@ -1782,6 +1808,27 @@ export function mountOMS(app, { mysql, express }) {
     res.json({ ok: true });
   }));
 
+  // API: app iOS gửi device token (gọi từ trong WKWebView nên có cookie phiên → biết ai)
+  app.post('/oms/api/push/apns-register', jsonParser, wrap(async (req, res) => {
+    await ensurePushTable();
+    const token = String(req.body?.token || '').toLowerCase();
+    if (!/^[0-9a-f]{32,200}$/.test(token)) return res.status(400).json({ error: 'Token không hợp lệ' });
+    const omsUser = req.session?.omsUser;
+    const mainUser = req.session?.user;
+    const username = omsUser?.username || mainUser?.username || 'anonymous';
+    await db(`INSERT INTO oms_apns_tokens (token, user_id, username) VALUES (?,?,?)
+      ON DUPLICATE KEY UPDATE user_id=VALUES(user_id), username=VALUES(username), updated_at=CURRENT_TIMESTAMP`,
+      [token, omsUser?.id || 0, username]);
+    const [{ n }] = await db('SELECT COUNT(*) AS n FROM oms_apns_tokens');
+    res.json({ ok: true, apns_configured: apnsConfigured(), devices: n });
+  }));
+
+  app.post('/oms/api/push/apns-unregister', jsonParser, wrap(async (req, res) => {
+    const token = String(req.body?.token || '').toLowerCase();
+    if (token) await db('DELETE FROM oms_apns_tokens WHERE token=?', [token]);
+    res.json({ ok: true });
+  }));
+
   // API: huỷ subscription
   app.post('/oms/api/push/unsubscribe', jsonParser, wrap(async (req, res) => {
     const { endpoint } = req.body;
@@ -1795,29 +1842,34 @@ export function mountOMS(app, { mysql, express }) {
     const ready = await webpushReady;
     const keys = await getVapidKeys();
     const subs = await db('SELECT id, username, LEFT(endpoint,80) as ep, created_at FROM oms_push_subs');
+    const apns = await db('SELECT username, LEFT(token,12) AS token, updated_at FROM oms_apns_tokens');
     res.json({
+      apns_configured: apnsConfigured(),
+      apns_devices: apns,
       webpush_installed: ready,
       webpush_loaded: !!webpush,
       vapid_ok: !!keys,
       vapid_public_length: keys?.publicKey?.length || 0,
       vapid_error: vapidError || null,
       subscriptions: subs,
-      subscription_count: subs.length,
+      subscription_count: subs.length + apns.length,
     });
   }));
 
   // API: TEST — gửi push test ngay
   app.post('/oms/api/push/test', jsonParser, wrap(async (req, res) => {
     await webpushReady;
-    if (!webpush) return res.json({ error: 'web-push chưa cài' });
+    await ensurePushTable();
+    const apnsResults = await sendApnsToAll('🧪 Test thông báo OMS', 'Push notification hoạt động!');
+    if (!webpush) return res.json({ error: 'web-push chưa cài', apns: apnsResults });
     const keys = await getVapidKeys();
-    if (!keys) return res.json({ error: 'VAPID keys chưa sẵn sàng' });
+    if (!keys) return res.json({ error: 'VAPID keys chưa sẵn sàng', apns: apnsResults });
     const subs = await db('SELECT * FROM oms_push_subs');
-    if (!subs.length) return res.json({ error: 'Chưa có ai subscribe. Bấm 🔔 trong app trước.' });
+    if (!subs.length && !apnsResults.length) return res.json({ error: 'Chưa có ai subscribe. Bấm 🔔 trong app trước.' });
 
     webpush.setVapidDetails('mailto:admin@tdmjsc.com', keys.publicKey, keys.privateKey);
     const payload = JSON.stringify({ title: '🧪 Test thông báo OMS', body: 'Push notification hoạt động!' });
-    const results = [];
+    const results = apnsResults.map(r => ({ username: r.username, ok: r.ok, app_ios: true, error: r.ok ? undefined : r.reason, statusCode: r.status }));
     for (const sub of subs) {
       try {
         await webpush.sendNotification({ endpoint: sub.endpoint, keys: { p256dh: sub.p256dh, auth: sub.auth } }, payload, { TTL: 60 });
@@ -1832,6 +1884,7 @@ export function mountOMS(app, { mysql, express }) {
 
   // Gửi push cho tất cả subscribers
   async function sendPushToAll(title, body) {
+    try { await sendApnsToAll(title, body); } catch(e) { console.error('[OMS] APNs error:', e.message); }
     await webpushReady;
     if (!webpush) return;
     try {
