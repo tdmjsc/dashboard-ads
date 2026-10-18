@@ -1576,7 +1576,7 @@ app.get('/api/marketing/check-ngay-chot', async (req, res) => {
         const tot = d.reportLeadByNhanSuMktTotalDto || {};
         const r = name ? rows.find(x => _normNV(x.ten) === name) : null;
         return { thu: t.thu, success: j && (j.success ?? j.Success),
-          ...(name ? { nhanVien: r ? { contact: r.soContact, donChot: r.soDonChot, soSP: r.soLuongSanPham, doanhSo: r.doanhSo } : 'không thấy' } : {}),
+          ...(name ? { nhanVien: r ? { contact: r.soContact, donChot: r.soDonChot, soSP: r.soLuongSanPham, doanhSo: r.doanhSo, raw: r } : 'không thấy' } : {}),
           tong: { contact: tot.tongSoContact, donChot: tot.tongSoDonHang, soSP: tot.tongSanPham, doanhSo: tot.tongDoanhSo },
           ...(rows.length ? {} : { loi: JSON.stringify(j).slice(0, 400) }) };
       } catch (e) { return { thu: t.thu, loi: e.message }; }
@@ -1643,6 +1643,9 @@ app.get('/api/marketing/report', async (req, res) => {
       const cpa = (chiTieu > 0 && tongDon > 0) ? Math.round(chiTieu / tongDon) : 0;  // CPA = chi tiêu / (contact + đơn Thái)
       return { ...r, doanhthu, chiTieu, giaContact, donThai, doanhThuThai, tongDon, cpa };
     });
+
+    // Sandbox vẫn trả dòng cho NV đã tick nghỉ việc (số 0), màn hình Sandbox thì ẩn → bỏ dòng không có số nào.
+    rows = rows.filter(r => [r.contact, r.chot, r.soSP, r.doanhthu, r.chiTieu, r.donThai].some(v => Number(v) > 0));
 
     // ── % QC / Doanh số: loại doanh thu TikTok/Shopee khỏi MẪU SỐ (doanh số hiển thị GIỮ NGUYÊN) ──
     // 2 kênh này không có dữ liệu chi phí QC nên để trong mẫu số sẽ làm sai lệch tỷ lệ.
