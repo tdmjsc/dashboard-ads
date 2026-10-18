@@ -22,9 +22,9 @@ Build chạy trên máy Mac của Codemagic (Xcode mới nhất), cấu hình �
 4. **Codemagic** (codemagic.io, đăng nhập bằng GitHub):
    - Add application → chọn repo này → loại **codemagic.yaml**.
    - Team settings → **Integrations → Developer Portal → Connect**: tên key phải trùng với `integrations.app_store_connect` trong `codemagic.yaml` (hiện là **`Wecoway ASC`**, key 2FC2ZW5DXL), nhập Issuer ID, Key ID, file `.p8`.
-   - Team settings → **Code signing identities**:
-     - tab iOS certificates → **Generate certificate** (loại Apple Distribution, dùng key `Wecoway ASC`). Lưu lại file/mật khẩu nếu nó cho tải.
-     - tab iOS provisioning profiles → **Fetch profiles** (hoặc để Codemagic tự tạo khi build) loại App Store cho `com.tdmjsc.ads`.
+   - Settings → **Code signing identities** → iOS certificates → **Generate certificate** (Apple Distribution, key `Wecoway ASC`). Đã tạo 18/10/2026 tên `tdm_distribution`, hết hạn 18/10/2027. Tài khoản Apple chỉ cho tối đa 3 chứng chỉ Distribution và hiện đã đủ 3.
+   - Codemagic **không tự tạo** provisioning profile. Phải tạo trên developer.apple.com → Profiles → + → **App Store Connect** → App ID `com.tdmjsc.ads` → chọn chứng chỉ trên → tên `TDM Ads App Store`. Sau đó vào Codemagic → iOS provisioning profiles → **Fetch profiles** → tích profile đó (reference `tdm_ads_app_store`). Thiếu profile thì build báo "No matching profiles found".
+   - Khi chứng chỉ/profile hết hạn (10/2027): tạo lại cả hai theo các bước trên.
 5. Trong app trên Codemagic → **Start new build** → nhánh `main`, workflow **iOS → TestFlight**. Xong (~10 phút) thì App Store Connect cần thêm 5–30 phút xử lý.
 
 ### Khi nào build lại
