@@ -1644,13 +1644,13 @@ app.get('/api/marketing/report', async (req, res) => {
       return { ...r, doanhthu, chiTieu, giaContact, donThai, doanhThuThai, tongDon, cpa };
     });
 
-    // Sandbox vẫn trả dòng cho NV đã nghỉ việc → bỏ NV đã xoá ở menu Nhân viên (active = false, không còn bản active).
+    // Sandbox vẫn trả dòng cho NV đã nghỉ việc → chỉ giữ NV đang có ở menu Nhân viên (active) + Admin.
     // Đọc lại employees.json: máy chủ có thể chạy nhiều tiến trình, EMPLOYEES trong bộ nhớ có thể cũ.
     let empList = EMPLOYEES;
     try { const raw = JSON.parse(fs.readFileSync(EMP_FILE, 'utf8')); empList = Array.isArray(raw) ? raw : (raw.employees || EMPLOYEES); } catch {}
-    const conLam = new Set(empList.filter(e => e.active !== false).map(e => norm(e.full)));
-    const daXoa = new Set(empList.filter(e => e.active === false).map(e => norm(e.full)).filter(n => !conLam.has(n)));
-    rows = rows.filter(r => !daXoa.has(norm(r.name)));
+    const conLam = new Set(['admin']);
+    for (const e of empList) if (e.active !== false) [e.full, ...(e.aliases || [])].forEach(n => conLam.add(norm(n)));
+    rows = rows.filter(r => conLam.has(norm(r.name)));
 
     // ── % QC / Doanh số: loại doanh thu TikTok/Shopee khỏi MẪU SỐ (doanh số hiển thị GIỮ NGUYÊN) ──
     // 2 kênh này không có dữ liệu chi phí QC nên để trong mẫu số sẽ làm sai lệch tỷ lệ.
