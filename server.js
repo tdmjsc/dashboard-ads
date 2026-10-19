@@ -580,6 +580,38 @@ app.get('/logout', (req, res) => req.session.destroy(() => res.redirect('/login'
 })();
 
 // ===================================================================
+//  OMS: đổi ID quảng cáo Meta (utm_content={{ad.id}}) → tên NV marketing
+//  Ladipage gửi utm_content là ID ad/adset/chiến dịch thay cho tên NV → đọc tên
+//  chiến dịch qua Graph API rồi nhận diện NV như trang Ads (detectEmployee).
+//  Trả '' nếu không đọc được hoặc tên chiến dịch không ra NV.
+// ===================================================================
+const FB_ID_EMP_CACHE = new Map(); // id → { emp, at }
+async function fbIdToEmployee(id) {
+  id = String(id || '').trim();
+  if (!/^\d{10,}$/.test(id)) return '';
+  const hit = FB_ID_EMP_CACHE.get(id);
+  // Có tên: nhớ mãi. Không ra tên: thử lại sau 30 phút (token có thể vừa được cấp quyền).
+  if (hit && (hit.emp || Date.now() - hit.at < 30 * 60 * 1000)) return hit.emp;
+  let emp = '';
+  for (const src of SOURCES) {
+    let name = '';
+    try {
+      // ad và adset có trường campaign; chiến dịch thì không → đọc name của chính nó
+      const r = await fb(id, { fields: 'campaign{name}' }, src.token);
+      name = r.campaign?.name || '';
+    } catch {
+      try { name = (await fb(id, { fields: 'name' }, src.token)).name || ''; } catch { /* token này không thấy ID */ }
+    }
+    if (!name) continue;
+    const e = detectEmployee(name);
+    if (e && e !== 'Chưa xác định') { emp = e; break; }
+  }
+  FB_ID_EMP_CACHE.set(id, { emp, at: Date.now() });
+  return emp;
+}
+global.__fbIdToEmployee = fbIdToEmployee;
+
+// ===================================================================
 //  Import động module OMS Việt Nam
 // ===================================================================
 (async () => {

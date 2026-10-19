@@ -300,6 +300,30 @@ export function mountOMS(app, { mysql, express }) {
     return rows;
   }
 
+  // ---- ID quảng cáo Meta trong cột NV marketing → tên NV (hàm ở server.js) ----
+  const isFbId = v => /^\d{10,}$/.test(String(v || '').trim());
+  async function resolveMktId(id) {
+    try {
+      return typeof global.__fbIdToEmployee === 'function' ? await global.__fbIdToEmployee(id) : '';
+    } catch (e) { console.error('[OMS] Đổi ID MKT lỗi:', e.message); return ''; }
+  }
+  // Sửa đơn cũ đang mang ID: chạy lúc khởi động và mỗi 30 phút, xem/chạy tay /oms/api/fix-mkt-ids
+  async function fixMktIds() {
+    const rows = await db(`SELECT nv_marketing AS id, COUNT(*) AS don FROM oms_orders
+      WHERE nv_marketing REGEXP '^[0-9]{10,}$' GROUP BY nv_marketing`);
+    const out = [];
+    for (const r of rows) {
+      const ten = await resolveMktId(r.id);
+      if (ten) await db('UPDATE oms_orders SET nv_marketing=? WHERE nv_marketing=?', [ten, r.id]);
+      out.push({ id: r.id, don: r.don, ten: ten || null });
+    }
+    return out;
+  }
+  setTimeout(function loop() {
+    if (getPool()) fixMktIds().catch(e => console.error('[OMS] fixMktIds:', e.message));
+    setTimeout(loop, 30 * 60 * 1000);
+  }, 60 * 1000);
+
   // Cho module Tồn kho đọc số lượng đã bán theo sản phẩm (tính số ngày đủ bán)
   global.__omsSalesByProduct = (days, trangThai) => db(
     `SELECT san_pham, SUM(so_luong) AS qty, COUNT(*) AS don FROM oms_orders
@@ -410,6 +434,12 @@ export function mountOMS(app, { mysql, express }) {
     req.session.save(() => res.json({ ok: true }));
   }));
 
+  // Admin: đổi ngay các đơn đang mang ID quảng cáo sang tên NV; ten=null là chưa đổi được
+  // (token Meta không thấy ID đó, hoặc tên chiến dịch không có mã/tên NV)
+  app.get('/oms/api/fix-mkt-ids', requireRole('admin'), wrap(async (req, res) => {
+    res.json({ ketqua: await fixMktIds() });
+  }));
+
   app.get('/oms/api/me', omsAuth, wrap(async (req, res) => {
     res.json(req.session.omsUser);
   }));
@@ -432,6 +462,15 @@ export function mountOMS(app, { mysql, express }) {
     const utmCampaign = d.utm_campaign || '';
     const utmContent = d.utm_content || '';
     let nvMarketing = d.utm_content || d.nhan_vien || d.user || d.marketing || '';
+    // utm_content là ID quảng cáo Meta ({{ad.id}}) chứ không phải tên NV → đổi ra tên
+    // theo tên chiến dịch. Không đổi được thì để trống cho Link Registry điền bên dưới;
+    // vẫn không có thì giữ lại ID (admin còn thấy được). Đơn mang ID thì NV marketing
+    // không thấy trên OMS (lọc theo tên) → trước đây cùng link có đơn hiện có đơn không.
+    let rawMktId = '';
+    if (isFbId(nvMarketing)) {
+      rawMktId = nvMarketing;
+      nvMarketing = await resolveMktId(rawMktId);
+    }
 
     // ---- TỰ NHẬN DIỆN từ Link Registry ----
     // Ladipage gửi kèm url_page (URL trang gửi form)
@@ -460,6 +499,8 @@ export function mountOMS(app, { mysql, express }) {
         }
       } catch(e) { console.error('[OMS] Link registry lookup error:', e.message); }
     }
+
+    if (!nvMarketing) nvMarketing = rawMktId;
 
     // Tách địa chỉ tự động
     const addr = parseAddress(diaChiFull);
