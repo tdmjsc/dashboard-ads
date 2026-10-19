@@ -300,20 +300,26 @@ export function mountOMS(app, { mysql, express }) {
     return rows;
   }
 
-  // ---- ID quảng cáo Meta trong cột NV marketing → tên NV (hàm ở server.js) ----
-  const isFbId = v => /^\d{10,}$/.test(String(v || '').trim());
-  async function resolveMktId(id) {
+  // ---- Cột NV marketing mang ID quảng cáo / tên chiến dịch → tên NV (hàm ở server.js) ----
+  async function resolveMkt(v) {
     try {
-      return typeof global.__fbIdToEmployee === 'function' ? await global.__fbIdToEmployee(id) : '';
-    } catch (e) { console.error('[OMS] Đổi ID MKT lỗi:', e.message); return ''; }
+      return typeof global.__mktToEmployee === 'function' ? await global.__mktToEmployee(v) : '';
+    } catch (e) { console.error('[OMS] Đổi NV MKT lỗi:', e.message); return ''; }
   }
-  // Sửa đơn cũ đang mang ID: chạy lúc khởi động và mỗi 30 phút, xem/chạy tay /oms/api/fix-mkt-ids
+  // Tên đã là tài khoản OMS (vd NV chưa có trong menu Nhân viên) thì giữ nguyên, không nhận diện lại
+  async function omsNames() {
+    return new Set((await db('SELECT ho_ten FROM oms_users')).map(r => r.ho_ten));
+  }
+  // Sửa đơn cũ: chạy lúc khởi động và mỗi 30 phút, xem/chạy tay /oms/api/fix-mkt-ids
   async function fixMktIds() {
+    const known = await omsNames();
     const rows = await db(`SELECT nv_marketing AS id, COUNT(*) AS don FROM oms_orders
-      WHERE nv_marketing REGEXP '^[0-9]{10,}$' GROUP BY nv_marketing`);
+      WHERE nv_marketing != '' GROUP BY nv_marketing`);
     const out = [];
     for (const r of rows) {
-      const ten = await resolveMktId(r.id);
+      if (known.has(r.id)) continue;
+      const ten = await resolveMkt(r.id);
+      if (ten === r.id) continue; // đã đúng tên
       if (ten) await db('UPDATE oms_orders SET nv_marketing=? WHERE nv_marketing=?', [ten, r.id]);
       out.push({ id: r.id, don: r.don, ten: ten || null });
     }
@@ -462,14 +468,18 @@ export function mountOMS(app, { mysql, express }) {
     const utmCampaign = d.utm_campaign || '';
     const utmContent = d.utm_content || '';
     let nvMarketing = d.utm_content || d.nhan_vien || d.user || d.marketing || '';
-    // utm_content là ID quảng cáo Meta ({{ad.id}}) chứ không phải tên NV → đổi ra tên
-    // theo tên chiến dịch. Không đổi được thì để trống cho Link Registry điền bên dưới;
-    // vẫn không có thì giữ lại ID (admin còn thấy được). Đơn mang ID thì NV marketing
-    // không thấy trên OMS (lọc theo tên) → trước đây cùng link có đơn hiện có đơn không.
+    // utm_content hay là ID quảng cáo Meta ({{ad.id}}) hoặc tên chiến dịch chứ không phải
+    // tên NV → đổi ra tên NV. Không đổi được thì để trống cho Link Registry điền bên dưới;
+    // vẫn không có thì giữ giá trị gốc (admin còn thấy được). Đơn không mang đúng tên thì
+    // NV marketing không thấy trên OMS (lọc theo tên) → cùng link có đơn hiện có đơn không.
     let rawMktId = '';
-    if (isFbId(nvMarketing)) {
-      rawMktId = nvMarketing;
-      nvMarketing = await resolveMktId(rawMktId);
+    if (nvMarketing) {
+      const ten = await resolveMkt(nvMarketing);
+      if (ten) nvMarketing = ten;
+      else if (!(await omsNames().catch(() => new Set())).has(nvMarketing)) {
+        rawMktId = nvMarketing;
+        nvMarketing = '';
+      }
     }
 
     // ---- TỰ NHẬN DIỆN từ Link Registry ----

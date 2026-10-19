@@ -611,6 +611,18 @@ async function fbIdToEmployee(id) {
 }
 global.__fbIdToEmployee = fbIdToEmployee;
 
+// Giá trị cột NV marketing của OMS → tên NV: ID Meta thì tra tên chiến dịch, chữ (vd tên
+// chiến dịch "TD4 - My - Túi giữ lạnh…" do utm_content={{campaign.name}}) thì nhận diện trực tiếp.
+// Đã đúng tên đầy đủ thì trả lại chính nó; không nhận ra được thì trả ''.
+global.__mktToEmployee = async (v) => {
+  v = String(v || '').trim();
+  if (!v) return '';
+  if (/^\d{10,}$/.test(v)) return fbIdToEmployee(v);
+  if (EMPLOYEES.some(e => e.full === v)) return v;
+  const e = detectEmployee(v);
+  return e && e !== 'Chưa xác định' ? e : '';
+};
+
 // ===================================================================
 //  Import động module OMS Việt Nam
 // ===================================================================
