@@ -470,7 +470,8 @@ export function mountOMS(app, { mysql, express }) {
     const utmContent = d.utm_content || '';
     let nvMarketing = d.utm_content || d.nhan_vien || d.user || d.marketing || '';
     // utm_content hay là ID quảng cáo Meta ({{ad.id}}) hoặc tên chiến dịch chứ không phải
-    // tên NV → đổi ra tên NV. Không đổi được thì để trống cho Link Registry điền bên dưới;
+    // tên NV → đổi ra tên NV. Link Registry được ưu tiên khi có link khớp bên dưới.
+    // Không đổi được thì để trống cho Link Registry điền;
     // vẫn không có thì giữ giá trị gốc (admin còn thấy được). Đơn không mang đúng tên thì
     // NV marketing không thấy trên OMS (lọc theo tên) → cùng link có đơn hiện có đơn không.
     let rawMktId = '';
@@ -488,12 +489,13 @@ export function mountOMS(app, { mysql, express }) {
     const urlPage = d.url_page || d.page_url || d.referer || d.referrer || '';
     if (urlPage) {
       try {
-        const links = await db('SELECT * FROM oms_link_registry WHERE active=1');
+        const links = await db('SELECT * FROM oms_link_registry WHERE active=1 ORDER BY CHAR_LENGTH(url_pattern) DESC, id DESC');
         for (const link of links) {
           // So khớp: URL chứa pattern đã đăng ký
           if (urlPage.toLowerCase().includes(link.url_pattern.toLowerCase())) {
-            // Auto-fill NV Marketing nếu chưa có
-            if (!nvMarketing) nvMarketing = link.nv_marketing;
+            // Link đã đăng ký quyết định NV; UTM có thể còn ID quảng cáo của NV khác.
+            // Ưu tiên pattern cụ thể hơn khi nhiều link cùng khớp.
+            if (link.nv_marketing?.trim()) nvMarketing = link.nv_marketing.trim();
             // Auto-fill sản phẩm nếu chưa có
             if (!sanPham && link.ten_sp) sanPham = link.ten_sp;
             // Auto-fill nguồn dữ liệu
