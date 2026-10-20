@@ -4,6 +4,7 @@
 //  Mount vào server.js: mountOMS(app, { mysql, express })
 // =====================================================================
 import { sendApns, apnsConfigured } from './apns.js';
+import { omsDateBoundary } from './oms-date.js';
 
 // ---- Trạng thái đơn hàng hợp lệ ----
 const TRANG_THAI = ['Đơn mới', 'Đã chốt', 'Đang ship', 'Ship thành công', 'Hoàn thành công', 'Không mua',
@@ -628,8 +629,8 @@ export function mountOMS(app, { mysql, express }) {
     }
     // Admin thấy tất cả
 
-    if (tu) { where.push('ngay_ve >= ?'); params.push(tu); }
-    if (den) { where.push('ngay_ve <= ?'); params.push(den + ' 23:59:59'); }
+    if (tu) { where.push('ngay_ve >= ?'); params.push(omsDateBoundary(tu)); }
+    if (den) { where.push('ngay_ve < ?'); params.push(omsDateBoundary(den, true)); }
     if (trang_thai) { where.push('trang_thai = ?'); params.push(trang_thai); }
     if (nv) { where.push('nv_marketing = ?'); params.push(nv); }
     if (sale) { where.push('sale_phu_trach = ?'); params.push(sale); }
@@ -794,8 +795,8 @@ export function mountOMS(app, { mysql, express }) {
     } else if (user.role === 'sale') {
       userFilter = ' AND sale_phu_trach = ?'; params.push(user.ho_ten);
     }
-    if (tu) { dateFilter += ' AND ngay_ve >= ?'; params.push(tu); }
-    if (den) { dateFilter += ' AND ngay_ve <= ?'; params.push(den + ' 23:59:59'); }
+    if (tu) { dateFilter += ' AND ngay_ve >= ?'; params.push(omsDateBoundary(tu)); }
+    if (den) { dateFilter += ' AND ngay_ve < ?'; params.push(omsDateBoundary(den, true)); }
 
     // Tổng quan
     const [overview] = await db(`SELECT
@@ -1657,8 +1658,8 @@ export function mountOMS(app, { mysql, express }) {
       params.push(...team);
     }
     let dateFilter = '';
-    if (tu) { dateFilter += ' AND ngay_ve >= ?'; params.push(tu); }
-    if (den) { dateFilter += ' AND ngay_ve <= ?'; params.push(den + ' 23:59:59'); }
+    if (tu) { dateFilter += ' AND ngay_ve >= ?'; params.push(omsDateBoundary(tu)); }
+    if (den) { dateFilter += ' AND ngay_ve < ?'; params.push(omsDateBoundary(den, true)); }
 
     const byNV = await db(`SELECT nv_marketing as ten, COUNT(*) as tongDon,
       SUM(CASE WHEN trang_thai='Đơn mới' THEN 1 ELSE 0 END) as donMoi,

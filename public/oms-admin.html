@@ -818,7 +818,9 @@ function onLoggedIn() {
   const today = new Date();
   const weekAgo = new Date(today);
   weekAgo.setDate(weekAgo.getDate() - 7);
-  const fmtD = d => d.toISOString().slice(0,10);
+  const fmtD = d => new Intl.DateTimeFormat('en-CA', {
+    timeZone: 'Asia/Ho_Chi_Minh', year: 'numeric', month: '2-digit', day: '2-digit'
+  }).format(d);
   ['saleTu','whTu','fTu','mktTu'].forEach(id => { const el=document.getElementById(id); if(el && !el.value) el.value=fmtD(weekAgo); });
   ['saleDen','whDen','fDen','mktDen'].forEach(id => { const el=document.getElementById(id); if(el && !el.value) el.value=fmtD(today); });
 
@@ -1494,7 +1496,9 @@ async function saleSaveNote(id){
 }
 
 // ========== TAB 4: MARKETING VIEW ==========
+let mktViewRequest = 0;
 async function loadMktView() {
+  const request = ++mktViewRequest;
   const params = new URLSearchParams({limit:500});
   const nv = document.getElementById('mktFilter').value;
   const tu = document.getElementById('mktTu').value;
@@ -1503,8 +1507,29 @@ async function loadMktView() {
   if(tu) params.set('tu', tu);
   if(den) params.set('den', den);
 
-  const r = await fetch(API+'/orders?'+params); const d = await r.json();
-  const orders = d.orders||[];
+  const orders = [];
+  let d;
+  try {
+    document.getElementById('mktOrderCount').textContent = 'Đang tải đơn…';
+    let page = 1;
+    do {
+      params.set('page', page);
+      const r = await fetch(API+'/orders?'+params);
+      if (!r.ok) throw new Error('Không tải được danh sách đơn');
+      d = await r.json();
+      if (request !== mktViewRequest) return;
+      const batch = d.orders || [];
+      orders.push(...batch);
+      if (orders.length >= Number(d.total || 0)) break;
+      if (!batch.length) throw new Error('Chưa tải đủ danh sách đơn, vui lòng thử lại');
+      page++;
+    } while (true);
+  } catch (e) {
+    if (request === mktViewRequest) {
+      document.getElementById('mktOrderCount').textContent = e.message;
+    }
+    return;
+  }
 
   const total=orders.length;
   const confirmed=orders.filter(o=>['Đã chốt','Đang ship','Ship thành công'].includes(o.trang_thai)).length;
