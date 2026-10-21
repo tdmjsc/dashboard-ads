@@ -419,7 +419,11 @@
     <h2 class="text-lg font-semibold">Đăng ký link Landing Page</h2>
   </div>
   <p class="text-sm text-gray-500 mb-4">NV Marketing khai báo: link này chạy cho SP gì → đơn từ link đó tự nhận diện SP + NV.</p>
-  <button onclick="openAddLink()" class="bg-indigo-600 text-white px-4 py-1.5 rounded-lg text-sm font-medium mb-4">+ Đăng ký link mới</button>
+  <div class="flex flex-wrap items-center gap-2 mb-4">
+    <button onclick="openAddLink()" class="bg-indigo-600 text-white px-4 py-1.5 rounded-lg text-sm font-medium">+ Đăng ký link mới</button>
+    <input type="search" id="linkSearch" oninput="renderLinks()" class="flex-1 min-w-[200px] text-sm" placeholder="🔍 Tìm theo link, tên NV hoặc sản phẩm...">
+    <span id="linkCount" class="text-xs text-gray-500"></span>
+  </div>
   <div class="bg-white rounded-xl shadow-sm overflow-x-auto">
     <table class="w-full text-sm">
       <thead><tr class="bg-gray-50 text-gray-600">
@@ -612,7 +616,8 @@
 <!-- Modal Đăng ký link -->
 <div id="addLinkModal" class="fixed inset-0 modal-bg flex items-center justify-center z-50 hidden">
   <div class="bg-white rounded-xl shadow-2xl p-6 w-full max-w-md mx-4">
-    <h2 class="text-lg font-bold mb-4">Đăng ký link Landing Page</h2>
+    <h2 class="text-lg font-bold mb-4" id="lkModalTitle">Đăng ký link Landing Page</h2>
+    <input type="hidden" id="lkEditId" value="">
     <div class="grid gap-3">
       <div><label class="text-xs text-gray-500">URL landing page *</label><input type="text" id="lkUrl" class="w-full text-sm" placeholder="sp-phuong.ladipage.com"></div>
       <div><label class="text-xs text-gray-500">Sản phẩm *</label><select id="lkProduct" class="w-full text-sm"><option value="">-- Chọn SP --</option></select></div>
@@ -621,7 +626,7 @@
       <div><label class="text-xs text-gray-500">Ghi chú</label><input type="text" id="lkNote" class="w-full text-sm"></div>
     </div>
     <div class="flex gap-3 mt-5">
-      <button onclick="submitLink()" class="flex-1 bg-indigo-600 text-white py-2 rounded-lg font-medium">Đăng ký</button>
+      <button onclick="submitLink()" id="lkSubmitBtn" class="flex-1 bg-indigo-600 text-white py-2 rounded-lg font-medium">Đăng ký</button>
       <button onclick="closeModal('addLinkModal')" class="flex-1 bg-gray-200 py-2 rounded-lg font-medium">Hủy</button>
     </div>
   </div>
@@ -1989,9 +1994,21 @@ async function syncSheet(btn){
 }
 
 // ========== ĐĂNG KÝ LINK ==========
+let allLinks=[];
+// Bỏ dấu + chữ thường để gõ "tui giu lanh" vẫn ra "Túi giữ lạnh"
+const normSearch=s=>String(s||'').normalize('NFD').replace(/[̀-ͯ]/g,'').replace(/đ/g,'d').replace(/Đ/g,'D').toLowerCase();
 async function loadLinks(){
   const r=await fetch(API+'/links'); if(!r.ok)return;
-  const links=await r.json();
+  allLinks=await r.json();
+  renderLinks();
+}
+function renderLinks(){
+  const words=normSearch(document.getElementById('linkSearch')?.value).split(/\s+/).filter(Boolean);
+  const links=allLinks.filter(lk=>{
+    const hay=normSearch([lk.url_pattern,lk.nv_marketing,lk.product_name,lk.ten_sp].join(' '));
+    return words.every(w=>hay.includes(w));
+  });
+  document.getElementById('linkCount').textContent=words.length?`${links.length}/${allLinks.length} link`:`${allLinks.length} link`;
   document.getElementById('linkTable').innerHTML=links.map(lk=>`
     <tr class="border-t hover:bg-gray-50">
       <td class="p-3 text-sm text-blue-600 max-w-[250px] truncate" title="${esc(lk.url_pattern)}"><a href="${esc(lk.url_pattern)}" target="_blank" class="hover:underline">${esc(lk.url_pattern)}</a></td>
@@ -1999,30 +2016,44 @@ async function loadLinks(){
       <td class="p-3">${esc(lk.nv_marketing)}</td>
       <td class="p-3 text-xs text-gray-400">${esc(lk.ghi_chu||'')}</td>
       <td class="p-3 text-center">${lk.active?'✅':'❌'}</td>
-      <td class="p-3 text-center">
-        <button onclick="toggleLink(${lk.id},${lk.active?0:1})" class="text-xs ${lk.active?'text-red-500':'text-green-600'} hover:underline">${lk.active?'Tắt':'Bật'}</button>
+      <td class="p-3 text-center whitespace-nowrap">
+        <button onclick="openEditLink(${lk.id})" class="text-xs text-indigo-600 hover:underline">Sửa</button>
+        <button onclick="toggleLink(${lk.id},${lk.active?0:1})" class="text-xs ${lk.active?'text-red-500':'text-green-600'} hover:underline ml-1">${lk.active?'Tắt':'Bật'}</button>
         <button onclick="deleteLink(${lk.id})" class="text-xs text-red-500 hover:underline ml-1">Xóa</button>
       </td>
-    </tr>`).join('')||'<tr><td colspan="6" class="p-6 text-center text-gray-400">Chưa có link nào. NV Marketing khai báo link landing page tại đây.</td></tr>';
+    </tr>`).join('')||`<tr><td colspan="6" class="p-6 text-center text-gray-400">${allLinks.length?'Không có link nào khớp từ khoá.':'Chưa có link nào. NV Marketing khai báo link landing page tại đây.'}</td></tr>`;
 }
-function openAddLink(){
-  if(!allProducts.length) loadProducts();
-  // Auto-fill tên NV Marketing từ tài khoản đang đăng nhập
-  const nvField = document.getElementById('lkNv');
-  if(nvField){
-    nvField.value = currentUser?.ho_ten || '';
-    // Marketing: không cho sửa tên (gắn cố định với tài khoản)
-    if(currentUser?.role === 'marketing') nvField.readOnly = true;
-    else nvField.readOnly = false;
-  }
+// Mở modal ở chế độ thêm (lk = null) hoặc sửa (lk = link đang có)
+async function showLinkModal(lk){
+  if(!allProducts.length) await loadProducts();
+  document.getElementById('lkEditId').value=lk?lk.id:'';
+  document.getElementById('lkModalTitle').textContent=lk?'Sửa link #'+lk.id:'Đăng ký link Landing Page';
+  document.getElementById('lkSubmitBtn').textContent=lk?'Lưu':'Đăng ký';
+  document.getElementById('lkUrl').value=lk?.url_pattern||'';
+  const sel=document.getElementById('lkProduct');
+  // SP đang gắn có thể đã bị ẩn (không có trong dropdown) → thêm tạm để không mất khi lưu
+  if(lk?.product_id && !sel.querySelector(`option[value="${lk.product_id}"]`))
+    sel.insertAdjacentHTML('beforeend',`<option value="${lk.product_id}">${esc(lk.product_name||lk.ten_sp||('SP #'+lk.product_id))}</option>`);
+  sel.value=lk?.product_id||'';
+  const nvField=document.getElementById('lkNv');
+  nvField.value=lk?lk.nv_marketing:(currentUser?.ho_ten||'');
+  // Chỉ admin được đổi NV (máy chủ cũng chỉ nhận nv_marketing từ admin)
+  nvField.readOnly=currentUser?.role!=='admin';
+  document.getElementById('lkNguon').value=lk?.nguon_du_lieu||'';
+  document.getElementById('lkNote').value=lk?.ghi_chu||'';
   document.getElementById('addLinkModal').classList.remove('hidden');
 }
+function openAddLink(){ showLinkModal(null); }
+function openEditLink(id){ const lk=allLinks.find(x=>x.id===id); if(lk) showLinkModal(lk); }
 async function submitLink(){
-  const body={url_pattern:document.getElementById('lkUrl').value,product_id:parseInt(document.getElementById('lkProduct').value)||0,
-    nv_marketing:document.getElementById('lkNv').value,nguon_du_lieu:document.getElementById('lkNguon').value,ghi_chu:document.getElementById('lkNote').value};
-  const r=await fetch(API+'/links',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});
+  const editId=document.getElementById('lkEditId').value;
+  const body={url_pattern:document.getElementById('lkUrl').value.trim(),product_id:parseInt(document.getElementById('lkProduct').value)||0,
+    nv_marketing:document.getElementById('lkNv').value.trim(),nguon_du_lieu:document.getElementById('lkNguon').value,ghi_chu:document.getElementById('lkNote').value};
+  if(!body.url_pattern) return alert('❌ Thiếu URL landing page');
+  if(!body.product_id) return alert('❌ Chưa chọn sản phẩm');
+  const r=await fetch(API+'/links'+(editId?'/'+editId:''),{method:editId?'PUT':'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});
   const d=await r.json();
-  if(d.ok){closeModal('addLinkModal');loadLinks();alert('✅ Đã đăng ký link');} else alert('❌ '+(d.error||'Lỗi'));
+  if(d.ok){closeModal('addLinkModal');loadLinks();alert(editId?'✅ Đã lưu link':'✅ Đã đăng ký link');} else alert('❌ '+(d.error||'Lỗi'));
 }
 async function toggleLink(id,active){await fetch(API+'/links/'+id,{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify({active})});loadLinks();}
 async function deleteLink(id){if(!confirm('Xóa link #'+id+'?'))return;await fetch(API+'/links/'+id,{method:'DELETE'});loadLinks();}
