@@ -633,7 +633,7 @@ global.__mktToEmployee = async (v) => {
       import('mysql2/promise'),
     ]);
     const mysql = mysqlMod.default || mysqlMod;
-    mountOMS(app, { mysql, express });
+    mountOMS(app, { mysql, express, getTeamLead });
   } catch (e) {
     console.error('[OMS] KHÔNG gắn được module (app chính vẫn chạy bình thường):', e.message);
   }

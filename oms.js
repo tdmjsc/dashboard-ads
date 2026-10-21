@@ -10,11 +10,12 @@ import { omsDateBoundary } from './oms-date.js';
 const TRANG_THAI = ['Đơn mới', 'Đã chốt', 'Đang ship', 'Ship thành công', 'Hoàn thành công', 'Không mua',
   'KNM lần 1', 'KNM lần 2', 'KNM lần 3', 'KNM lần 4', 'KNM lần 5', 'KNM lần 6'];
 
-// ---- Cấu hình Team Lead Marketing (giống ads.tdmjsc.com) ----
-const TEAM_LEAD = {
-  'Tạ Quang Trường': ['Tạ Quang Trường', 'Nguyễn Thị Trà My', 'Dương Văn Minh', 'Lê Thị Ánh'],
-  'Trịnh Đức Phương': ['Trịnh Đức Phương', 'Đoàn Việt Hà', 'Nguyễn Duy Huân', 'Vũ Thuý An'],
-};
+// Cùng nguồn cơ cấu team với trang nhân viên; luôn gồm đơn của chính mình.
+export function getOmsMarketingTeam(user, getTeamLead) {
+  if (user.role !== 'marketing') return null;
+  const members = getTeamLead()[user.ho_ten] || [];
+  return [...new Set([user.ho_ten, ...members])];
+}
 
 // ---- Danh sách Tỉnh/Thành phố Việt Nam (63 tỉnh) ----
 const TINH_TP = [
@@ -268,7 +269,7 @@ async function ensureTables(pool) {
 // =====================================================================
 //  mountOMS(app, { mysql, express })
 // =====================================================================
-export function mountOMS(app, { mysql, express }) {
+export function mountOMS(app, { mysql, express, getTeamLead = () => ({}) }) {
   let pool = null;
 
   // ---- Lazy DB connection ----
@@ -780,9 +781,7 @@ export function mountOMS(app, { mysql, express }) {
 
   // Helper: lấy danh sách NV marketing mà user được xem (team lead → cả team)
   function getMktTeam(user) {
-    if (user.role !== 'marketing') return null;
-    const team = TEAM_LEAD[user.ho_ten];
-    return team || [user.ho_ten];
+    return getOmsMarketingTeam(user, getTeamLead);
   }
 
   // ===================== THỐNG KÊ / BÁO CÁO =====================
