@@ -548,7 +548,7 @@ export function mountOMS(app, { mysql, express }) {
     // Default nguon_du_lieu from UTM or link match
     const orderNguon = typeof nguonDuLieu !== 'undefined' ? nguonDuLieu : (d.utm_source || '');
 
-    await db(`INSERT INTO oms_orders
+    const createdOrder = await db(`INSERT INTO oms_orders
       (ngay_ve, nv_marketing, ten_kh, sdt, dia_chi_full, tinh, quan, phuong, dia_chi,
        trang_thai, san_pham, so_luong, gia_ban, tong_tien,
        utm_source, utm_medium, utm_campaign, utm_content, ghi_chu, tin_nhan_goc, nguon_du_lieu)
@@ -560,7 +560,7 @@ export function mountOMS(app, { mysql, express }) {
 
     // Auto-assign Sale round-robin
     try {
-      const [inserted] = await db('SELECT id FROM oms_orders WHERE sdt=? ORDER BY id DESC LIMIT 1', [sdt]);
+      const inserted = { id: createdOrder.insertId };
       if (inserted) {
         const sales = await db("SELECT ho_ten FROM oms_users WHERE role='sale' AND active=1 ORDER BY ho_ten");
         if (sales.length) {
@@ -587,7 +587,8 @@ export function mountOMS(app, { mysql, express }) {
       if (app._omsPush) {
         app._omsPush(
           (sanPham || 'Sản phẩm') + ' — Có đơn mới!',
-          `${ten} — ${sanPham || 'Sản phẩm'}`
+          `${ten} — ${sanPham || 'Sản phẩm'}`,
+          createdOrder.insertId
         );
       }
     } catch(e) {}
@@ -671,7 +672,8 @@ export function mountOMS(app, { mysql, express }) {
       if (app._omsPush) {
         app._omsPush(
           (d.san_pham || 'Sản phẩm') + ' — Có đơn mới!',
-          `${d.ten_kh || ''} — ${d.san_pham || 'Sản phẩm'} (tạo tay)`
+          `${d.ten_kh || ''} — ${d.san_pham || 'Sản phẩm'} (tạo tay)`,
+          result.insertId
         );
       }
     } catch(e) {}
@@ -1795,9 +1797,10 @@ export function mountOMS(app, { mysql, express }) {
   }
 
   // Gửi APNs tới mọi token, xoá token Apple báo đã chết (gỡ app...)
-  async function sendApnsToAll(title, body) {
+  async function sendApnsToAll(title, body, recipients = null) {
     await ensurePushTable();
-    const rows = await db('SELECT token, username FROM oms_apns_tokens');
+    const rows = (await db('SELECT token, user_id, username FROM oms_apns_tokens'))
+      .filter(row => recipients === null || recipients.has(row.username));
     if (!rows.length) return [];
     const results = await sendApns(rows.map(r => r.token), title, body);
     for (const r of results) {
@@ -1862,7 +1865,7 @@ export function mountOMS(app, { mysql, express }) {
     const mainUser = req.session?.user;
     const username = omsUser?.username || mainUser?.username || 'anonymous';
     await db(`INSERT INTO oms_push_subs (user_id, username, endpoint, p256dh, auth)
-      VALUES (?,?,?,?,?) ON DUPLICATE KEY UPDATE p256dh=VALUES(p256dh), auth=VALUES(auth), username=VALUES(username)`,
+      VALUES (?,?,?,?,?) ON DUPLICATE KEY UPDATE user_id=VALUES(user_id), p256dh=VALUES(p256dh), auth=VALUES(auth), username=VALUES(username)`,
       [omsUser?.id || 0, username, endpoint, keys.p256dh, keys.auth]);
     console.log('[OMS] Push subscription saved for:', username);
     res.json({ ok: true });
@@ -1942,16 +1945,39 @@ export function mountOMS(app, { mysql, express }) {
     res.json({ ok: true, results });
   }));
 
-  // Gửi push cho tất cả subscribers
-  async function sendPushToAll(title, body) {
-    try { await sendApnsToAll(title, body); } catch(e) { console.error('[OMS] APNs error:', e.message); }
+  // Xác định người nhận từ đơn đã lưu, không lấy quyền từ subscription cũ.
+  async function orderPushRecipients(orderId) {
+    const recipients = new Set();
+    if (!orderId) return recipients;
+    const [order] = await db('SELECT nv_marketing, sale_phu_trach, trang_thai FROM oms_orders WHERE id=?', [orderId]);
+    if (!order) return recipients;
+    const users = await db('SELECT username, ho_ten, role FROM oms_users WHERE active=1');
+    for (const user of users) {
+      if (user.role === 'admin'
+          || (user.role === 'marketing' && order.nv_marketing && getMktTeam(user).includes(order.nv_marketing))
+          || (user.role === 'sale' && order.sale_phu_trach && user.ho_ten === order.sale_phu_trach)
+          || (user.role === 'warehouse' && ['Đã chốt', 'Đang ship'].includes(order.trang_thai))) {
+        recipients.add(user.username);
+      }
+    }
+    // Admin dashboard có thể đăng nhập OMS với id=0, không có dòng oms_users.
+    const { USERS } = await import('./users.js');
+    for (const user of USERS || []) if (user.role === 'admin') recipients.add(user.user);
+    return recipients;
+  }
+
+  async function sendPushToAll(title, body, orderId) {
+    let recipients;
+    try { recipients = await orderPushRecipients(orderId); }
+    catch (e) { console.error('[OMS] Push recipients error:', e.message); return; }
+    try { await sendApnsToAll(title, body, recipients); } catch(e) { console.error('[OMS] APNs error:', e.message); }
     await webpushReady;
     if (!webpush) return;
     try {
       const keys = await getVapidKeys();
       if (!keys) return;
       webpush.setVapidDetails('mailto:admin@tdmjsc.com', keys.publicKey, keys.privateKey);
-      const subs = await db('SELECT * FROM oms_push_subs');
+      const subs = (await db('SELECT * FROM oms_push_subs')).filter(sub => recipients.has(sub.username));
       if (!subs.length) return;
       const payload = JSON.stringify({ title, body });
       console.log('[OMS] Sending push to', subs.length, 'subscribers:', title);
