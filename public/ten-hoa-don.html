@@ -170,6 +170,12 @@
 const $ = id => document.getElementById(id);
 const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 const fmt = n => n === null || n === undefined ? '—' : (Math.round(n * 100) / 100).toLocaleString('vi-VN');
+// Rê chuột vào cảnh báo "chưa lấy được dòng hàng": mã đơn của các hoá đơn đó (tối đa 10)
+const thieuTip = hd => {
+  const ds = (hd.thieuDon || []).map(x => x || '(không có mã đơn)');
+  return ds.length ? 'Hoá đơn của các đơn:\n' + ds.join('\n') + (hd.thieu > ds.length ? `\n… và ${hd.thieu - ds.length} hoá đơn khác` : '')
+    + '\n\nXem lý do: /api/ton-kho/hd/debug-don?ma=<mã đơn>' : 'Chưa có mã đơn (bấm Kiểm tra ngay để đếm lại)';
+};
 const dt = s => s ? new Date(s).toLocaleString('vi-VN', { hour: '2-digit', minute: '2-digit', day: '2-digit', month: '2-digit' }) : '';
 const normName = x => String(x || '').normalize('NFD').replace(/[\u0300-\u036f]/g, '').replace(/đ/gi, 'd').toLowerCase().replace(/\s+/g, ' ').trim();
 async function api(url, body) {
@@ -201,7 +207,7 @@ function itemCard(q, i, r, isNew) {
   // Tên đang dùng + sản phẩm có mã SP: số lượng đã xuất hoá đơn điện tử dưới tên này
   const hd = active && r.hdOn ? `<div class="hdbox">${q.hd && typeof q.hd.qty === 'number'
       ? `Đã xuất HĐ dưới tên này: <b>${fmt(q.hd.qty)}</b>${q.soLuong != null ? ` / ${fmt(q.soLuong)}` : ''} · ${fmt(q.hd.soHD)} hoá đơn từ ${dt(q.hd.from)}`
-        + `${q.hd.thieu ? ` · <span class="warn">${fmt(q.hd.thieu)} hoá đơn chưa lấy được dòng hàng</span>` : ''}<small>cập nhật ${dt(q.hd.at)}</small>`
+        + `${q.hd.thieu ? ` · <span class="warn" title="${esc(thieuTip(q.hd))}" style="cursor:help">${fmt(q.hd.thieu)} hoá đơn chưa lấy được dòng hàng</span>` : ''}<small>cập nhật ${dt(q.hd.at)}</small>`
       : 'Đã xuất HĐ dưới tên này: <b>đang đếm…</b> (bấm Kiểm tra ngay)'}${q.hd?.err ? `<div class="warn">Lỗi đếm hoá đơn: ${esc(q.hd.err)}</div>` : ''}</div>` : '';
   return `<div class="item ${active ? 'active' : ''}" data-i="${i}">
     <div class="item-top">
@@ -316,7 +322,7 @@ function compactRow(r) {
     const het = !active && q.remaining !== null && q.remaining !== undefined && q.remaining <= 0;
     const hdTxt = (active && q.hd && typeof q.hd.qty === 'number'
       ? ` · đã xuất HĐ <b>${fmt(q.hd.qty)}</b>${q.soLuong != null ? '/' + fmt(q.soLuong) : ''}` : '')
-      + (active && q.hd?.thieu ? ` · <span style="color:var(--amber)">${fmt(q.hd.thieu)} HĐ chưa lấy được dòng hàng</span>` : '')
+      + (active && q.hd?.thieu ? ` · <span style="color:var(--amber);cursor:help" title="${esc(thieuTip(q.hd))}">${fmt(q.hd.thieu)} HĐ chưa lấy được dòng hàng</span>` : '')
       + (active && q.hd?.err ? ` · <span style="color:var(--red)">lỗi đếm HĐ</span>` : '');
     return `<span class="chip ${active ? 'active' : ''} ${het ? 'het' : ''}" title="${esc(q.ten)}">
       <span class="ci">${i + 1}</span><span class="cn">${esc(q.ten)}</span>

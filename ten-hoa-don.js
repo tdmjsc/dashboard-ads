@@ -471,7 +471,7 @@ export function mountTenHoaDon(app, { json, guard, wrap, DATA_DIR, fetchWithTime
       for (const h of invs) {
         if (Date.parse(String(h.ngayTao).slice(0, 23) + '+07:00') < since) continue;
         const items = itemsOf(h);
-        if (!items) { thieu++; if (thieuDon.length < 10) thieuDon.push(h.maDonHang); continue; }
+        if (!items) { thieu++; if (thieuDon.length < 10) thieuDon.push(h.maDonHang || (h.invNo ? `HĐ số ${h.invNo} (không có mã đơn)` : '(không có mã đơn)')); continue; }
         const n = items.filter(isMine).reduce((s, [, x]) => s + x, 0);
         if (n) { qty += n; soHD++; if (don.length < 30) don.push({ ma: h.maDonHang, sl: n }); }
       }
