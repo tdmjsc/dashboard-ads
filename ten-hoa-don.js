@@ -195,9 +195,21 @@ export function mountTenHoaDon(app, { json, guard, wrap, DATA_DIR, fetchWithTime
       }
       return fetchWithTimeout(req.url, { method: req.method, headers, body: body ? JSON.stringify(body) : undefined }, 30000);
     };
-    let r = await send();
-    if ((r.status === 401 || r.status === 403) && auth && auth.hasLogin()) { await auth.login(); r = await send(); }
-    const text = await r.text();
+    // Lỗi mạng (Sandbox ngắt kết nối giữa chừng: "terminated", ECONNRESET, quá giờ) → thử lại tối đa 2 lần.
+    // Chỉ thử lại lỗi mạng, không thử lại lỗi HTTP. Lưu sản phẩm gửi lại cùng dữ liệu nên gửi 2 lần vẫn đúng.
+    let r, text;
+    for (let lan = 0; ; lan++) {
+      try {
+        r = await send();
+        if ((r.status === 401 || r.status === 403) && auth && auth.hasLogin()) { await auth.login(); r = await send(); }
+        text = await r.text();
+        break;
+      } catch (e) {
+        if (lan >= 2) throw new Error(`Mất kết nối tới Sandbox sau 3 lần thử (${e.message}).`);
+        console.warn('[TENHD] lỗi mạng, thử lại:', req.url, e.message);
+        await new Promise(ok => setTimeout(ok, 2000 * (lan + 1)));
+      }
+    }
     let j = null; try { j = JSON.parse(text); } catch {}
     if (r.status === 401 || r.status === 403)
       throw new Error(`Sandbox từ chối (HTTP ${r.status}) — phiên đăng nhập trong request đã hết hạn, hãy dán lại request.`);
