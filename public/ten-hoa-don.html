@@ -323,7 +323,7 @@ function compactRow(r) {
     const hdTxt = (active && q.hd && typeof q.hd.qty === 'number'
       ? ` · đã xuất HĐ <b>${fmt(q.hd.qty)}</b>${q.soLuong != null ? '/' + fmt(q.soLuong) : ''}` : '')
       + (active && q.hd?.thieu ? ` · <span style="color:var(--amber);cursor:help" title="${esc(thieuTip(q.hd))}">${fmt(q.hd.thieu)} HĐ chưa lấy được dòng hàng</span>` : '')
-      + (active && q.hd?.err ? ` · <span style="color:var(--red)">lỗi đếm HĐ</span>` : '');
+      + (active && q.hd?.err ? ` · <span style="color:var(--red);cursor:help" title="${esc(q.hd.err + ' (' + dt(q.hd.at) + ')')}">lỗi đếm HĐ</span>` : '');
     return `<span class="chip ${active ? 'active' : ''} ${het ? 'het' : ''}" title="${esc(q.ten)}">
       <span class="ci">${i + 1}</span><span class="cn">${esc(q.ten)}</span>
       <span class="cq">còn <b>${fmt(q.remaining)}</b>${hdTxt}</span></span>`;
