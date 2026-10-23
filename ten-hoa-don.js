@@ -564,7 +564,7 @@ export function mountTenHoaDon(app, { json, guard, wrap, DATA_DIR, fetchWithTime
           try {
             await activate(id, d.next, 'tự động', `"${cur.ten}" hết số lượng được xuất`);
             await notify(`🧾 Sản phẩm <b>${tgEsc(rule.tenSP)}</b>: xuất hoá đơn dưới tên "<b>${tgEsc(cur.ten)}</b>" `
-              + `về ${curRem.remaining > 0 ? `còn ${curRem.remaining}` : '0'}, đã tự chuyển tên xuất hoá đơn sang "<b>${tgEsc(nxt.ten)}</b>".`
+              + `${curRem.remaining > 0 ? `còn ${curRem.remaining}` : curRem.remaining < 0 ? `đã xuất vượt ${-curRem.remaining}` : 'về 0'}, đã tự chuyển tên xuất hoá đơn sang "<b>${tgEsc(nxt.ten)}</b>".`
               + (curRem.source === 'hd' ? `\n(Đã xuất HĐ dưới tên "${tgEsc(cur.ten)}": ${curRem.used}/${curSL})` : ''));
           } catch (e) {
             // Báo lỗi tối đa 6 giờ/lần để không spam nhóm
