@@ -186,6 +186,7 @@
     <button onclick="bulkPushGHTK()" class="bg-orange-500 text-white px-3 py-1 rounded text-sm">🚚 Đẩy GHTK</button>
     <button onclick="bulkPushVTP()" class="bg-red-500 text-white px-3 py-1 rounded text-sm">🚚 Đẩy VTP</button>
     <button onclick="syncShipping()" class="bg-teal-600 text-white px-3 py-1 rounded text-sm">🔄 Đồng bộ VC</button>
+    <button onclick="bulkMisa()" class="bg-sky-700 text-white px-3 py-1 rounded text-sm">🧾 Xuất HĐ MISA</button>
     <span id="selectedCount" class="text-sm text-gray-500 leading-8"></span>
   </div>
   <div class="bg-white rounded-xl shadow-sm overflow-x-auto">
@@ -400,7 +401,7 @@
   <div class="bg-white rounded-xl shadow-sm overflow-x-auto">
     <table class="w-full text-sm">
       <thead><tr class="bg-gray-50 text-gray-600">
-        <th class="p-3 text-left">Mã SP</th><th class="p-3 text-left">Tên sản phẩm</th>
+        <th class="p-3 text-left">Mã SP</th><th class="p-3 text-left">Tên sản phẩm</th><th class="p-3 text-left">Tên xuất HĐ</th>
         <th class="p-3 text-right">Giá bán</th><th class="p-3 text-right">Giá nhập</th>
         <th class="p-3 text-left">Danh mục</th><th class="p-3 text-center">TT</th><th class="p-3 text-center">⚙</th>
       </tr></thead>
@@ -483,11 +484,24 @@
     </div>
   </div>
   <div class="bg-white rounded-xl p-5 shadow-sm mb-4">
-    <h3 class="font-semibold text-blue-700 mb-3">🧾 Misa</h3>
+    <h3 class="font-semibold text-blue-700 mb-1">🧾 Hoá đơn MISA meInvoice (hoá đơn bán hàng, không VAT)</h3>
+    <p class="text-xs text-gray-500 mb-3">Đơn chuyển "Ship thành công" → tạo và phát hành hoá đơn. Tên hàng: ô "Tên xuất HĐ" của sản phẩm (tab Sản phẩm) → tên đang dùng ở trang Tên xuất HĐ theo Mã SP → tên sản phẩm. App ID do MISA cấp khi đăng ký kết nối API. Chạy thử ở môi trường Test trước.</p>
     <div class="grid gap-3">
+      <div><label class="text-xs text-gray-500">Môi trường</label><select id="cfg_misa_env" class="w-full text-sm"><option value="test">Test (testapi.meinvoice.vn)</option><option value="that">Chính thức (api.meinvoice.vn)</option></select></div>
       <div><label class="text-xs text-gray-500">App ID</label><input type="text" id="cfg_misa_app_id" class="w-full text-sm"></div>
-      <div><label class="text-xs text-gray-500">Access Token</label><input type="text" id="cfg_misa_access_token" class="w-full text-sm"></div>
       <div><label class="text-xs text-gray-500">Mã số thuế</label><input type="text" id="cfg_misa_tax_code" class="w-full text-sm"></div>
+      <div><label class="text-xs text-gray-500">Tài khoản meInvoice</label><input type="text" id="cfg_misa_username" class="w-full text-sm" autocomplete="off"></div>
+      <div><label class="text-xs text-gray-500">Mật khẩu meInvoice</label><input type="password" id="cfg_misa_password" class="w-full text-sm" autocomplete="new-password"></div>
+      <div><label class="text-xs text-gray-500">Ký hiệu hoá đơn (vd 2C26TAA — bấm Kiểm tra để xem)</label><input type="text" id="cfg_misa_inv_series" class="w-full text-sm"></div>
+      <div><label class="text-xs text-gray-500">Kiểu ký (2 = ký HSM trên máy chủ MISA)</label><input type="text" id="cfg_misa_sign_type" class="w-full text-sm" placeholder="2"></div>
+      <div><label class="text-xs text-gray-500">Đơn vị tính mặc định</label><input type="text" id="cfg_misa_dvt" class="w-full text-sm" placeholder="Cái"></div>
+      <div class="flex items-center gap-2"><input type="checkbox" id="cfg_misa_auto"><label for="cfg_misa_auto" class="text-sm">Tự động xuất khi đơn giao thành công</label></div>
+      <div><label class="text-xs text-gray-500">Áp dụng cho đơn giao thành công từ ngày (đơn trước đó không tự xuất)</label><input type="date" id="cfg_misa_tu_ngay" class="w-full text-sm"></div>
+      <div class="flex flex-wrap gap-2">
+        <button onclick="misaCheck(this)" class="bg-gray-200 px-3 py-1 rounded text-sm">🔑 Kiểm tra đăng nhập + ký hiệu</button>
+        <button onclick="misaPreview()" class="bg-gray-200 px-3 py-1 rounded text-sm">👁 Xem trước hoá đơn của đơn…</button>
+      </div>
+      <pre id="misaOut" class="text-xs bg-gray-50 p-2 rounded hidden whitespace-pre-wrap max-h-96 overflow-auto"></pre>
     </div>
   </div>
   <div class="bg-white rounded-xl p-5 shadow-sm mb-4">
@@ -940,7 +954,7 @@ async function loadOrders(page) {
       <td class="p-2 text-xs max-w-[180px] truncate" title="${esc(o.dia_chi_full)}">${esc(o.dia_chi_full||'')}</td>
       <td class="p-2 text-xs">${esc(o.san_pham||'')}</td><td class="p-2 text-right font-medium">${fmt(o.tong_tien)}</td>
       <td class="p-2 text-xs">${esc(o.nv_marketing||'')}</td><td class="p-2 text-xs">${esc(o.sale_phu_trach||'')}</td>
-      <td class="p-2 text-center">${badgeTT(o.trang_thai)}</td><td class="p-2 text-xs font-mono">${esc(o.ma_van_don||'')}</td>
+      <td class="p-2 text-center">${badgeTT(o.trang_thai)}${badgeHD(o)}</td><td class="p-2 text-xs font-mono">${esc(o.ma_van_don||'')}</td>
       <td class="p-2 text-center"><button onclick="openEditOrder(${o.id})" class="text-blue-600 text-xs hover:underline">Sửa</button> <button onclick="deleteOrder(${o.id})" class="text-red-500 text-xs hover:underline">Xóa</button></td>
     </tr>`).join('')||'<tr><td colspan="13" class="p-6 text-center text-gray-400">Chưa có đơn</td></tr>';
 
@@ -1885,17 +1899,51 @@ async function deleteUser(id,username){
 }
 
 // ========== CẤU HÌNH ==========
+const MISA_CFG=['misa_env','misa_app_id','misa_tax_code','misa_username','misa_password','misa_inv_series','misa_sign_type','misa_dvt','misa_tu_ngay'];
+function misaShow(o){const el=document.getElementById('misaOut');el.classList.remove('hidden');el.textContent=typeof o==='string'?o:JSON.stringify(o,null,2);}
+async function misaCheck(btn){
+  btn.disabled=true; misaShow('Đang kiểm tra (dùng cấu hình ĐÃ LƯU)…');
+  try{const d=await (await fetch(API+'/misa/check')).json();
+    misaShow(d.ok?`✅ Đăng nhập MISA (${d.env}) được.\n`+(d.templErr?'Lấy ký hiệu lỗi: '+d.templErr:'Ký hiệu hoá đơn:\n'+JSON.stringify(d.templates,null,2)):'❌ '+d.error);
+  }catch(e){misaShow('❌ '+e.message);} btn.disabled=false;
+}
+async function misaPreview(){
+  const id=prompt('Mã (ID) đơn OMS cần xem trước:'); if(!id)return;
+  const d=await (await fetch(API+'/misa/preview/'+encodeURIComponent(id.trim()))).json();
+  misaShow(d.ok?`Tên hàng lấy từ: ${d.item.nguon}\nTrạng thái: ${d.trang_thai} — HĐ: ${['Chưa','Đã phát hành','Đang gửi','Không rõ kết quả'][d.da_xuat_hd]||d.da_xuat_hd}${d.misa_loi?'\nLỗi lần trước: '+d.misa_loi:''}\n\n`+JSON.stringify(d.invoice,null,2):'❌ '+d.error);
+}
+async function bulkMisa(){
+  const ids=getSelectedIds(); if(!ids.length)return alert('Chọn đơn "Ship thành công" cần xuất hoá đơn');
+  if(!confirm(`Xuất hoá đơn MISA cho ${ids.length} đơn? Đơn "không rõ kết quả" sẽ được gửi lại — hãy kiểm tra trên MISA trước để tránh trùng.`))return;
+  const d=await (await fetch(API+'/misa/push',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({ids})})).json();
+  if(!d.ok)return alert('❌ '+(d.error||'Lỗi'));
+  alert(d.results.map(r=>`#${r.id}: `+(r.ok?'✅ HĐ số '+(r.invNo||'?'):r.skip?'bỏ qua — '+r.skip:'❌ '+r.error)).join('\n'));
+  loadOrders(currentPage);
+}
+function badgeHD(o){
+  if(o.da_xuat_hd==1)return `<div class="text-[10px] text-green-700 mt-0.5" title="${esc(o.misa_invoice_id||'')}">🧾 HĐ ${esc(o.misa_so_hd||'')}</div>`;
+  if(o.da_xuat_hd==3)return `<div class="text-[10px] text-orange-600 mt-0.5" title="${esc(o.misa_loi||'')}">🧾 không rõ — kiểm tra MISA</div>`;
+  if(o.da_xuat_hd==2)return `<div class="text-[10px] text-gray-500 mt-0.5">🧾 đang gửi…</div>`;
+  if(o.misa_loi)return `<div class="text-[10px] text-red-600 mt-0.5" title="${esc(o.misa_loi)}">🧾 lỗi HĐ</div>`;
+  return '';
+}
 async function loadConfig(){
   const r=await fetch(API+'/config'); if(!r.ok)return; const cfg=await r.json();
   ['ghtk_token','ghtk_shop_name','ghtk_pick_tel','ghtk_pick_address','ghtk_pick_province','ghtk_pick_district',
    'vtp_username','vtp_password','vtp_sender_name','vtp_sender_address','vtp_sender_phone',
-   'misa_app_id','misa_access_token','misa_tax_code'].forEach(f=>{const el=document.getElementById('cfg_'+f);if(el&&cfg[f])el.value=cfg[f];});
+   ...MISA_CFG].forEach(f=>{const el=document.getElementById('cfg_'+f);if(el&&cfg[f])el.value=cfg[f];});
+  document.getElementById('cfg_misa_auto').checked=cfg.misa_auto==='1';
 }
 async function saveConfig(){
   const body={};
   ['ghtk_token','ghtk_shop_name','ghtk_pick_tel','ghtk_pick_address','ghtk_pick_province','ghtk_pick_district',
    'vtp_username','vtp_password','vtp_sender_name','vtp_sender_address','vtp_sender_phone',
-   'misa_app_id','misa_access_token','misa_tax_code'].forEach(f=>{const el=document.getElementById('cfg_'+f);if(el)body[f]=el.value;});
+   ...MISA_CFG].forEach(f=>{const el=document.getElementById('cfg_'+f);if(el)body[f]=el.value.trim();});
+  body.misa_auto=document.getElementById('cfg_misa_auto').checked?'1':'0';
+  if(body.misa_auto==='1'&&!body.misa_tu_ngay){
+    body.misa_tu_ngay=new Date(Date.now()+7*3600e3).toISOString().slice(0,10);
+    document.getElementById('cfg_misa_tu_ngay').value=body.misa_tu_ngay;
+  }
   const r=await fetch(API+'/config',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});
   if((await r.json()).ok) alert('✅ Đã lưu');
 }
@@ -1942,6 +1990,8 @@ async function loadProducts(){
     <tr class="border-t hover:bg-gray-50">
       <td class="p-3 font-mono text-xs">${esc(p.ma_sp||'-')}</td>
       <td class="p-3 font-medium">${esc(p.ten_sp)}</td>
+      <td class="p-3 text-xs">${p.ten_xuat_hd?esc(p.ten_xuat_hd):'<span class="text-gray-400">theo trang Tên xuất HĐ / tên SP</span>'}${p.don_vi_tinh?' · '+esc(p.don_vi_tinh):''}
+        <button onclick="editProductHD(${p.id})" class="text-blue-600 hover:underline ml-1">Sửa</button></td>
       <td class="p-3 text-right">${fmt(p.gia_ban)}</td>
       <td class="p-3 text-right">${fmt(p.gia_nhap)}</td>
       <td class="p-3 text-xs">${esc(p.danh_muc||'')}</td>
@@ -1950,11 +2000,19 @@ async function loadProducts(){
         <button onclick="toggleProduct(${p.id},${p.active?0:1})" class="text-xs ${p.active?'text-red-500':'text-green-600'} hover:underline">${p.active?'Ẩn':'Hiện'}</button>
         <button onclick="deleteProduct(${p.id})" class="text-xs text-red-500 hover:underline ml-1">Xóa</button>
       </td>
-    </tr>`).join('')||'<tr><td colspan="7" class="p-6 text-center text-gray-400">Chưa có sản phẩm. Bấm "+ Thêm SP" hoặc "Import".</td></tr>';
+    </tr>`).join('')||'<tr><td colspan="8" class="p-6 text-center text-gray-400">Chưa có sản phẩm. Bấm "+ Thêm SP" hoặc "Import".</td></tr>';
   document.getElementById('productCount').textContent=allProducts.length+' sản phẩm';
   // Cập nhật dropdown SP trong modal Đăng ký link
   const sel=document.getElementById('lkProduct');
   if(sel) sel.innerHTML='<option value="">-- Chọn SP --</option>'+allProducts.filter(p=>p.active).map(p=>`<option value="${p.id}">${esc(p.ten_sp)} (${fmt(p.gia_ban)})</option>`).join('');
+}
+async function editProductHD(id){
+  const p=allProducts.find(x=>x.id===id); if(!p)return;
+  const ten=prompt(`Tên xuất hoá đơn MISA cho "${p.ten_sp}".\nĐể trống = dùng tên đang dùng ở trang Tên xuất HĐ (theo Mã SP ${p.ma_sp||'—'}), không có thì dùng tên sản phẩm.`,p.ten_xuat_hd||'');
+  if(ten===null)return;
+  const dvt=prompt('Đơn vị tính trên hoá đơn (để trống = mặc định trong Cấu hình):',p.don_vi_tinh||''); if(dvt===null)return;
+  const r=await fetch(API+'/products/'+id,{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify({ten_xuat_hd:ten.trim(),don_vi_tinh:dvt.trim()})});
+  if((await r.json()).ok)loadProducts(); else alert('❌ Lỗi lưu');
 }
 function openAddProduct(){ document.getElementById('addProductModal').classList.remove('hidden'); }
 function openImportProducts(){ document.getElementById('importProductModal').classList.remove('hidden'); }

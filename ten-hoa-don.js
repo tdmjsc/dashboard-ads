@@ -170,6 +170,13 @@ export function mountTenHoaDon(app, { json, guard, wrap, DATA_DIR, fetchWithTime
   }
   const tgEsc = s => String(s ?? '').replace(/[&<>]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;' }[c]));
   const findRule = id => STORE.rules.find(r => r.id === id);
+  // OMS xuất hoá đơn MISA dưới tên đang dùng của sản phẩm (theo Mã SP Sandbox). Đọc file mới nhất (nhiều tiến trình).
+  // Lưu ý: hoá đơn OMS không nằm trong số "đã xuất HĐ" (chỉ đếm hoá đơn Sandbox).
+  global.__tenHoaDonTheoMa = ma => {
+    const k = String(ma || '').trim().toLowerCase(); if (!k) return '';
+    const r = readStore().rules.find(x => String(x.maSP || '').trim().toLowerCase() === k && x.queue?.length);
+    return r ? r.queue[Math.min(r.activeIdx || 0, r.queue.length - 1)]?.ten || '' : '';
+  };
   const findIn = (s, id) => s.rules.find(r => r.id === id);
 
   // Tồn MISA hiện tại gộp theo mã hàng (cùng khoá với trang Tồn kho)

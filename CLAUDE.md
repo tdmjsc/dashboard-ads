@@ -54,3 +54,10 @@ Telegram không cho bot lấy danh sách thành viên → bot ghi nhớ người
 ## Báo đơn lỗi Shopee/TikTok (`don-loi-san.js`)
 
 Mỗi 2 tiếng máy chủ (phiên web `global.__sandboxAuth`) đọc trang Sandbox "Danh sách đơn hàng lỗi TMĐT": `orderlogistic/api/DonHang/CRM_GetOrderCreateError` (`ecommerceCode` SHOPEE/TIKTOK bắt buộc, `sorts: []` bắt buộc, 7 ngày gần nhất) và gian hàng lỗi token `warehouse/api/UnitConnect/CRM_GetListUnitConnect` (`isErrorToken: true`), rồi nhắn đơn lỗi / gian hàng lỗi **mới** vào nhóm kho qua `global.__khoNotify`. Id đã báo lưu ở `DATA_DIR/don-loi-san.json` (đánh dấu trong `commit` trước khi gửi → nhiều tiến trình không báo trùng; gửi lỗi thì bỏ đánh dấu). Endpoint lấy từ mã JS Sandbox 18/10/2026, lúc đó chưa có đơn lỗi thật nên tên trường đơn (`partnerOrderCode`, `description`, `updatedDate`, `unitConnectId`) theo cột bảng trên trang. Xem / chạy ngay: `/api/don-loi-san?check=1` (admin).
+
+## OMS: xuất hoá đơn MISA khi giao thành công (`misa-hoadon.js`, `issueInvoice` trong `oms.js`)
+
+Hoá đơn **bán hàng hộ kinh doanh, không VAT** qua API tích hợp MISA meInvoice. Đơn chuyển "Ship thành công" (sửa tay hoặc đồng bộ GHTK/VTP) → ghi `ngay_giao` → nếu bật "Tự động" và `ngay_giao` ≥ "Áp dụng từ ngày" thì tạo + phát hành. Đơn lỗi tự thử lại mỗi 30 phút (tối đa 5 lần); admin bấm "🧾 Xuất HĐ MISA" để gửi tay.
+- Tên hàng: `oms_products.ten_xuat_hd` → tên đang dùng ở trang Tên xuất HĐ theo Mã SP (`global.__tenHoaDonTheoMa`) → tên SP OMS → chữ trong đơn. Hoá đơn OMS **không** được đếm vào "đã xuất HĐ" của trang Tên xuất HĐ (trang đó chỉ đếm hoá đơn Sandbox).
+- `da_xuat_hd`: 0 chưa, 1 đã phát hành, 2 đang gửi (đã "giành" bằng `UPDATE … WHERE da_xuat_hd=0` → nhiều tiến trình không xuất trùng), 3 không rõ kết quả (mất mạng/quá giờ khi gửi — không tự gửi lại; kiểm tra trên MISA). `RefID` cố định theo id đơn.
+- **Endpoint và tên trường meInvoice CHƯA đối chiếu với tài liệu** (doc.meinvoice.vn bị chặn trong môi trường dev). Kiểm tra bằng môi trường Test: Cấu hình → "Kiểm tra đăng nhập + ký hiệu", "Xem trước hoá đơn" (`/oms/api/misa/preview/:id`), rồi xuất thử 1 đơn.
