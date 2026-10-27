@@ -522,7 +522,7 @@ app.use(session({
 app.use(express.urlencoded({ extended: false }));
 app.use(express.json());
 
-function loginPage(error) {
+function loginPage(error, next) {
   return `<!DOCTYPE html><html lang="vi"><head><meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0"><title>Đăng nhập — Check ADS TDMJSC</title>
 <style>
@@ -540,19 +540,47 @@ function loginPage(error) {
   <label>Tên đăng nhập</label><input name="user" autocomplete="username" required>
   <label>Mật khẩu</label><input name="pass" type="password" autocomplete="current-password" required>
   ${error ? '<div class="err">Sai tên đăng nhập hoặc mật khẩu.</div>' : ''}
+  ${SSO_NEXT.includes(next) ? `<input type="hidden" name="next" value="${next}">` : ''}
   <button type="submit">Đăng nhập</button>
 </form></body></html>`;
 }
 
-app.get('/login', (req, res) => res.send(loginPage(req.query.error)));
+app.get('/login', (req, res) => res.send(loginPage(req.query.error, req.query.next)));
 app.post('/login', (req, res) => {
   const { user, pass } = req.body;
   const u = USERS.find(x => x.user === user && x.pass === pass);
   if (!u) return res.redirect('/login?error=1');
   req.session.user = { user: u.user, role: u.role, employees: u.employees || [], manager: u.manager || '', salaryName: u.salaryName || '', khongBoGhim: !!u.khongBoGhim };
+  // Đăng nhập từ nút "Chat TMĐT" → quay lại đó (chỉ nhận đường dẫn trong danh sách cho phép)
+  if (SSO_NEXT.includes(req.body.next)) return res.redirect(req.body.next);
   res.redirect(u.role === 'product' ? '/products.html' : (u.role === 'staff' ? '/my-salary.html' : '/'));
 });
 app.get('/logout', (req, res) => req.session.destroy(() => res.redirect('/login')));
+
+// ===================================================================
+//  SANG tmdt.tdmjsc.com (Chat TMĐT + Facebook) BẰNG TÀI KHOẢN ADS
+//  Tạo "vé" ký HMAC bằng TMDT_SSO_SECRET (giống hệt ở .env của tmdt), hạn 60 giây,
+//  tmdt chỉ nhận mỗi vé 1 lần. Chỉ admin và marketing (viewer) được sang.
+//  Đặt TRƯỚC middleware đăng nhập để người chưa đăng nhập được đưa về /login?next=/go-tmdt.
+// ===================================================================
+const SSO_NEXT = ['/go-tmdt'];
+const TMDT_URL = (process.env.TMDT_URL || 'https://tmdt.tdmjsc.com').replace(/\/$/, '');
+app.get('/go-tmdt', (req, res) => {
+  const me = req.session && req.session.user;
+  if (!me) return res.redirect('/login?next=/go-tmdt');
+  if (!['admin', 'viewer'].includes(me.role)) return res.status(403).send('Tài khoản của bạn không được vào mục Chat TMĐT.');
+  const secret = process.env.TMDT_SSO_SECRET;
+  if (!secret) return res.status(500).send('Chưa cấu hình TMDT_SSO_SECRET trong .env.');
+  const payload = Buffer.from(JSON.stringify({
+    u: me.user,
+    role: me.role,
+    name: me.salaryName || me.user,
+    exp: Date.now() + 60_000,
+    n: crypto.randomBytes(12).toString('hex'),
+  })).toString('base64url');
+  const sig = crypto.createHmac('sha256', secret).update(payload).digest('base64url');
+  res.redirect(`${TMDT_URL}/sso?t=${payload}.${sig}`);
+});
 
 // ===================================================================
 //  GẮN MODULE THÁI LAN (an toàn — lỗi ở đây KHÔNG làm sập app chính)

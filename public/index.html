@@ -231,6 +231,7 @@
 /* Ẩn sẵn menu admin để tránh hiện nhấp nháy với nhân viên; JS sẽ hiện lại nếu là admin */
 #navProducts, #navSalary, #navSalaryProduct, #navKQKD, #navEmployees, #navDongTien, #navTonKho { display: none; }
 #navMySalary { display: none; }
+#navTmdt { display: none; }
 </style>
 </head>
 <body>
@@ -262,6 +263,7 @@
         <a href="/employees.html" class="logout" id="navEmployees">👥 Nhân viên</a>
         <a href="/my-salary.html" class="logout" id="navMySalary">Lương của tôi</a>
         <a href="/thailand" class="logout" id="navThailand">🇹🇭 Đơn Thái Lan</a>
+        <a href="/go-tmdt" class="logout" id="navTmdt" title="Chat sàn TMĐT + Facebook (tmdt.tdmjsc.com)">💬 Chat TMĐT</a>
         <span class="user-badge" id="userBadge"></span>
         <a href="/logout" class="logout">Đăng xuất</a>
       </div>
@@ -430,6 +432,8 @@ async function loadData(opts){
       const ndt=document.getElementById('navDongTien'); if(ndt) ndt.style.display = (isAdmin && !data.me.khongBoGhim) ? 'inline-block' : 'none';
       // "Lương của tôi": chỉ nhân viên cần (admin đã có bảng đầy đủ)
       const nms=document.getElementById('navMySalary'); if(nms) nms.style.display = isAdmin ? 'none' : 'inline-block';
+      // Chat TMĐT (tmdt.tdmjsc.com): admin + marketing
+      const nt=document.getElementById('navTmdt'); if(nt) nt.style.display = ['admin','viewer'].includes(data.me.role) ? 'inline-block' : 'none';
     }
     DAYS=data.days; CAMPAIGNS=data.campaigns;
     /* dựng danh sách tài khoản từ dữ liệu */
@@ -750,6 +754,8 @@ async function setupMenu(){
     // Dòng tiền: CHỈ admin thật (ẩn với kế toán khongBoGhim)
     const ndt=document.getElementById('navDongTien'); if(ndt) ndt.style.display = (isAdmin && !me.khongBoGhim) ? 'inline-block' : 'none';
     const nms=document.getElementById('navMySalary'); if(nms) nms.style.display = isAdmin ? 'none' : 'inline-block';
+    // Chat TMĐT (tmdt.tdmjsc.com): admin + marketing
+    const nt=document.getElementById('navTmdt'); if(nt) nt.style.display = ['admin','viewer'].includes(me.role) ? 'inline-block' : 'none';
     const rc=document.getElementById('reloadCacheBtn'); if(rc) rc.style.display = isAdmin ? 'inline-block' : 'none';
     const pb=document.getElementById('pinCacheBtn'); if(pb) pb.style.display = isAdmin ? 'inline-block' : 'none';
     const ub=document.getElementById('userBadge'); if(ub&&me.displayName) ub.textContent='👤 '+me.displayName;
