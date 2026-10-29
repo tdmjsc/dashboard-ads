@@ -394,21 +394,21 @@ function omsAdset(o,a){
   return o&&o.adsets&&a.id&&o.adsets[a.id]?{key:a.id,v:o.adsets[a.id]}:null;
 }
 /* Đơn Meta (Pixel) của 1 chiến dịch: cộng theo ngày; has=false khi dữ liệu Ads nạp trước khi có số này */
-function metaSum(c){let don=0,dt=0,has=false;(c.daily||[]).forEach(d=>{if(d.mDon!==undefined)has=true;don+=d.mDon||0;dt+=d.mDt||0;});return{don,dt,has};}
+function metaSum(c){let don=0,has=false;(c.daily||[]).forEach(d=>{if(d.mDon!==undefined)has=true;don+=d.mDon||0;});return{don,has};}
 /* dòng "Meta: x đơn" dưới số OMS */
 function metaLine(m){
   if(!m||!m.has) return '';
-  return `<div style="font-size:11px;color:#3949AB;margin-top:3px" title="Đơn Pixel ghi nhận trên Trình quản lý quảng cáo">Meta: <b>${fmtVND(m.don)}</b> đơn${m.dt?` · ${fmtVND(m.dt)} ₫`:''}</div>`;
+  return `<div style="font-size:11px;color:#3949AB;margin-top:3px" title="Đơn Pixel ghi nhận trên Trình quản lý quảng cáo">Meta: <b>${fmtVND(m.don)}</b> đơn</div>`;
 }
-/* ô số đơn: đơn · chốt, dưới là CP/đơn + doanh thu chốt, rồi số đơn Meta để đối chiếu */
+/* ô số đơn: số đơn về OMS + CP/đơn, rồi số đơn Meta để đối chiếu */
 function omsCell(o,spent,m){
   let h;
   if(OMS_STATE==='loading') h='<span style="color:var(--faint)">…</span>';
   else if(OMS_STATE==='na') h=`<span style="color:var(--faint)" title="Đơn OMS chỉ tính từ ${dayLbl(OMS.tu)}">—</span>`;
   else if(OMS_STATE!=='ok') h='<span style="color:var(--faint)" title="Chưa đọc được OMS">—</span>';
   else if(!o||!o.don) h='<span style="color:var(--faint)">0</span>';
-  else h=`<span class="res">${fmtVND(o.don)}<small>đơn · ${fmtVND(o.chot)} chốt</small></span>
-    <div style="font-size:11px;color:var(--faint);margin-top:2px">CP/đơn ${fmtVND(Math.round(spent/o.don))} ₫${o.doanhThu?`<br>DT chốt ${fmtVND(o.doanhThu)} ₫`:''}</div>`;
+  else h=`<span class="res">${fmtVND(o.don)}<small>đơn</small></span>
+    <div style="font-size:11px;color:var(--faint);margin-top:2px">CP/đơn ${fmtVND(Math.round(spent/o.don))} ₫</div>`;
   return h+metaLine(m);
 }
 
@@ -666,7 +666,7 @@ function adsetBlock(c){
   const rows=list.map(a=>{
     const sTax=withTax(a.spent), cprVal=a.results?Math.round(a.spent/a.results):0, cprTax=a.results?Math.round(sTax/a.results):0;
     const m=omsAdset(o,a); if(m) used.add(m.key);
-    const od=m?m.v:{don:0,chot:0,doanhThu:0};
+    const od=m?m.v:{don:0};
     return `<div class="adset">
       <div class="adset-head"><span class="adset-name">${a.on?'':'⏸ '}${a.name}</span><span class="adset-budget">NS: ${a.budget?fmtVND(a.budget)+' ₫/ngày':'theo chiến dịch'}</span></div>
       <div class="adset-metrics">
@@ -676,12 +676,9 @@ function adsetBlock(c){
         <span><b>${fmtVND(cprVal)} ₫</b><small>CP/kết quả</small></span>
         <span><b style="color:#9A7B2E">${fmtVND(cprTax)} ₫</b><small>CP/KQ sau thuế</small></span>
         ${oms?`<span><b>${fmtVND(od.don)}</b><small>đơn OMS</small></span>
-        <span><b>${fmtVND(od.chot)}</b><small>đơn chốt</small></span>
-        <span><b>${od.don?fmtVND(Math.round(a.spent/od.don))+' ₫':'—'}</b><small>CP/đơn</small></span>
-        <span><b>${fmtVND(od.doanhThu)} ₫</b><small>DT chốt</small></span>`:''}
+        <span><b>${od.don?fmtVND(Math.round(a.spent/od.don))+' ₫':'—'}</b><small>CP/đơn</small></span>`:''}
         ${a.mDon!==undefined?`<span><b style="color:#3949AB">${fmtVND(a.mDon)}</b><small>đơn Meta</small></span>
-        <span><b style="color:#3949AB">${a.mDon?fmtVND(Math.round(a.spent/a.mDon))+' ₫':'—'}</b><small>CP/đơn Meta</small></span>
-        ${a.mDt?`<span><b style="color:#3949AB">${fmtVND(a.mDt)} ₫</b><small>DT Meta</small></span>`:''}`:''}
+        <span><b style="color:#3949AB">${a.mDon?fmtVND(Math.round(a.spent/a.mDon))+' ₫':'—'}</b><small>CP/đơn Meta</small></span>`:''}
       </div>
     </div>`;
   }).join('');
@@ -690,7 +687,7 @@ function adsetBlock(c){
   if(o&&o.adsets){
     const rest=Object.entries(o.adsets).filter(([k])=>!used.has(k)).sort((x,y)=>y[1].don-x[1].don);
     if(rest.length) extra=`<div class="detail-title" style="margin-top:10px">Đơn OMS ngoài các nhóm trên: `+
-      rest.map(([k,v])=>`${k?esc(v.name||('Nhóm '+k)):'chưa rõ nhóm'}: <b>${fmtVND(v.don)}</b> đơn (${fmtVND(v.chot)} chốt)`).join(' · ')+`</div>`;
+      rest.map(([k,v])=>`${k?esc(v.name||('Nhóm '+k)):'chưa rõ nhóm'}: <b>${fmtVND(v.don)}</b> đơn`).join(' · ')+`</div>`;
   }
   if(!list.length) return `<div class="detail-title">Không có nhóm quảng cáo nào có chi tiêu trong khoảng ngày này.</div>${extra}`;
   return `<div class="detail-title">${list.length} nhóm quảng cáo có chi tiêu</div>${rows}${extra}`;
