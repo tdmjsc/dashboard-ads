@@ -620,7 +620,7 @@
     <input type="hidden" id="lkEditId" value="">
     <div class="grid gap-3">
       <div><label class="text-xs text-gray-500">URL landing page *</label><input type="text" id="lkUrl" class="w-full text-sm" placeholder="sp-phuong.ladipage.com"></div>
-      <div><label class="text-xs text-gray-500">Sản phẩm *</label><select id="lkProduct" class="w-full text-sm"><option value="">-- Chọn SP --</option></select></div>
+      <div><label class="text-xs text-gray-500">Sản phẩm *</label><input type="search" id="lkProductSearch" class="w-full text-sm mb-1" placeholder="🔍 Gõ tên / mã SP để tìm..." oninput="filterLkProducts()" autocomplete="off"><select id="lkProduct" class="w-full text-sm"><option value="">-- Chọn SP --</option></select></div>
       <div><label class="text-xs text-gray-500">NV Marketing *</label><input type="text" id="lkNv" class="w-full text-sm" placeholder="Tên đầy đủ NV"></div>
       <div><label class="text-xs text-gray-500">Nguồn dữ liệu</label><input type="text" id="lkNguon" class="w-full text-sm" placeholder="Facebook, Google, Tiktok..."></div>
       <div><label class="text-xs text-gray-500">Ghi chú</label><input type="text" id="lkNote" class="w-full text-sm"></div>
@@ -1964,8 +1964,22 @@ async function loadProducts(){
     </tr>`).join('')||'<tr><td colspan="7" class="p-6 text-center text-gray-400">Chưa có sản phẩm. Bấm "+ Thêm SP" hoặc "Import".</td></tr>';
   document.getElementById('productCount').textContent=allProducts.length+' sản phẩm';
   // Cập nhật dropdown SP trong modal Đăng ký link
-  const sel=document.getElementById('lkProduct');
-  if(sel) sel.innerHTML='<option value="">-- Chọn SP --</option>'+allProducts.filter(p=>p.active).map(p=>`<option value="${p.id}">${esc(p.ten_sp)} (${fmt(p.gia_ban)})</option>`).join('');
+  filterLkProducts();
+}
+// Bỏ dấu để tìm "bang ve" ra "Bảng Vẽ"
+function lkNorm(s){ return String(s||'').normalize('NFD').replace(/[\u0300-\u036f]/g,'').replace(/đ/g,'d').replace(/Đ/g,'D').toLowerCase(); }
+let lkExtraOpt=null; // SP đang gắn nhưng đã bị ẩn (khi sửa link)
+// Dựng lại dropdown SP theo ô tìm (iOS không ẩn được <option> bằng CSS nên phải dựng lại)
+function filterLkProducts(){
+  const sel=document.getElementById('lkProduct'); if(!sel) return;
+  const words=lkNorm(document.getElementById('lkProductSearch')?.value).split(/\s+/).filter(Boolean);
+  const cur=sel.value;
+  const list=allProducts.filter(p=>p.active).map(p=>({id:String(p.id),label:`${p.ten_sp} (${fmt(p.gia_ban)})`,key:lkNorm(p.ten_sp+' '+(p.ma_sp||''))}));
+  if(lkExtraOpt && !list.some(x=>x.id===lkExtraOpt.id)) list.push(lkExtraOpt);
+  const hits=list.filter(x=>words.every(w=>x.key.includes(w)));
+  sel.innerHTML=`<option value="">${words.length?`-- ${hits.length} SP khớp --`:'-- Chọn SP --'}</option>`+hits.map(x=>`<option value="${x.id}">${esc(x.label)}</option>`).join('');
+  // Giữ SP đang chọn nếu còn khớp, không thì chọn sẵn SP khớp đầu tiên
+  sel.value=hits.some(x=>x.id===cur)?cur:(words.length&&hits[0]?hits[0].id:'');
 }
 function openAddProduct(){ document.getElementById('addProductModal').classList.remove('hidden'); }
 function openImportProducts(){ document.getElementById('importProductModal').classList.remove('hidden'); }
@@ -2043,8 +2057,10 @@ async function showLinkModal(lk){
   document.getElementById('lkUrl').value=lk?.url_pattern||'';
   const sel=document.getElementById('lkProduct');
   // SP đang gắn có thể đã bị ẩn (không có trong dropdown) → thêm tạm để không mất khi lưu
-  if(lk?.product_id && !sel.querySelector(`option[value="${lk.product_id}"]`))
-    sel.insertAdjacentHTML('beforeend',`<option value="${lk.product_id}">${esc(lk.product_name||lk.ten_sp||('SP #'+lk.product_id))}</option>`);
+  lkExtraOpt=lk?.product_id?{id:String(lk.product_id),label:lk.product_name||lk.ten_sp||('SP #'+lk.product_id),key:lkNorm(lk.product_name||lk.ten_sp)}:null;
+  document.getElementById('lkProductSearch').value='';
+  sel.value='';
+  filterLkProducts();
   sel.value=lk?.product_id||'';
   const nvField=document.getElementById('lkNv');
   nvField.value=lk?lk.nv_marketing:(currentUser?.ho_ten||'');
