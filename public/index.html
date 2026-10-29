@@ -324,7 +324,7 @@
         <table>
           <thead><tr>
             <th>Trạng thái</th><th>Tên chiến dịch</th><th class="r">Ngân sách</th>
-            <th class="r">Đã chi tiêu</th><th class="r">Đã chi tiêu<br>sau thuế</th><th class="r">Kết quả</th><th class="r">Chi phí / kết quả</th><th class="r">CP/kết quả<br>sau thuế</th><th class="r">Đơn OMS<br>/ Meta</th><th class="r">Link</th>
+            <th class="r">Đã chi tiêu</th><th class="r">Đã chi tiêu<br>sau thuế</th><th class="r">Kết quả</th><th class="r">Chi phí / kết quả</th><th class="r">CP/kết quả<br>sau thuế</th><th class="r">Link</th>
           </tr></thead>
           <tbody id="rows"></tbody>
         </table>
@@ -386,7 +386,7 @@ async function loadOms(since,until){
     // Khoảng ngày trước ngày bắt đầu gắn ID quảng cáo (d.tu) → không có số, hiện '—'
     if(d&&d.ok){ OMS=d; OMS_STATE=d.tu>until?'na':'ok'; } else OMS_STATE='err';
   }catch(e){ if(range===OMS_RANGE) OMS_STATE='err'; }
-  if(state.view==='camp') renderCamp();
+  render();   // kết quả + CP/kết quả đổi sang đơn OMS (cả ô tổng phía trên)
 }
 const omsCamp=c=>OMS&&OMS.camps?OMS.camps[c.id]:null;
 /* nhóm quảng cáo: khớp theo id nhóm */
@@ -399,17 +399,6 @@ function metaSum(c){let don=0,has=false;(c.daily||[]).forEach(d=>{if(d.mDon!==un
 function metaLine(m){
   if(!m||!m.has) return '';
   return `<div style="font-size:11px;color:#3949AB;margin-top:3px" title="Đơn Pixel ghi nhận trên Trình quản lý quảng cáo">Meta: <b>${fmtVND(m.don)}</b> đơn</div>`;
-}
-/* ô số đơn: số đơn về OMS + CP/đơn, rồi số đơn Meta để đối chiếu */
-function omsCell(o,spent,m){
-  let h;
-  if(OMS_STATE==='loading') h='<span style="color:var(--faint)">…</span>';
-  else if(OMS_STATE==='na') h=`<span style="color:var(--faint)" title="Đơn OMS chỉ tính từ ${dayLbl(OMS.tu)}">—</span>`;
-  else if(OMS_STATE!=='ok') h='<span style="color:var(--faint)" title="Chưa đọc được OMS">—</span>';
-  else if(!o||!o.don) h='<span style="color:var(--faint)">0</span>';
-  else h=`<span class="res">${fmtVND(o.don)}<small>đơn</small></span>
-    <div style="font-size:11px;color:var(--faint);margin-top:2px">CP/đơn ${fmtVND(Math.round(spent/o.don))} ₫</div>`;
-  return h+metaLine(m);
 }
 
 /* mặc định: HÔM NAY (dùng giờ máy = giờ VN) */
@@ -644,12 +633,23 @@ function setView(v){
 }
 
 /* tổng chi/kết quả của 1 chiến dịch trong toàn khoảng đã tải */
-function sums(c){let s=0,r=0;(c.daily||[]).forEach(d=>{s+=d.spent;r+=d.results;});return{s,r};}
+/* Kết quả = đơn về OMS khi đọc được OMS, trừ chiến dịch tin nhắn chưa có đơn OMS nào (đơn qua inbox
+   không về OMS) → giữ kết quả Meta. CP/kết quả = chi tiêu / số đơn OMS. */
+function useOms(c){
+  if(OMS_STATE!=='ok') return false;
+  const o=omsCamp(c);
+  return !!(o&&o.don)||c.obj!=='tin nhắn';
+}
+function sums(c){
+  let s=0,r=0;(c.daily||[]).forEach(d=>{s+=d.spent;r+=d.results;});
+  if(useOms(c)) return {s,r:(omsCamp(c)||{}).don||0,obj:'đơn OMS',oms:true};
+  return{s,r,obj:c.obj};
+}
 
 /* màu chi phí/kết quả: so với trung bình cùng loại mục tiêu */
 function buildCprBenchmark(list){
   const g={};
-  list.forEach(c=>{const {s,r}=sums(c);const k=c.obj||'kết quả';g[k]=g[k]||{s:0,r:0};g[k].s+=s;g[k].r+=r;});
+  list.forEach(c=>{const {s,r,obj}=sums(c);const k=obj||'kết quả';g[k]=g[k]||{s:0,r:0};g[k].s+=s;g[k].r+=r;});
   const avg={}; for(const k in g) avg[k]=g[k].r?g[k].s/g[k].r:0;
   return avg;
 }
@@ -662,21 +662,21 @@ function toggleCamp(id){ if(state.expanded.has(id)) state.expanded.delete(id); e
 function adsetBlock(c){
   const list=(c.adsets||[]).filter(a=>a.spent>0).sort((a,b)=>b.spent-a.spent);
   const o=omsCamp(c), used=new Set();
-  const oms=OMS_STATE==='ok';
+  const om=useOms(c);
   const rows=list.map(a=>{
-    const sTax=withTax(a.spent), cprVal=a.results?Math.round(a.spent/a.results):0, cprTax=a.results?Math.round(sTax/a.results):0;
+    const sTax=withTax(a.spent);
     const m=omsAdset(o,a); if(m) used.add(m.key);
-    const od=m?m.v:{don:0};
+    // Chiến dịch tính theo đơn OMS → kết quả của nhóm cũng là đơn OMS của nhóm
+    const res=om?(m?m.v.don:0):a.results, resLbl=om?'đơn OMS':c.obj;
+    const cprVal=res?Math.round(a.spent/res):0, cprTax=res?Math.round(sTax/res):0;
     return `<div class="adset">
       <div class="adset-head"><span class="adset-name">${a.on?'':'⏸ '}${a.name}</span><span class="adset-budget">NS: ${a.budget?fmtVND(a.budget)+' ₫/ngày':'theo chiến dịch'}</span></div>
       <div class="adset-metrics">
         <span><b>${fmtVND(a.spent)} ₫</b><small>đã chi</small></span>
         <span><b style="color:#9A7B2E">${fmtVND(sTax)} ₫</b><small>sau thuế</small></span>
-        <span><b>${fmtVND(a.results)}</b><small>${c.obj}</small></span>
-        <span><b>${fmtVND(cprVal)} ₫</b><small>CP/kết quả</small></span>
-        <span><b style="color:#9A7B2E">${fmtVND(cprTax)} ₫</b><small>CP/KQ sau thuế</small></span>
-        ${oms?`<span><b>${fmtVND(od.don)}</b><small>đơn OMS</small></span>
-        <span><b>${od.don?fmtVND(Math.round(a.spent/od.don))+' ₫':'—'}</b><small>CP/đơn</small></span>`:''}
+        <span><b>${fmtVND(res)}</b><small>${resLbl}</small></span>
+        <span><b${om&&!res?' style="color:#C2412D"':''}>${om&&!res?'Chưa có đơn':fmtVND(cprVal)+' ₫'}</b><small>CP/kết quả</small></span>
+        <span><b style="color:#9A7B2E">${om&&!res?'—':fmtVND(cprTax)+' ₫'}</b><small>CP/KQ sau thuế</small></span>
         ${a.mDon!==undefined?`<span><b style="color:#3949AB">${fmtVND(a.mDon)}</b><small>đơn Meta</small></span>
         <span><b style="color:#3949AB">${a.mDon?fmtVND(Math.round(a.spent/a.mDon))+' ₫':'—'}</b><small>CP/đơn Meta</small></span>`:''}
       </div>
@@ -749,14 +749,15 @@ function renderCamp(){
   if(mAll.some(m=>m.has)) cnt+=` · Meta ${fmtVND(mAll.reduce((t,m)=>t+m.don,0))} đơn`;
   document.getElementById('panel-count').textContent=cnt;
   const tb=document.getElementById('rows');
-  if(!list.length){tb.innerHTML=`<tr><td colspan="10"><div class="empty"><b>Không có chiến dịch nào</b>Thử đổi bộ lọc hoặc khoảng ngày.</div></td></tr>`;return;}
+  if(!list.length){tb.innerHTML=`<tr><td colspan="9"><div class="empty"><b>Không có chiến dịch nào</b>Thử đổi bộ lọc hoặc khoảng ngày.</div></td></tr>`;return;}
   tb.innerHTML=list.map(c=>{
-    const acc=accOf(c.acc)||{name:c.accName,color:'#888'}, nv=empOf(c), {s,r}=sums(c);
+    const acc=accOf(c.acc)||{name:c.accName,color:'#888'}, nv=empOf(c), {s,r,obj}=sums(c);
     const budgetWindow=(c.budget||0)*nDays;
     const pct=budgetWindow?Math.min(100,Math.round(s/budgetWindow*100)):0;
     const barCls=pct>=100?'over':(pct>=90?'warn':'');
-    const cprVal=r?Math.round(s/r):0, cls=cprClass(cprVal,c.obj,bench);
+    const cprVal=r?Math.round(s/r):0, cls=cprClass(cprVal,obj,bench);
     const sTax=withTax(s), cprTax=r?Math.round(sTax/r):0;
+    const noOrder=obj==='đơn OMS'&&!r&&s>0;   // đã chi mà chưa có đơn OMS nào
     const exp=state.expanded.has(c.id);
     const nAdsets=(c.adsets||[]).filter(a=>a.spent>0).length;
     return `<tr>
@@ -765,12 +766,11 @@ function renderCamp(){
       <td class="r" data-label="Ngân sách"><span class="money">${fmtVND(c.budget||0)}<span class="cur">₫</span></span><div style="font-size:11px;color:var(--faint);margin-top:2px">/ ngày</div></td>
       <td class="r" data-label="Đã chi tiêu"><div class="spendcell"><span class="money">${fmtVND(s)}<span class="cur">₫</span></span><div class="spendbar"><i class="${barCls}" style="width:${pct}%"></i></div><div class="pct">${pct}% NS kỳ này</div></div></td>
       <td class="r" data-label="Sau thuế"><span class="money" style="color:#9A7B2E">${fmtVND(sTax)}<span class="cur">₫</span></span></td>
-      <td class="r" data-label="Kết quả"><span class="res">${fmtVND(r)}<small>${c.obj}</small></span></td>
-      <td class="r" data-label="CP/kết quả"><span class="cpr ${cls}">${fmtVND(cprVal)} ₫</span></td>
-      <td class="r" data-label="CP/KQ sau thuế"><span class="money" style="color:#9A7B2E">${fmtVND(cprTax)} ₫</span></td>
-      <td class="r" data-label="Đơn OMS / Meta">${omsCell(omsCamp(c),s,metaSum(c))}</td>
+      <td class="r" data-label="Kết quả"><span class="res">${fmtVND(r)}<small>${obj}</small></span>${metaLine(metaSum(c))}</td>
+      <td class="r" data-label="CP/kết quả">${noOrder?'<span class="cpr bad">Chưa có đơn</span>':`<span class="cpr ${cls}">${fmtVND(cprVal)} ₫</span>`}</td>
+      <td class="r" data-label="CP/KQ sau thuế"><span class="money" style="color:#9A7B2E">${noOrder?'—':fmtVND(cprTax)+' ₫'}</span></td>
       <td class="r" data-label="Link">${c.link?`<a class="adlink" href="${c.link}" target="_blank" rel="noopener">Xem bài ↗</a>`:'<span style="color:var(--faint)">—</span>'}</td>
-    </tr>${exp?`<tr class="detail-row"><td colspan="10">${adsetBlock(c)}</td></tr>`:''}`;}).join('');
+    </tr>${exp?`<tr class="detail-row"><td colspan="9">${adsetBlock(c)}</td></tr>`:''}`;}).join('');
 }
 
 function renderEmp(){
