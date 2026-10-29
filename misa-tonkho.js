@@ -278,7 +278,10 @@ export async function renewSession(cfg, fetchImpl) {
       break;
     }
     if (isCb(next)) { cb = next; break; }
-    if (!/(^|\.)misa\.vn$/.test(next.hostname) || next.protocol !== 'https:') { why = 'bị chuyển ra ngoài MISA'; break; }
+    // Phiên AMIS hết (vd tài khoản vừa đăng nhập/đăng xuất ở máy khác): MISA không trả callback mà đẩy sang
+    // hkd.misa.vn/api/oauth/amis/login (→ www.misaeshop.vn). Cùng lúc đó trình duyệt còn phiên thì vẫn ra callback (29/10/2026).
+    if (/\/oauth\/.*login/i.test(next.pathname)) { why = 'phiên AMIS trong request đã dán không còn hiệu lực (MISA chuyển sang trang đăng nhập ' + next.host + next.pathname + ')'; break; }
+    if (!/(^|\.)misa\.vn$/.test(next.hostname) || next.protocol !== 'https:') { why = 'bị chuyển ra ngoài MISA (' + next.protocol + '//' + next.host + next.pathname + ')'; break; }
     if (/^\/(login|account\/login)/i.test(next.pathname) || next.hostname === 'id.misa.vn') { why = 'MISA đòi đăng nhập lại (' + next.host + next.pathname + ')'; break; }
     url = next.href;
   }
