@@ -212,6 +212,22 @@ function countResults(actions = [], objective = '') {
   return { value: 0, label: rule.label };
 }
 
+// Đơn Meta (Pixel) ghi nhận, để đối chiếu với đơn OMS trên trang Ads: sự kiện mua hàng
+// (lấy loại đầu tiên có số, tránh cộng trùng omni_purchase với purchase); không có thì lấy lead
+// (trang Ladipage có thể bắn Lead khi gửi form). dt = giá trị mua hàng (action_values).
+const META_ORDER_TYPES = [RESULT_RULES[1].types, RESULT_RULES[2].types];
+function metaOrders(actions = [], values = []) {
+  for (const types of META_ORDER_TYPES) {
+    for (const t of types) {
+      const hit = actions.find(a => a.action_type === t);
+      if (!hit) continue;
+      const v = values.find(a => a.action_type === t);
+      return { don: Number(hit.value) || 0, dt: Number(v && v.value) || 0 };
+    }
+  }
+  return { don: 0, dt: 0 };
+}
+
 /* ─────────────────────────────────────────────────────────────────────────
    XỬ LÝ GIỚI HẠN TẦN SUẤT (RATE LIMIT) CỦA META  — mã 80004/subcode 2446079…
    Khi một tài khoản bị Meta chặn vì gọi quá nhiều, việc BẤM XEM LẠI LIÊN TỤC
@@ -353,7 +369,7 @@ async function fetchAccount(acc, token, days, since, until) {
   //     Chia theo cửa sổ tuần để tài khoản nặng + cả tháng không bị Meta chặn/timeout.
   const insights = await fbInsightsWindows(acc, {
     level: 'campaign',
-    fields: 'campaign_id,spend,actions,date_start',
+    fields: 'campaign_id,spend,actions,action_values,date_start',
     time_increment: 1,
     limit: 1000,
   }, since, until, token);
@@ -391,7 +407,8 @@ async function fetchAccount(acc, token, days, since, until) {
     const idx = days.indexOf(row.date_start);
     if (idx < 0) continue;
     const r = countResults(row.actions, camp.objective);
-    camp.daily[idx] = { spent: Number(row.spend || 0), results: r.value };
+    const m = metaOrders(row.actions, row.action_values);
+    camp.daily[idx] = { spent: Number(row.spend || 0), results: r.value, mDon: m.don, mDt: m.dt };
     camp.obj = r.label;
   }
 
@@ -450,7 +467,7 @@ async function fetchAccount(acc, token, days, since, until) {
             }, token),
             fbAll(`act_${acc}/insights`, {
               level: 'adset',
-              fields: 'adset_id,spend,actions',
+              fields: 'adset_id,spend,actions,action_values',
               time_range: { since, until },
               filtering: [{ field: 'campaign.id', operator: 'IN', value: ids }],
               limit: 1000,
@@ -472,6 +489,8 @@ async function fetchAccount(acc, token, days, since, until) {
             const objective = byId[as.campaign_id] ? byId[as.campaign_id].objective : '';
             as.spent = Number(row.spend || 0);
             as.results = countResults(row.actions, objective).value;
+            const m = metaOrders(row.actions, row.action_values);
+            as.mDon = m.don; as.mDt = m.dt;
           }
         }
         const budgetSum = {};
@@ -479,7 +498,8 @@ async function fetchAccount(acc, token, days, since, until) {
           const as = asById[id];
           const camp = byId[as.campaign_id];
           if (!camp) continue;
-          camp.adsets.push({ id, name: as.name, budget: as.budget, spent: as.spent, results: as.results, on: as.on });
+          camp.adsets.push({ id, name: as.name, budget: as.budget, spent: as.spent, results: as.results, on: as.on,
+            mDon: as.mDon || 0, mDt: as.mDt || 0 });
           if (as.on) budgetSum[as.campaign_id] = (budgetSum[as.campaign_id] || 0) + as.budget;
         }
         for (const cid in budgetSum) {
