@@ -306,7 +306,7 @@
     <table class="w-full text-sm">
       <thead><tr class="bg-gray-50 text-gray-600 text-left">
         <th class="p-3">#</th><th class="p-3">Thời gian</th><th class="p-3">Khách hàng</th>
-        <th class="p-3">SĐT</th><th class="p-3">SP</th><th class="p-3">Nguồn</th><th class="p-3 text-right">Giá trị</th><th class="p-3 text-center">Trạng thái</th>
+        <th class="p-3">SĐT</th><th class="p-3">SP</th><th class="p-3">Nguồn</th><th class="p-3">Quảng cáo</th><th class="p-3 text-right">Giá trị</th><th class="p-3 text-center">Trạng thái</th>
       </tr></thead>
       <tbody id="mktOrderTable"></tbody>
     </table>
@@ -1569,8 +1569,9 @@ async function loadMktView() {
     <tr class="border-t hover:bg-orange-50/40"><td class="p-3 text-gray-400">${i+1}</td><td class="p-3 text-xs">${fmtDate(o.ngay_ve)}</td>
     <td class="p-3 font-medium">${esc(o.ten_kh)}</td><td class="p-3">${esc(maskPhone(o.sdt))}</td><td class="p-3 text-xs">${esc(o.san_pham||'')}</td>
     <td class="p-3 text-xs">${esc(o.nguon_du_lieu||'')}</td>
+    <td class="p-3 text-xs" style="max-width:320px">${adRefLine(o)}</td>
     <td class="p-3 text-right">${fmt(o.tong_tien)}</td><td class="p-3 text-center">${badgeTT(o.trang_thai)}</td></tr>
-  `).join('')||'<tr><td colspan="8" class="p-6 text-center text-gray-400">Chưa có đơn</td></tr>';
+  `).join('')||'<tr><td colspan="9" class="p-6 text-center text-gray-400">Chưa có đơn</td></tr>';
 
   // Load analytics
   loadMktAnalytics();
