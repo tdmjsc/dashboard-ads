@@ -5,7 +5,7 @@
 // =====================================================================
 import { sendApns, apnsConfigured } from './apns.js';
 import { omsDateBoundary } from './oms-date.js';
-import { adRefFromUtm, hasUtm } from './oms-ad-ref.js';
+import { adRefFromUtm, hasUtm, AD_REF_FROM } from './oms-ad-ref.js';
 
 // ---- Trạng thái đơn hàng hợp lệ ----
 const TRANG_THAI = ['Đơn mới', 'Đã chốt', 'Đang ship', 'Ship thành công', 'Hoàn thành công', 'Không mua',
@@ -344,10 +344,10 @@ export function mountOMS(app, { mysql, express, getTeamLead = () => ({}) }) {
   }, 60 * 1000);
 
   // ---- Đơn → chiến dịch / nhóm quảng cáo Meta (thống kê đơn theo chiến dịch ở trang Ads) ----
-  // Hàm tra Graph API / tên chiến dịch ở server.js (global.__fbAdRef, global.__fbCampaignByName)
+  // Hàm tra Graph API ở server.js (global.__fbAdRef). Chỉ đơn từ AD_REF_FROM.
   function lookupAdRef(u) {
     if (typeof global.__fbAdRef !== 'function') throw new Error('Chưa nạp hàm tra ID Meta');
-    return adRefFromUtm(u, { byId: global.__fbAdRef, byName: global.__fbCampaignByName });
+    return adRefFromUtm(u, { byId: global.__fbAdRef });
   }
   // Ghi kết quả tra cho các đơn khớp where; tra không ra vẫn ghi fb_ref_at để không tra lại mãi
   function saveAdRef(where, params, ref) {
@@ -356,9 +356,9 @@ export function mountOMS(app, { mysql, express, getTeamLead = () => ({}) }) {
       [ref.campaign_id || '', (ref.campaign_name || '').slice(0, 255), ref.adset_id || '',
        (ref.adset_name || '').slice(0, 255), ref.ad_id || '', ...params]);
   }
-  // Tra cho đơn chưa tra (đơn cũ, đơn mà lúc về tra lỗi) + đơn 14 ngày gần đây chưa ra chiến
-  // dịch (tra lại mỗi 6 giờ: token có thể vừa được cấp quyền). Gom theo bộ UTM → mỗi bộ tra 1 lần.
-  // all=1 (/oms/api/fix-ad-refs?all=1): tra lại mọi đơn.
+  // Tra cho đơn mà lúc về tra lỗi + đơn 14 ngày gần đây chưa ra chiến dịch (tra lại mỗi 6 giờ:
+  // token có thể vừa được cấp quyền). Gom theo bộ UTM → mỗi bộ tra 1 lần. Đơn trước AD_REF_FROM bỏ qua.
+  // all=1 (/oms/api/fix-ad-refs?all=1): tra lại mọi đơn từ AD_REF_FROM.
   let fixingAdRefs = false;
   async function fixAdRefs(all = false) {
     if (fixingAdRefs) return { busy: true };
@@ -368,15 +368,16 @@ export function mountOMS(app, { mysql, express, getTeamLead = () => ({}) }) {
       const cond = all ? '1=1' : `(fb_ref_at IS NULL OR (fb_campaign_id='' AND fb_ref_at < UTC_TIMESTAMP() - INTERVAL 6 HOUR
         AND ngay_ve > UTC_TIMESTAMP() - INTERVAL 14 DAY))`;
       const rows = await db(`SELECT utm_campaign, utm_medium, utm_term, utm_content, COUNT(*) AS don
-        FROM oms_orders WHERE (utm_campaign!='' OR utm_medium!='' OR utm_term!='' OR utm_content!='') AND ${cond}
-        GROUP BY utm_campaign, utm_medium, utm_term, utm_content ORDER BY MAX(ngay_ve) DESC LIMIT 300`);
+        FROM oms_orders WHERE ngay_ve >= ? AND (utm_campaign!='' OR utm_medium!='' OR utm_term!='' OR utm_content!='')
+        AND ${cond} GROUP BY utm_campaign, utm_medium, utm_term, utm_content ORDER BY MAX(ngay_ve) DESC LIMIT 300`,
+        [omsDateBoundary(AD_REF_FROM)]);
       const out = { bo: rows.length, ra: 0, khongRa: 0, don: 0 };
       for (const r of rows) {
         let ref;
         try { ref = await lookupAdRef(r); }
         catch (e) { out.dung = e.message; break; } // rate limit / mạng: dừng, lần chạy sau tra tiếp
-        await saveAdRef('utm_campaign<=>? AND utm_medium<=>? AND utm_term<=>? AND utm_content<=>?',
-          [r.utm_campaign, r.utm_medium, r.utm_term, r.utm_content], ref);
+        await saveAdRef('ngay_ve >= ? AND utm_campaign<=>? AND utm_medium<=>? AND utm_term<=>? AND utm_content<=>?',
+          [omsDateBoundary(AD_REF_FROM), r.utm_campaign, r.utm_medium, r.utm_term, r.utm_content], ref);
         if (ref.campaign_id) out.ra++; else out.khongRa++;
         out.don += Number(r.don) || 0;
       }
@@ -385,9 +386,12 @@ export function mountOMS(app, { mysql, express, getTeamLead = () => ({}) }) {
   }
 
   // Thống kê đơn theo chiến dịch + nhóm quảng cáo cho trang Ads (/api/ads/oms-orders ở server.js).
-  // since/until = ngày VN (YYYY-MM-DD). Đơn chưa tra ra chiến dịch nằm ở dòng fb_campaign_id=''.
+  // since/until = ngày VN (YYYY-MM-DD), since bị nâng lên AD_REF_FROM (tu). Đơn chưa tra ra chiến
+  // dịch nằm ở dòng fb_campaign_id=''.
   global.__omsAdStats = async (since, until) => {
     if (!getPool()) return null;
+    const tu = since < AD_REF_FROM ? AD_REF_FROM : since;
+    if (tu > until) return { tu, rows: [] };
     await ensureTables(getPool());
     const rows = await db(`SELECT fb_campaign_id, MAX(fb_campaign_name) AS campaign_name,
       fb_adset_id, MAX(fb_adset_name) AS adset_name, nv_marketing,
@@ -399,9 +403,9 @@ export function mountOMS(app, { mysql, express, getTeamLead = () => ({}) }) {
         THEN 1 ELSE 0 END) AS dangTra
       FROM oms_orders WHERE ngay_ve >= ? AND ngay_ve < ?
       GROUP BY fb_campaign_id, fb_adset_id, nv_marketing`,
-      [omsDateBoundary(since), omsDateBoundary(until, true)]);
-    return rows.map(r => ({ ...r, don: +r.don || 0, chot: +r.chot || 0, khongMua: +r.khongMua || 0,
-      doanhThu: +r.doanhThu || 0, dangTra: +r.dangTra || 0 }));
+      [omsDateBoundary(tu), omsDateBoundary(until, true)]);
+    return { tu, rows: rows.map(r => ({ ...r, don: +r.don || 0, chot: +r.chot || 0, khongMua: +r.khongMua || 0,
+      doanhThu: +r.doanhThu || 0, dangTra: +r.dangTra || 0 })) };
   };
 
   // Cho module Tồn kho đọc số lượng đã bán theo sản phẩm (tính số ngày đủ bán)

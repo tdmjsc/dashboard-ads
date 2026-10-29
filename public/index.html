@@ -383,21 +383,20 @@ async function loadOms(since,until){
     const res=await fetch(`/api/ads/oms-orders?since=${since}&until=${until}`);
     const d=await res.json();
     if(range!==OMS_RANGE) return;
-    if(d&&d.ok){ OMS=d; OMS_STATE='ok'; } else OMS_STATE='err';
+    // Khoảng ngày trước ngày bắt đầu gắn ID quảng cáo (d.tu) → không có số, hiện '—'
+    if(d&&d.ok){ OMS=d; OMS_STATE=d.tu>until?'na':'ok'; } else OMS_STATE='err';
   }catch(e){ if(range===OMS_RANGE) OMS_STATE='err'; }
   if(state.view==='camp') renderCamp();
 }
 const omsCamp=c=>OMS&&OMS.camps?OMS.camps[c.id]:null;
-/* nhóm quảng cáo: khớp theo id; dữ liệu Ads cũ trong cache chưa có id nhóm → khớp theo tên */
+/* nhóm quảng cáo: khớp theo id nhóm */
 function omsAdset(o,a){
-  if(!o||!o.adsets) return null;
-  if(a.id&&o.adsets[a.id]) return {key:a.id,v:o.adsets[a.id]};
-  if(!a.id) for(const k in o.adsets) if(k&&o.adsets[k].name===a.name) return {key:k,v:o.adsets[k]};
-  return null;
+  return o&&o.adsets&&a.id&&o.adsets[a.id]?{key:a.id,v:o.adsets[a.id]}:null;
 }
 /* ô số đơn: đơn · chốt, dưới là CP/đơn + doanh thu chốt */
 function omsCell(o,spent){
   if(OMS_STATE==='loading') return '<span style="color:var(--faint)">…</span>';
+  if(OMS_STATE==='na') return `<span style="color:var(--faint)" title="Đơn OMS chỉ tính từ ${dayLbl(OMS.tu)}">—</span>`;
   if(OMS_STATE!=='ok') return '<span style="color:var(--faint)" title="Chưa đọc được OMS">—</span>';
   if(!o||!o.don) return '<span style="color:var(--faint)">0</span>';
   return `<span class="res">${fmtVND(o.don)}<small>đơn · ${fmtVND(o.chot)} chốt</small></span>
@@ -724,6 +723,8 @@ function renderCamp(){
   if(OMS_STATE==='ok'){
     const inList=list.reduce((t,c)=>t+((omsCamp(c)||{}).don||0),0);
     cnt+=` · ${fmtVND(inList)} đơn OMS`;
+    // Đơn chỉ tính từ ngày bắt đầu gắn ID quảng cáo (OMS.tu)
+    if(OMS.tu&&OMS.tu>document.getElementById('from').value) cnt+=` từ ${dayLbl(OMS.tu)}`;
     // Đơn không ghép được vào bảng: chỉ ghi khi không lọc (lọc thì số này dễ hiểu nhầm)
     if(state.acc==='all'&&state.emp==='all'&&state.status==='all'&&state.q===''){
       const ids=new Set(CAMPAIGNS.map(c=>String(c.id)));

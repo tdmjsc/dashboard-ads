@@ -669,30 +669,6 @@ async function fbAdRef(id) {
 }
 global.__fbAdRef = fbAdRef;
 
-// Tên chiến dịch → { id, name } từ dữ liệu trang Ads đã nạp (đơn cũ mang utm={{campaign.name}}).
-// Chỉ nhận khi tên khớp đúng 1 chiến dịch (không phân biệt hoa thường).
-let CAMP_NAME_IDX = null, CAMP_NAME_AT = 0;
-global.__fbCampaignByName = (name) => {
-  const k = String(name || '').trim().toLowerCase();
-  if (!k || /^\d+$/.test(k)) return null;
-  if (!CAMP_NAME_IDX || Date.now() - CAMP_NAME_AT > 10 * 60 * 1000) {
-    const idx = new Map();
-    const add = list => {
-      for (const c of list || []) {
-        const n = String(c.name || '').trim().toLowerCase();
-        if (!n || !c.id) continue;
-        const e = idx.get(n) || { ids: new Set(), name: c.name };
-        e.ids.add(String(c.id));
-        idx.set(n, e);
-      }
-    };
-    for (const key in META_CACHE) add(META_CACHE[key] && META_CACHE[key].campaigns);
-    for (const v of DATA_CACHE.values()) add(v.campaigns);
-    CAMP_NAME_IDX = idx; CAMP_NAME_AT = Date.now();
-  }
-  const e = CAMP_NAME_IDX.get(k);
-  return e && e.ids.size === 1 ? { id: [...e.ids][0], name: e.name } : null;
-};
 
 // Giá trị cột NV marketing của OMS → tên NV: ID Meta thì tra tên chiến dịch, chữ (vd tên
 // chiến dịch "TD4 - My - Túi giữ lạnh…" do utm_content={{campaign.name}}) thì nhận diện trực tiếp.
@@ -1285,7 +1261,7 @@ app.get('/api/data', async (req, res) => {
 
 // Đơn OMS theo chiến dịch + nhóm quảng cáo cho trang Ads (đọc mới mỗi lần, không cache).
 // Trả { camps: { [campaign_id]: { name, don, chot, khongMua, doanhThu, adsets: { [adset_id]: {...} } } },
-//       none: đơn chưa ra chiến dịch, dangTra: đơn đang chờ tra ID }.
+//       none: đơn chưa ra chiến dịch, dangTra: đơn đang chờ tra ID, tu: ngày bắt đầu tính thật sự }.
 // Không phải admin: chỉ đơn của chiến dịch thuộc NV được xem (theo dữ liệu Ads đã nạp) hoặc đơn mang tên NV đó.
 app.get('/api/ads/oms-orders', async (req, res) => {
   try {
@@ -1293,8 +1269,9 @@ app.get('/api/ads/oms-orders', async (req, res) => {
     const isDay = v => /^\d{4}-\d{2}-\d{2}$/.test(v || '');
     if (!isDay(since) || !isDay(until)) return res.status(400).json({ ok: false, error: 'Sai ngày' });
     if (typeof global.__omsAdStats !== 'function') return res.json({ ok: false, error: 'OMS chưa bật' });
-    let rows = await global.__omsAdStats(since, until);
-    if (!rows) return res.json({ ok: false, error: 'OMS chưa cấu hình DB' });
+    const stats = await global.__omsAdStats(since, until);
+    if (!stats) return res.json({ ok: false, error: 'OMS chưa cấu hình DB' });
+    let rows = stats.rows;
     const me = req.session.user;
     if (me.role !== 'admin') {
       const allowEmp = new Set(me.employees || []);
@@ -1314,7 +1291,7 @@ app.get('/api/ads/oms-orders', async (req, res) => {
       const a = c.adsets[aid] || (c.adsets[aid] = { name: r.adset_name || '', ...blank() });
       addTo(a, r);
     }
-    res.json({ ok: true, since, until, camps, none, dangTra });
+    res.json({ ok: true, since, until, tu: stats.tu, camps, none, dangTra });
   } catch (e) {
     res.status(500).json({ ok: false, error: e.message });
   }
