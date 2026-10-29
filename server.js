@@ -479,7 +479,7 @@ async function fetchAccount(acc, token, days, since, until) {
           const as = asById[id];
           const camp = byId[as.campaign_id];
           if (!camp) continue;
-          camp.adsets.push({ name: as.name, budget: as.budget, spent: as.spent, results: as.results, on: as.on });
+          camp.adsets.push({ id, name: as.name, budget: as.budget, spent: as.spent, results: as.results, on: as.on });
           if (as.on) budgetSum[as.campaign_id] = (budgetSum[as.campaign_id] || 0) + as.budget;
         }
         for (const cid in budgetSum) {
@@ -638,6 +638,61 @@ async function fbIdToEmployee(id) {
   return emp;
 }
 global.__fbIdToEmployee = fbIdToEmployee;
+
+// ID Meta trong UTM của đơn OMS → { campaign_id, campaign_name, adset_id, adset_name, ad_id }
+// (xem oms-ad-ref.js). Không biết trước là ad, nhóm hay chiến dịch → thử lần lượt: hỏi trường
+// không có ở loại đó thì Meta báo lỗi. Quan hệ ad → nhóm → chiến dịch không đổi nên nhớ mãi;
+// không token nào thấy ID thì trả null (thử lại sau 30 phút). Rate limit / lỗi mạng thì ném ra.
+const FB_REF_CACHE = new Map(); // id → { ref, at }
+async function fbAdRef(id) {
+  id = String(id || '').trim();
+  if (!/^\d{10,}$/.test(id)) return null;
+  const hit = FB_REF_CACHE.get(id);
+  if (hit && (hit.ref || Date.now() - hit.at < 30 * 60 * 1000)) return hit.ref;
+  const kinds = [
+    ['adset{id,name},campaign{id,name}', r => ({ ad_id: id, adset_id: r.adset?.id, adset_name: r.adset?.name,
+      campaign_id: r.campaign?.id, campaign_name: r.campaign?.name })],
+    ['name,campaign{id,name}', r => ({ adset_id: id, adset_name: r.name,
+      campaign_id: r.campaign?.id, campaign_name: r.campaign?.name })],
+    ['name,objective', r => ({ campaign_id: id, campaign_name: r.name })],
+  ];
+  let ref = null;
+  outer: for (const src of SOURCES) {
+    for (const [fields, map] of kinds) {
+      try { ref = map(await fb(id, { fields }, src.token)); break outer; }
+      catch (e) { if (isRateLimitError(e) || !('isRateLimit' in e)) throw e; /* lỗi Meta: sai loại / token không thấy */ }
+    }
+  }
+  if (ref && !ref.campaign_id) ref = null;
+  FB_REF_CACHE.set(id, { ref, at: Date.now() });
+  return ref;
+}
+global.__fbAdRef = fbAdRef;
+
+// Tên chiến dịch → { id, name } từ dữ liệu trang Ads đã nạp (đơn cũ mang utm={{campaign.name}}).
+// Chỉ nhận khi tên khớp đúng 1 chiến dịch (không phân biệt hoa thường).
+let CAMP_NAME_IDX = null, CAMP_NAME_AT = 0;
+global.__fbCampaignByName = (name) => {
+  const k = String(name || '').trim().toLowerCase();
+  if (!k || /^\d+$/.test(k)) return null;
+  if (!CAMP_NAME_IDX || Date.now() - CAMP_NAME_AT > 10 * 60 * 1000) {
+    const idx = new Map();
+    const add = list => {
+      for (const c of list || []) {
+        const n = String(c.name || '').trim().toLowerCase();
+        if (!n || !c.id) continue;
+        const e = idx.get(n) || { ids: new Set(), name: c.name };
+        e.ids.add(String(c.id));
+        idx.set(n, e);
+      }
+    };
+    for (const key in META_CACHE) add(META_CACHE[key] && META_CACHE[key].campaigns);
+    for (const v of DATA_CACHE.values()) add(v.campaigns);
+    CAMP_NAME_IDX = idx; CAMP_NAME_AT = Date.now();
+  }
+  const e = CAMP_NAME_IDX.get(k);
+  return e && e.ids.size === 1 ? { id: [...e.ids][0], name: e.name } : null;
+};
 
 // Giá trị cột NV marketing của OMS → tên NV: ID Meta thì tra tên chiến dịch, chữ (vd tên
 // chiến dịch "TD4 - My - Túi giữ lạnh…" do utm_content={{campaign.name}}) thì nhận diện trực tiếp.
@@ -1225,6 +1280,43 @@ app.get('/api/data', async (req, res) => {
     res.json({ days, campaigns: visible, warnings, me: { user: me.user, role: me.role, khongBoGhim: !!me.khongBoGhim, displayName: me.salaryName || me.manager || (me.employees && me.employees[0]) || me.user || '' } });
   } catch (e) {
     res.status(500).json({ error: e.message });
+  }
+});
+
+// Đơn OMS theo chiến dịch + nhóm quảng cáo cho trang Ads (đọc mới mỗi lần, không cache).
+// Trả { camps: { [campaign_id]: { name, don, chot, khongMua, doanhThu, adsets: { [adset_id]: {...} } } },
+//       none: đơn chưa ra chiến dịch, dangTra: đơn đang chờ tra ID }.
+// Không phải admin: chỉ đơn của chiến dịch thuộc NV được xem (theo dữ liệu Ads đã nạp) hoặc đơn mang tên NV đó.
+app.get('/api/ads/oms-orders', async (req, res) => {
+  try {
+    const { since, until } = req.query;
+    const isDay = v => /^\d{4}-\d{2}-\d{2}$/.test(v || '');
+    if (!isDay(since) || !isDay(until)) return res.status(400).json({ ok: false, error: 'Sai ngày' });
+    if (typeof global.__omsAdStats !== 'function') return res.json({ ok: false, error: 'OMS chưa bật' });
+    let rows = await global.__omsAdStats(since, until);
+    if (!rows) return res.json({ ok: false, error: 'OMS chưa cấu hình DB' });
+    const me = req.session.user;
+    if (me.role !== 'admin') {
+      const allowEmp = new Set(me.employees || []);
+      const allowCamp = new Set((cachedCampaigns(since, until) || []).filter(c => allowEmp.has(c.employee)).map(c => String(c.id)));
+      rows = rows.filter(r => allowEmp.has(r.nv_marketing) || (r.fb_campaign_id && allowCamp.has(r.fb_campaign_id)));
+    }
+    const blank = () => ({ don: 0, chot: 0, khongMua: 0, doanhThu: 0 });
+    const addTo = (t, r) => { t.don += r.don; t.chot += r.chot; t.khongMua += r.khongMua; t.doanhThu += r.doanhThu; };
+    const camps = {}, none = blank();
+    let dangTra = 0;
+    for (const r of rows) {
+      dangTra += r.dangTra;
+      if (!r.fb_campaign_id) { addTo(none, r); continue; }
+      const c = camps[r.fb_campaign_id] || (camps[r.fb_campaign_id] = { name: r.campaign_name || '', ...blank(), adsets: {} });
+      addTo(c, r);
+      const aid = r.fb_adset_id || '';
+      const a = c.adsets[aid] || (c.adsets[aid] = { name: r.adset_name || '', ...blank() });
+      addTo(a, r);
+    }
+    res.json({ ok: true, since, until, camps, none, dangTra });
+  } catch (e) {
+    res.status(500).json({ ok: false, error: e.message });
   }
 });
 

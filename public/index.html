@@ -324,7 +324,7 @@
         <table>
           <thead><tr>
             <th>Trạng thái</th><th>Tên chiến dịch</th><th class="r">Ngân sách</th>
-            <th class="r">Đã chi tiêu</th><th class="r">Đã chi tiêu<br>sau thuế</th><th class="r">Kết quả</th><th class="r">Chi phí / kết quả</th><th class="r">CP/kết quả<br>sau thuế</th><th class="r">Link</th>
+            <th class="r">Đã chi tiêu</th><th class="r">Đã chi tiêu<br>sau thuế</th><th class="r">Kết quả</th><th class="r">Chi phí / kết quả</th><th class="r">CP/kết quả<br>sau thuế</th><th class="r">Đơn OMS</th><th class="r">Link</th>
           </tr></thead>
           <tbody id="rows"></tbody>
         </table>
@@ -372,6 +372,36 @@ async function loadMarketing(since,until){
     } else MKT_STATE='err';
   }catch(e){ MKT_STATE='err'; }
   if(state.view==='emp') renderEmp();      // vẽ lại thẻ nhân viên với contact thật
+}
+
+/* ====== Đơn OMS theo chiến dịch / nhóm quảng cáo (/api/ads/oms-orders, đọc mới mỗi lần) ====== */
+let OMS=null, OMS_RANGE='', OMS_STATE='idle';
+const esc=s=>String(s==null?'':s).replace(/[&<>"]/g,ch=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[ch]));
+async function loadOms(since,until){
+  const range=since+'_'+until; OMS_RANGE=range; OMS_STATE='loading'; OMS=null;
+  try{
+    const res=await fetch(`/api/ads/oms-orders?since=${since}&until=${until}`);
+    const d=await res.json();
+    if(range!==OMS_RANGE) return;
+    if(d&&d.ok){ OMS=d; OMS_STATE='ok'; } else OMS_STATE='err';
+  }catch(e){ if(range===OMS_RANGE) OMS_STATE='err'; }
+  if(state.view==='camp') renderCamp();
+}
+const omsCamp=c=>OMS&&OMS.camps?OMS.camps[c.id]:null;
+/* nhóm quảng cáo: khớp theo id; dữ liệu Ads cũ trong cache chưa có id nhóm → khớp theo tên */
+function omsAdset(o,a){
+  if(!o||!o.adsets) return null;
+  if(a.id&&o.adsets[a.id]) return {key:a.id,v:o.adsets[a.id]};
+  if(!a.id) for(const k in o.adsets) if(k&&o.adsets[k].name===a.name) return {key:k,v:o.adsets[k]};
+  return null;
+}
+/* ô số đơn: đơn · chốt, dưới là CP/đơn + doanh thu chốt */
+function omsCell(o,spent){
+  if(OMS_STATE==='loading') return '<span style="color:var(--faint)">…</span>';
+  if(OMS_STATE!=='ok') return '<span style="color:var(--faint)" title="Chưa đọc được OMS">—</span>';
+  if(!o||!o.don) return '<span style="color:var(--faint)">0</span>';
+  return `<span class="res">${fmtVND(o.don)}<small>đơn · ${fmtVND(o.chot)} chốt</small></span>
+    <div style="font-size:11px;color:var(--faint);margin-top:2px">CP/đơn ${fmtVND(Math.round(spent/o.don))} ₫${o.doanhThu?`<br>DT chốt ${fmtVND(o.doanhThu)} ₫`:''}</div>`;
 }
 
 /* mặc định: HÔM NAY (dùng giờ máy = giờ VN) */
@@ -453,6 +483,7 @@ async function loadData(opts){
       msg.textContent = parts.join('   ·   ');
     } else { msg.style.color=''; }
     render();
+    loadOms(since, until);         // số đơn OMS theo chiến dịch / nhóm (chạy song song)
     loadMarketing(since, until);   // tải số contact thật để tính CPA theo nhân viên (chạy song song)
   }catch(e){ msg.style.display='block'; msg.textContent='Không kết nối được backend. Kiểm tra server đang chạy. ('+e.message+')'; }
 }
@@ -622,9 +653,12 @@ function toggleCamp(id){ if(state.expanded.has(id)) state.expanded.delete(id); e
 /* khối chi tiết: các nhóm quảng cáo có chi tiêu > 0 */
 function adsetBlock(c){
   const list=(c.adsets||[]).filter(a=>a.spent>0).sort((a,b)=>b.spent-a.spent);
-  if(!list.length) return `<div class="detail-title">Không có nhóm quảng cáo nào có chi tiêu trong khoảng ngày này.</div>`;
+  const o=omsCamp(c), used=new Set();
+  const oms=OMS_STATE==='ok';
   const rows=list.map(a=>{
     const sTax=withTax(a.spent), cprVal=a.results?Math.round(a.spent/a.results):0, cprTax=a.results?Math.round(sTax/a.results):0;
+    const m=omsAdset(o,a); if(m) used.add(m.key);
+    const od=m?m.v:{don:0,chot:0,doanhThu:0};
     return `<div class="adset">
       <div class="adset-head"><span class="adset-name">${a.on?'':'⏸ '}${a.name}</span><span class="adset-budget">NS: ${a.budget?fmtVND(a.budget)+' ₫/ngày':'theo chiến dịch'}</span></div>
       <div class="adset-metrics">
@@ -633,10 +667,22 @@ function adsetBlock(c){
         <span><b>${fmtVND(a.results)}</b><small>${c.obj}</small></span>
         <span><b>${fmtVND(cprVal)} ₫</b><small>CP/kết quả</small></span>
         <span><b style="color:#9A7B2E">${fmtVND(cprTax)} ₫</b><small>CP/KQ sau thuế</small></span>
+        ${oms?`<span><b>${fmtVND(od.don)}</b><small>đơn OMS</small></span>
+        <span><b>${fmtVND(od.chot)}</b><small>đơn chốt</small></span>
+        <span><b>${od.don?fmtVND(Math.round(a.spent/od.don))+' ₫':'—'}</b><small>CP/đơn</small></span>
+        <span><b>${fmtVND(od.doanhThu)} ₫</b><small>DT chốt</small></span>`:''}
       </div>
     </div>`;
   }).join('');
-  return `<div class="detail-title">${list.length} nhóm quảng cáo có chi tiêu</div>${rows}`;
+  // Đơn OMS của nhóm không có chi tiêu trong khoảng (khách bấm từ trước) hoặc chỉ ra chiến dịch
+  let extra='';
+  if(o&&o.adsets){
+    const rest=Object.entries(o.adsets).filter(([k])=>!used.has(k)).sort((x,y)=>y[1].don-x[1].don);
+    if(rest.length) extra=`<div class="detail-title" style="margin-top:10px">Đơn OMS ngoài các nhóm trên: `+
+      rest.map(([k,v])=>`${k?esc(v.name||('Nhóm '+k)):'chưa rõ nhóm'}: <b>${fmtVND(v.don)}</b> đơn (${fmtVND(v.chot)} chốt)`).join(' · ')+`</div>`;
+  }
+  if(!list.length) return `<div class="detail-title">Không có nhóm quảng cáo nào có chi tiêu trong khoảng ngày này.</div>${extra}`;
+  return `<div class="detail-title">${list.length} nhóm quảng cáo có chi tiêu</div>${rows}${extra}`;
 }
 
 function render(){
@@ -674,9 +720,24 @@ function renderCamp(){
   list.sort((a,b)=>(keyOf(a)-keyOf(b))*dir);
   const bench=buildCprBenchmark(list);
   document.getElementById('panel-title').textContent=state.emp!=="all"?'Chiến dịch của '+state.emp:'Tất cả chiến dịch';
-  document.getElementById('panel-count').textContent=list.length+' chiến dịch';
+  let cnt=list.length+' chiến dịch';
+  if(OMS_STATE==='ok'){
+    const inList=list.reduce((t,c)=>t+((omsCamp(c)||{}).don||0),0);
+    cnt+=` · ${fmtVND(inList)} đơn OMS`;
+    // Đơn không ghép được vào bảng: chỉ ghi khi không lọc (lọc thì số này dễ hiểu nhầm)
+    if(state.acc==='all'&&state.emp==='all'&&state.status==='all'&&state.q===''){
+      const ids=new Set(CAMPAIGNS.map(c=>String(c.id)));
+      let outside=0; for(const id in OMS.camps) if(!ids.has(id)) outside+=OMS.camps[id].don;
+      const parts=[];
+      if(OMS.none&&OMS.none.don) parts.push(`${fmtVND(OMS.none.don)} chưa rõ chiến dịch`);
+      if(outside) parts.push(`${fmtVND(outside)} thuộc chiến dịch không có trong bảng`);
+      if(OMS.dangTra) parts.push(`${fmtVND(OMS.dangTra)} đang tra ID quảng cáo`);
+      if(parts.length) cnt+=' ('+parts.join(', ')+')';
+    }
+  }
+  document.getElementById('panel-count').textContent=cnt;
   const tb=document.getElementById('rows');
-  if(!list.length){tb.innerHTML=`<tr><td colspan="9"><div class="empty"><b>Không có chiến dịch nào</b>Thử đổi bộ lọc hoặc khoảng ngày.</div></td></tr>`;return;}
+  if(!list.length){tb.innerHTML=`<tr><td colspan="10"><div class="empty"><b>Không có chiến dịch nào</b>Thử đổi bộ lọc hoặc khoảng ngày.</div></td></tr>`;return;}
   tb.innerHTML=list.map(c=>{
     const acc=accOf(c.acc)||{name:c.accName,color:'#888'}, nv=empOf(c), {s,r}=sums(c);
     const budgetWindow=(c.budget||0)*nDays;
@@ -695,8 +756,9 @@ function renderCamp(){
       <td class="r" data-label="Kết quả"><span class="res">${fmtVND(r)}<small>${c.obj}</small></span></td>
       <td class="r" data-label="CP/kết quả"><span class="cpr ${cls}">${fmtVND(cprVal)} ₫</span></td>
       <td class="r" data-label="CP/KQ sau thuế"><span class="money" style="color:#9A7B2E">${fmtVND(cprTax)} ₫</span></td>
+      <td class="r" data-label="Đơn OMS">${omsCell(omsCamp(c),s)}</td>
       <td class="r" data-label="Link">${c.link?`<a class="adlink" href="${c.link}" target="_blank" rel="noopener">Xem bài ↗</a>`:'<span style="color:var(--faint)">—</span>'}</td>
-    </tr>${exp?`<tr class="detail-row"><td colspan="9">${adsetBlock(c)}</td></tr>`:''}`;}).join('');
+    </tr>${exp?`<tr class="detail-row"><td colspan="10">${adsetBlock(c)}</td></tr>`:''}`;}).join('');
 }
 
 function renderEmp(){
