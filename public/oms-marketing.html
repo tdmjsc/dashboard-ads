@@ -71,7 +71,7 @@
     <table class="w-full text-sm">
       <thead><tr class="bg-gray-50 text-gray-600 text-left">
         <th class="p-3">#</th><th class="p-3">Thời gian</th><th class="p-3">Khách hàng</th>
-        <th class="p-3">SĐT</th><th class="p-3">Sản phẩm</th><th class="p-3 text-right">Giá trị</th><th class="p-3 text-center">Trạng thái</th>
+        <th class="p-3">SĐT</th><th class="p-3">Sản phẩm</th><th class="p-3">Quảng cáo</th><th class="p-3 text-right">Giá trị</th><th class="p-3 text-center">Trạng thái</th>
       </tr></thead>
       <tbody id="orderTable"></tbody>
     </table>
@@ -163,10 +163,11 @@ async function loadOrders() {
       <td class="p-3 font-medium">${esc(o.ten_kh)}</td>
       <td class="p-3">${esc(o.sdt)}</td>
       <td class="p-3 text-xs">${esc(o.san_pham||'')}</td>
+      <td class="p-3 text-xs" style="max-width:320px">${adRefLine(o)}</td>
       <td class="p-3 text-right">${fmt(o.tong_tien)}</td>
       <td class="p-3 text-center">${badgeTT(o.trang_thai)}</td>
     </tr>
-  `).join('') || '<tr><td colspan="7" class="p-6 text-center text-gray-400">Chưa có đơn nào</td></tr>';
+  `).join('') || '<tr><td colspan="8" class="p-6 text-center text-gray-400">Chưa có đơn nào</td></tr>';
 
   document.getElementById('orderCount').textContent = `Hiển thị ${orders.length} / ${d.total||0} đơn`;
 }
@@ -174,6 +175,15 @@ async function loadOrders() {
 function fmt(n) { return Number(n||0).toLocaleString('vi-VN') + 'đ'; }
 function fmtDate(d) { if (!d) return ''; return new Date(d).toLocaleString('vi-VN',{day:'2-digit',month:'2-digit',hour:'2-digit',minute:'2-digit'}); }
 function esc(s) { const d=document.createElement('div'); d.textContent=s||''; return d.innerHTML; }
+// Chiến dịch / nhóm quảng cáo của đơn (tra từ UTM, xem oms-ad-ref.js) + UTM gốc Ladipage gửi về
+function adRefLine(o){
+  const utm=['utm_source','utm_campaign','utm_medium','utm_content','utm_term']
+    .filter(k=>o[k]).map(k=>`${k}=${esc(o[k])}`).join(' · ');
+  const qc=o.fb_campaign_id
+    ? `📢 ${esc(o.fb_campaign_name||o.fb_campaign_id)}${o.fb_adset_id?` › ${esc(o.fb_adset_name||o.fb_adset_id)}`:''}`
+    : (o.fb_ref_at ? '📢 Chưa rõ chiến dịch' : (utm ? '📢 Chưa tra chiến dịch' : '📢 Không có UTM'));
+  return `<div class="text-blue-600 break-words">${qc}</div>${utm?`<div class="text-gray-400 break-words">${utm}</div>`:''}`;
+}
 function badgeTT(tt) {
   const cls = {'Đơn mới':'badge-new','Đã chốt':'badge-confirmed','Đang ship':'badge-shipping',
     'Ship thành công':'badge-success','Hoàn thành công':'badge-returned','Không mua':'badge-cancel'};
