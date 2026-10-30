@@ -5,7 +5,7 @@
 // =====================================================================
 import { sendApns, apnsConfigured } from './apns.js';
 import { omsDateBoundary } from './oms-date.js';
-import { adRefFromUtm, hasUtm, findFbclid, adIdFromFbclid, AD_REF_FROM } from './oms-ad-ref.js';
+import { adRefFromUtm, hasUtm, findFbclid, adIdFromFbclid, utmFromUrl, AD_REF_FROM } from './oms-ad-ref.js';
 
 // ---- Trạng thái đơn hàng hợp lệ ----
 const TRANG_THAI = ['Đơn mới', 'Đã chốt', 'Đang ship', 'Ship thành công', 'Hoàn thành công', 'Không mua',
@@ -205,11 +205,40 @@ async function ensureTables(pool) {
     // fbclid (có ID quảng cáo, kể cả khi khách bấm link trong bình luận) + URL trang Ladipage gửi về
     "fbclid VARCHAR(512) DEFAULT ''",
     "url_page VARCHAR(1000) DEFAULT ''",
+    // adid (ID ad nội bộ Meta) giải từ fbclid, '-' = có fbclid mà không có adid (xem oms-ad-ref.js)
+    "fb_adid VARCHAR(32) DEFAULT ''",
   ];
   for (const col of addCols) {
     try { await pool.query(`ALTER TABLE oms_orders ADD COLUMN ${col}`); } catch(e) {}
   }
   try { await pool.query('ALTER TABLE oms_orders ADD INDEX idx_fb_camp (fb_campaign_id)'); } catch(e) {}
+  try { await pool.query('ALTER TABLE oms_orders ADD INDEX idx_fb_adid (fb_adid)'); } catch(e) {}
+
+  // Thư viện adid → quảng cáo (oms-ad-ref.js). nguon: utm (học từ lượt bấm nút có {{ad.id}}), admin
+  // (thêm tay), seed (cặp đã đối chiếu 30/10/2026). xung_dot = ID quảng cáo khác mà UTM từng báo cho
+  // cùng adid → không dùng cặp này nữa cho tới khi admin chọn lại.
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS oms_adid_map (
+      adid VARCHAR(32) PRIMARY KEY,
+      ad_id VARCHAR(32) NOT NULL,
+      adset_id VARCHAR(32) DEFAULT '',
+      adset_name VARCHAR(255) DEFAULT '',
+      campaign_id VARCHAR(32) DEFAULT '',
+      campaign_name VARCHAR(255) DEFAULT '',
+      nguon VARCHAR(16) DEFAULT 'utm',
+      so_lan INT DEFAULT 1,
+      xung_dot VARCHAR(32) DEFAULT '',
+      nguoi_them VARCHAR(120) DEFAULT '',
+      first_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+      last_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+      INDEX idx_ad (ad_id)
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+  `);
+  await pool.query(`INSERT IGNORE INTO oms_adid_map (adid, ad_id, nguon, first_at, last_at)
+    SELECT v.adid, v.ad_id, 'seed', UTC_TIMESTAMP(), UTC_TIMESTAMP() FROM (
+      SELECT '52658161396313' AS adid, '52658160753113' AS ad_id UNION ALL SELECT '120251445125380239', '120251444343590239'
+      UNION ALL SELECT '120250273826300239', '120250219632360239' UNION ALL SELECT '120250334187870239', '120250334107070239'
+      UNION ALL SELECT '120251439971880239', '120251024356440239' UNION ALL SELECT '120251119076100239', '120249791491370239') v`);
 
   // Thêm cột mới cho link_registry (nếu chưa có)
   try { await pool.query(`ALTER TABLE oms_link_registry ADD COLUMN nguon_du_lieu VARCHAR(120) DEFAULT ''`); } catch(e) {}
@@ -350,7 +379,62 @@ export function mountOMS(app, { mysql, express, getTeamLead = () => ({}) }) {
   // Hàm tra Graph API ở server.js (global.__fbAdRef). Chỉ đơn từ AD_REF_FROM.
   function lookupAdRef(u) {
     if (typeof global.__fbAdRef !== 'function') throw new Error('Chưa nạp hàm tra ID Meta');
-    return adRefFromUtm(u, { byId: global.__fbAdRef });
+    return adRefFromUtm(u, { byId: global.__fbAdRef, adidRef, learn: (adid, ref) => learnAdid(adid, ref, 'utm') });
+  }
+  const fbAdidOf = fbclid => adIdFromFbclid(fbclid) || (String(fbclid || '').trim() ? '-' : '');
+  const NO_UTM_ID = ['utm_campaign', 'utm_medium', 'utm_term', 'utm_content'].map(k => `${k} NOT REGEXP '^[0-9]{10,}$'`).join(' AND ');
+
+  // Thư viện adid: cặp chưa có tên nhóm / chiến dịch (seed, thêm tay) thì tra ID quảng cáo rồi ghi lại
+  async function adidRef(adid) {
+    const [row] = await db('SELECT * FROM oms_adid_map WHERE adid=?', [adid]);
+    if (!row || row.xung_dot) return null;
+    if (row.campaign_id) return row;
+    const r = await global.__fbAdRef(row.ad_id);
+    if (!r?.campaign_id) return null;
+    await db('UPDATE oms_adid_map SET adset_id=?, adset_name=?, campaign_id=?, campaign_name=? WHERE adid=?',
+      [r.adset_id || '', (r.adset_name || '').slice(0, 255), r.campaign_id, (r.campaign_name || '').slice(0, 255), adid]);
+    return { ...r, ad_id: row.ad_id };
+  }
+  // Ghi cặp adid → quảng cáo. Cặp mới (hoặc admin chọn lại) → ghép ngay các đơn mang adid đó mà chưa ra
+  // chiến dịch (đơn từ link trong bài / bình luận về trước khi học được). UTM báo quảng cáo khác cho adid đã
+  // có → đánh dấu xung đột, không tự đổi.
+  async function learnAdid(adid, ref, nguon, nguoi = '') {
+    const vals = [ref.ad_id, ref.adset_id || '', (ref.adset_name || '').slice(0, 255), ref.campaign_id || '',
+      (ref.campaign_name || '').slice(0, 255)];
+    const [row] = await db('SELECT ad_id FROM oms_adid_map WHERE adid=?', [adid]);
+    if (!row) {
+      const r = await db(`INSERT IGNORE INTO oms_adid_map (adid, ad_id, adset_id, adset_name, campaign_id, campaign_name, nguon,
+        nguoi_them, first_at, last_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, UTC_TIMESTAMP(), UTC_TIMESTAMP())`, [adid, ...vals, nguon, nguoi]);
+      if (r.affectedRows) await regroupAdid(adid, ref);
+      return 'moi';
+    }
+    if (row.ad_id === ref.ad_id) {
+      await db(`UPDATE oms_adid_map SET so_lan=so_lan+1, last_at=UTC_TIMESTAMP(), adset_id=?, adset_name=?, campaign_id=?,
+        campaign_name=?${nguon === 'admin' ? ", xung_dot='', nguon='admin', nguoi_them=?" : ''} WHERE adid=?`,
+        [...vals.slice(1), ...(nguon === 'admin' ? [nguoi] : []), adid]);
+      if (nguon === 'admin') await regroupAdid(adid, ref);
+      return 'cu';
+    }
+    if (nguon !== 'admin') {
+      await db('UPDATE oms_adid_map SET xung_dot=?, last_at=UTC_TIMESTAMP() WHERE adid=?', [ref.ad_id, adid]);
+      return 'xung_dot';
+    }
+    await db(`UPDATE oms_adid_map SET ad_id=?, adset_id=?, adset_name=?, campaign_id=?, campaign_name=?, nguon='admin',
+      xung_dot='', nguoi_them=?, last_at=UTC_TIMESTAMP() WHERE adid=?`, [...vals, nguoi, adid]);
+    await regroupAdid(adid, ref, row.ad_id);
+    return 'doi';
+  }
+  // Đơn mang adid chưa ra chiến dịch; oldAd: đơn trước đó ghép theo cặp cũ (không có ID số trong UTM)
+  function regroupAdid(adid, ref, oldAd) {
+    if (!ref.campaign_id) return null;
+    return saveAdRef(`ngay_ve >= ? AND fb_adid=? AND (fb_campaign_id=''${oldAd ? ` OR (fb_ad_id=? AND ${NO_UTM_ID})` : ''})`,
+      [omsDateBoundary(AD_REF_FROM), adid, ...(oldAd ? [oldAd] : [])], ref);
+  }
+  // Điền fb_adid cho đơn có fbclid về trước khi có cột (chạy trong fixAdRefs)
+  async function fillFbAdid() {
+    const rows = await db(`SELECT id, fbclid FROM oms_orders WHERE fbclid!='' AND fb_adid='' LIMIT 5000`);
+    for (const r of rows) await db('UPDATE oms_orders SET fb_adid=? WHERE id=?', [fbAdidOf(r.fbclid), r.id]);
+    return rows.length;
   }
   // Ghi kết quả tra cho các đơn khớp where; tra không ra vẫn ghi fb_ref_at để không tra lại mãi
   function saveAdRef(where, params, ref) {
@@ -368,6 +452,15 @@ export function mountOMS(app, { mysql, express, getTeamLead = () => ({}) }) {
     fixingAdRefs = true;
     try {
       await ensureTables(getPool()); // cột fb_* có thể chưa có khi máy chủ chưa nhận đơn nào
+      const dienAdid = await fillFbAdid();
+      // Đơn chưa ra chiến dịch mà adid đã có trong thư viện (cặp nhập sẵn / thêm tay / học sau) → ghép ngay
+      const pend = await db(`SELECT DISTINCT o.fb_adid FROM oms_orders o JOIN oms_adid_map m ON m.adid=o.fb_adid AND m.xung_dot=''
+        WHERE o.ngay_ve >= ? AND o.fb_campaign_id=''`, [omsDateBoundary(AD_REF_FROM)]);
+      let ghepAdid = 0;
+      for (const { fb_adid } of pend) {
+        const ref = await adidRef(fb_adid).catch(() => null);
+        if (ref) { await regroupAdid(fb_adid, ref); ghepAdid++; }
+      }
       const cond = all ? '1=1' : `(fb_ref_at IS NULL OR (fb_campaign_id='' AND fb_ref_at < UTC_TIMESTAMP() - INTERVAL 6 HOUR
         AND ngay_ve > UTC_TIMESTAMP() - INTERVAL 14 DAY))`;
       const rows = await db(`SELECT utm_campaign, utm_medium, utm_term, utm_content, fbclid, COUNT(*) AS don
@@ -375,7 +468,7 @@ export function mountOMS(app, { mysql, express, getTeamLead = () => ({}) }) {
         AND (utm_campaign!='' OR utm_medium!='' OR utm_term!='' OR utm_content!='' OR fbclid!='')
         AND ${cond} GROUP BY utm_campaign, utm_medium, utm_term, utm_content, fbclid ORDER BY MAX(ngay_ve) DESC LIMIT 300`,
         [omsDateBoundary(AD_REF_FROM)]);
-      const out = { bo: rows.length, ra: 0, khongRa: 0, don: 0 };
+      const out = { bo: rows.length, ra: 0, khongRa: 0, don: 0, dienAdid, ghepAdid };
       for (const r of rows) {
         let ref;
         try { ref = await lookupAdRef(r); }
@@ -528,68 +621,81 @@ export function mountOMS(app, { mysql, express, getTeamLead = () => ({}) }) {
     res.json({ ketqua: await fixMktIds() });
   }));
 
-  // Admin: chẩn đoán vì sao đơn (theo SĐT) không ra chiến dịch — fbclid, ID quảng cáo đọc được, lỗi Meta
+  // Admin: chẩn đoán vì sao đơn (theo SĐT) không ra chiến dịch — fbclid, adid, cặp trong thư viện adid
   app.get('/oms/api/ad-ref-debug', requireRole('admin'), wrap(async (req, res) => {
     const rows = await db(`SELECT id, ngay_ve, utm_source, utm_campaign, utm_medium, utm_term, utm_content, fbclid, url_page,
-      fb_campaign_id, fb_campaign_name, fb_adset_id, fb_adset_name, fb_ad_id, fb_ref_at
+      fb_campaign_id, fb_campaign_name, fb_adset_id, fb_adset_name, fb_ad_id, fb_adid, fb_ref_at
       FROM oms_orders WHERE sdt=? ORDER BY id DESC LIMIT 3`, [String(req.query.sdt || '').trim()]);
     const out = [];
     for (const r of rows) {
       const adid = adIdFromFbclid(r.fbclid);
       out.push({ ...r, adidTuFbclid: adid || null,
-        traMeta: adid && global.__fbAdRefDebug ? await global.__fbAdRefDebug(adid) : null,
+        thuVienAdid: adid ? (await db('SELECT * FROM oms_adid_map WHERE adid=?', [adid]))[0] || null : null,
         traLai: await lookupAdRef(r).catch(e => ({ loi: e.message })) });
     }
     res.json(out);
   }));
 
-  // Admin: kiểm chứng adid trong fbclid có đúng là ID quảng cáo không — so với ID quảng cáo tra từ UTM
-  // của các đơn có cả hai (khách bấm nút quảng cáo: link mang cả UTM lẫn fbclid)
-  app.get('/oms/api/fbclid-check', requireRole('admin'), wrap(async (req, res) => {
-    const rows = await db(`SELECT id, ngay_ve, nv_marketing, utm_campaign, utm_medium, utm_term, utm_content, fbclid,
-      fb_ad_id, fb_campaign_name FROM oms_orders WHERE fbclid!='' ORDER BY id DESC LIMIT 40`);
-    const out = [];
-    for (const r of rows) {
-      const adid = adIdFromFbclid(r.fbclid);
-      const utmIds = ['utm_campaign', 'utm_medium', 'utm_term', 'utm_content'].map(k => String(r[k] || '').trim())
-        .filter(v => /^\d{10,}$/.test(v));
-      // adid tra riêng (Meta nói nó là ad / nhóm / chiến dịch nào), UTM tra riêng (không kèm fbclid) → so chiến dịch
-      let tuAdid = null, tuUtm = null;
-      try { tuAdid = adid ? await global.__fbAdRef(adid) : null; } catch (e) { tuAdid = { loi: e.message }; }
-      try { tuUtm = utmIds.length ? await lookupAdRef({ ...r, fbclid: '' }) : null; } catch (e) { tuUtm = { loi: e.message }; }
-      out.push({ id: r.id, ngay_ve: r.ngay_ve, nv: r.nv_marketing, adidTuFbclid: adid || null, idTrongUtm: utmIds,
-        tuAdid, tuUtm,
-        khop: tuAdid?.campaign_id && tuUtm?.campaign_id ? tuAdid.campaign_id === tuUtm.campaign_id : null });
-    }
-    const coCa2 = out.filter(o => o.khop !== null);
-    res.json({ tongDonCoFbclid: out.length, coCaUtm: coCa2.length, khop: coCa2.filter(o => o.khop).length, don: out });
+  // ---- Thư viện adid (trang /oms-adid.html) ----
+  // Danh sách cặp đã có + adid của đơn chưa ra chiến dịch (kèm số đơn, trang đích) để admin / NV thêm tay
+  app.get('/oms/api/adid-map', requireRole('admin', 'marketing'), wrap(async (req, res) => {
+    await ensureTables(getPool());
+    await fillFbAdid();
+    const map = await db('SELECT * FROM oms_adid_map ORDER BY last_at DESC LIMIT 500');
+    const chuaGhep = await db(`SELECT o.fb_adid AS adid, COUNT(*) AS don, MIN(o.ngay_ve) AS tu, MAX(o.ngay_ve) AS den,
+      MAX(o.url_page) AS url_page, GROUP_CONCAT(DISTINCT o.nv_marketing SEPARATOR ', ') AS nv,
+      MAX(m.ad_id) AS ad_id, MAX(m.xung_dot) AS xung_dot
+      FROM oms_orders o LEFT JOIN oms_adid_map m ON m.adid=o.fb_adid
+      WHERE o.ngay_ve >= ? AND o.fb_adid NOT IN ('', '-') AND o.fb_campaign_id=''
+      GROUP BY o.fb_adid ORDER BY den DESC LIMIT 300`, [omsDateBoundary(AD_REF_FROM)]);
+    res.json({ map, chuaGhep });
+  }));
+  // Thêm / sửa tay: { ad_id, adid } hoặc { ad_id, link } (link bấm từ quảng cáo, có ?fbclid=…). ad_id phải là
+  // ID quảng cáo (không phải nhóm / chiến dịch) mà token Meta của máy chủ đọc được.
+  app.post('/oms/api/adid-map', requireRole('admin', 'marketing'), jsonParser, wrap(async (req, res) => {
+    await ensureTables(getPool());
+    const b = req.body || {};
+    const adId = String(b.ad_id || '').trim();
+    let adid = String(b.adid || '').trim();
+    if (!adid && b.link) adid = adIdFromFbclid(utmFromUrl(b.link)?.fbclid || '');
+    if (!/^\d{10,}$/.test(adid)) return res.status(400).json({ error: 'Không đọc được adid (link phải có ?fbclid=… bấm từ quảng cáo)' });
+    if (!/^\d{10,}$/.test(adId)) return res.status(400).json({ error: 'Thiếu ID quảng cáo' });
+    const ref = await global.__fbAdRef(adId);
+    if (!ref?.ad_id) return res.status(400).json({ error: `ID ${adId} không phải quảng cáo, hoặc token Meta không đọc được` });
+    const ketqua = await learnAdid(adid, { ...ref, ad_id: adId }, 'admin', req.session.omsUser?.ho_ten || '');
+    const [row] = await db('SELECT * FROM oms_adid_map WHERE adid=?', [adid]);
+    res.json({ ketqua, adid, row });
+  }));
+  app.post('/oms/api/adid-map/delete', requireRole('admin'), jsonParser, wrap(async (req, res) => {
+    await db('DELETE FROM oms_adid_map WHERE adid=?', [String(req.body?.adid || '').trim()]);
+    res.json({ ok: true });
   }));
 
-  // Admin: adid trong fbclid có phải ID creative của quảng cáo không (?ad=<ID quảng cáo>&adid=<adid>)
-  app.get('/oms/api/ad-creative', requireRole('admin'), wrap(async (req, res) => {
-    const ad = String(req.query.ad || '').trim(), adid = String(req.query.adid || '').trim();
-    if (!/^\d{10,}$/.test(ad)) return res.status(400).json({ error: 'Thiếu ?ad=<ID quảng cáo>' });
-    const tra = await global.__fbCreativeDebug(ad, /^\d{10,}$/.test(adid) ? adid : '');
-    const ids = tra.flatMap(t => [t.ad?.creative?.id, ...(t.ad?.adcreatives?.data || []).map(c => c.id)]).filter(Boolean);
-    res.json({ ad, adid: adid || null, creativeIds: [...new Set(ids)], adidLaCreative: adid ? ids.includes(adid) : null, tra });
-  }));
-
-  // Admin: trường Graph API nào của quảng cáo chứa adid (?ad=<ID quảng cáo>&adid=<adid>)
-  app.get('/oms/api/ad-field-scan', requireRole('admin'), wrap(async (req, res) => {
-    const ad = String(req.query.ad || '').trim(), adid = String(req.query.adid || '').trim();
-    if (!/^\d{10,}$/.test(ad) || !/^\d{10,}$/.test(adid)) return res.status(400).json({ error: 'Thiếu ?ad=&adid=' });
-    res.json(await global.__fbAdFieldScan(ad, adid));
-  }));
-
-  // Admin: adid ứng với thời điểm nào của quảng cáo (?pairs=<ID quảng cáo>:<adid>,…)
-  app.get('/oms/api/adid-time', requireRole('admin'), wrap(async (req, res) => {
-    const pairs = String(req.query.pairs || '').split(',').map(s => s.trim().split(':'))
-      .filter(p => p.length === 2 && p.every(v => /^\d{10,}$/.test(v))).slice(0, 5);
-    if (!pairs.length) return res.status(400).json({ error: 'Thiếu ?pairs=<ID quảng cáo>:<adid>,…' });
-    const out = [];
-    for (const [ad, adid] of pairs) out.push(await global.__fbAdidTimeDebug(ad, adid).catch(e => ({ ad, adid, loi: e.message })));
-    res.json(out);
-  }));
+  // Học thư viện adid từ lượt mở trang (đoạn script dán vào Ladipage gửi location.href bằng sendBeacon):
+  // chỉ link có cả fbclid lẫn UTM (bấm nút quảng cáo). Không cần đăng nhập → bỏ qua adid đã có, giới hạn
+  // mỗi IP 30 lần / phút; cặp học được vẫn phải là quảng cáo thật mà token Meta đọc được.
+  const trackSeen = new Set();
+  const trackHits = new Map();
+  app.post('/oms/track', express.text({ type: '*/*', limit: '8kb' }), (req, res) => {
+    res.set('Access-Control-Allow-Origin', '*');
+    res.status(204).end();
+    const ip = req.ip || '';
+    const now = Date.now();
+    const h = trackHits.get(ip);
+    if (h && now - h.t < 60000) { if (++h.n > 30) return; } else trackHits.set(ip, { t: now, n: 1 });
+    if (trackHits.size > 5000) trackHits.clear();
+    const u = utmFromUrl(typeof req.body === 'string' ? req.body : '');
+    if (!u?.fbclid || !['utm_campaign', 'utm_medium', 'utm_term', 'utm_content'].some(k => /^\d{10,}$/.test(u[k]))) return;
+    const adid = adIdFromFbclid(u.fbclid);
+    if (!adid || trackSeen.has(adid) || !getPool()) return;
+    trackSeen.add(adid);
+    if (trackSeen.size > 20000) trackSeen.clear();
+    (async () => {
+      await ensureTables(getPool());
+      const [row] = await db('SELECT adid FROM oms_adid_map WHERE adid=?', [adid]);
+      if (!row) await lookupAdRef(u);
+    })().catch(e => { trackSeen.delete(adid); console.error('[OMS] track adid:', e.message); });
+  });
 
   // Admin: tra ngay chiến dịch / nhóm quảng cáo cho đơn chưa tra (?all=1: tra lại mọi đơn)
   app.get('/oms/api/fix-ad-refs', requireRole('admin'), wrap(async (req, res) => {
@@ -703,13 +809,13 @@ export function mountOMS(app, { mysql, express, getTeamLead = () => ({}) }) {
       (ngay_ve, nv_marketing, ten_kh, sdt, dia_chi_full, tinh, quan, phuong, dia_chi,
        trang_thai, san_pham, so_luong, gia_ban, tong_tien,
        utm_source, utm_medium, utm_campaign, utm_content, utm_term, ghi_chu, tin_nhan_goc, nguon_du_lieu,
-       fbclid, url_page)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'Đơn mới', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+       fbclid, url_page, fb_adid)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'Đơn mới', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       [now, nvMarketing, ten, sdt, diaChiFull, addr.tinh, addr.quan, addr.phuong, addr.diaChi,
        sanPham, soLuong, gia, gia * soLuong,
        utmSource, utmMedium, utmCampaign, utmContent, utmTerm,
        d.ghi_chu || '', tinNhanGoc, orderNguon,
-       fbclid.slice(0, 512), String(urlPage).slice(0, 1000)]);
+       fbclid.slice(0, 512), String(urlPage).slice(0, 1000), fbAdidOf(fbclid)]);
 
     // Tra chiến dịch / nhóm quảng cáo (gọi Graph API) sau khi đã ghi đơn → Ladipage không phải chờ.
     // Lỗi thì fb_ref_at còn trống, fixAdRefs tra lại.

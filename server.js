@@ -727,125 +727,6 @@ async function fbAdRef(id) {
   return ref;
 }
 global.__fbAdRef = fbAdRef;
-// Chẩn đoán (/oms/api/ad-ref-debug): thử từng token × từng loại (ad / nhóm / chiến dịch), không cache,
-// trả cả lỗi Meta để biết vì sao không tra ra
-global.__fbAdRefDebug = async (id) => {
-  const out = [];
-  for (const [i, src] of SOURCES.entries()) {
-    for (const fields of ['adset{id,name},campaign{id,name}', 'name,campaign{id,name}', 'name,objective']) {
-      try { out.push({ token: i + 1, fields, ok: await fb(String(id), { fields }, src.token) }); break; }
-      catch (e) { out.push({ token: i + 1, fields, loi: e.message }); }
-    }
-  }
-  return out;
-};
-// Chẩn đoán (/oms/api/ad-creative): adid trong fbclid có phải ID creative không — đọc creative của
-// quảng cáo, và đọc thẳng adid với trường tối thiểu (lỗi "Unsupported get request" = token không thấy)
-global.__fbCreativeDebug = async (adId, adid) => {
-  const out = [];
-  for (const [i, src] of SOURCES.entries()) {
-    const r = { token: i + 1 };
-    try {
-      r.ad = await fb(String(adId), { fields: 'name,account_id,creative{id,name,object_story_id,effective_object_story_id},adcreatives{id,name}' }, src.token);
-    } catch (e) { r.adLoi = e.message; }
-    if (adid) {
-      try { r.adid = await fb(String(adid), { fields: 'id' }, src.token); } catch (e) { r.adidLoi = e.message; }
-      try { r.adidCreative = await fb(String(adid), { fields: 'id,name,account_id,object_story_id' }, src.token); } catch (e) { r.adidCreativeLoi = e.message; }
-    }
-    out.push(r);
-    if (r.ad) break;
-  }
-  return out;
-};
-// Chẩn đoán (/oms/api/ad-field-scan): trường Graph API nào của quảng cáo chứa adid (ID "ad" nội bộ; Ads Manager
-// gọi quảng cáo là adgroup). Đọc danh sách trường (metadata=1), hỏi từng lô; lô lỗi thì hỏi lẻ từng trường.
-global.__fbAdFieldScan = async (ad, adid) => {
-  const r = { ad, adid };
-  let token = null, meta = null;
-  for (const src of SOURCES) {
-    try { meta = await fb(String(ad), { metadata: 1 }, src.token); token = src.token; break; } catch (e) { r.loi = e.message; }
-  }
-  if (!token) return r;
-  delete r.loi;
-  // metadata=1 có thể không trả gì → dùng danh sách trường / connection của Ad theo tài liệu Marketing API
-  const DOC_FIELDS = ['id', 'account_id', 'ad_active_time', 'ad_review_feedback', 'ad_schedule_end_time', 'ad_schedule_start_time',
-    'adlabels', 'adset', 'adset_id', 'bid_amount', 'campaign', 'campaign_id', 'configured_status', 'conversion_domain',
-    'created_time', 'creative', 'creative_asset_groups_spec', 'demolink_hash', 'display_sequence', 'effective_status',
-    'engagement_audience', 'failed_delivery_checks', 'issues_info', 'last_updated_by_app_id', 'name', 'placement',
-    'preview_shareable_link', 'priority', 'recommendations', 'source_ad', 'source_ad_id', 'status', 'targeting',
-    'tracking_and_conversion_with_defaults', 'tracking_specs', 'updated_time', 'meta_reward_adgroup_status', 'bid_info',
-    'bid_type', 'ad_review_feedback', 'adgroup_review_feedback', 'conversion_specs'];
-  const DOC_CONNS = ['adcreatives', 'copies', 'targetingsentencelines', 'adrules_governed', 'previews?ad_format=DESKTOP_FEED_STANDARD',
-    'previews?ad_format=MOBILE_FEED_STANDARD'];
-  r.metaKeys = Object.keys(meta || {});
-  const fields = [...new Set([...(meta.metadata?.fields || []).map(f => f.name), ...DOC_FIELDS])];
-  r.tongTruong = fields.length;
-  r.connections = [...new Set([...Object.keys(meta.metadata?.connections || {}), ...DOC_CONNS])];
-  r.coAdid = []; r.loiTruong = {};
-  const check = (name, val) => { if (JSON.stringify(val ?? null).includes(String(adid))) r.coAdid.push(name); };
-  const ask = async (list) => {
-    try { const v = await fb(String(ad), { fields: list.join(',') }, token); for (const f of list) check(f, v[f]); return true; }
-    catch { return false; }
-  };
-  for (let i = 0; i < fields.length; i += 10) {
-    const lot = fields.slice(i, i + 10);
-    if (await ask(lot)) continue;
-    for (const f of lot) if (!(await ask([f]))) r.loiTruong[f] = 1;
-  }
-  // Các connection (previews, adcreatives, …): quét luôn, giới hạn 1 trang
-  for (const c of r.connections) {
-    const [path, qs] = c.split('?');
-    const params = { limit: 25, ...Object.fromEntries(new URLSearchParams(qs || '')) };
-    try { check('connection:' + c, await fb(`${ad}/${path}`, params, token)); } catch (e) { (r.loiConn ||= {})[c] = e.message.slice(0, 120); }
-  }
-  r.loiTruong = Object.keys(r.loiTruong);
-  return r;
-};
-// Chẩn đoán (/oms/api/adid-time): adid (= ID bản quảng cáo trong Thư viện quảng cáo) ứng với thời điểm nào
-// của quảng cáo — giờ tạo/sửa, nhật ký hoạt động, và thời gian nội suy từ ID các object cùng tài khoản
-// (ID Meta tăng theo thời gian). ID 18 số vượt Number nên so bằng BigInt.
-global.__fbAdidTimeDebug = async (ad, adid) => {
-  const r = { ad, adid };
-  let token = null;
-  for (const src of SOURCES) {
-    try {
-      r.info = await fb(String(ad), { fields: 'name,account_id,created_time,updated_time,effective_status,adset{id,name,created_time,updated_time},campaign{id,created_time,updated_time}' }, src.token);
-      token = src.token; break;
-    } catch (e) { r.infoLoi = e.message; }
-  }
-  if (!token) return r;
-  delete r.infoLoi;
-  const acc = r.info.account_id;
-  const since = Math.floor(new Date(r.info.created_time).getTime() / 1000) - 3600;
-  r.activities = {};
-  for (const oid of [ad, r.info.adset?.id].filter(Boolean)) {
-    try {
-      const rows = await fb(`act_${acc}/activities`, { oid, since, limit: 100,
-        fields: 'event_time,event_type,translated_event_type,object_id,object_name,extra_data' }, token);
-      r.activities[oid] = (rows.data || []).map(a => ({ t: a.event_time, type: a.event_type, ten: a.translated_event_type,
-        obj: a.object_id, extra: String(a.extra_data || '').slice(0, 300) }));
-    } catch (e) { r.activities[oid] = { loi: e.message }; }
-  }
-  // Mốc (ID, giờ tạo) của mọi object cùng tài khoản → nội suy giờ cho adid
-  const marks = [];
-  for (const edge of ['ads', 'adsets', 'campaigns', 'adcreatives']) {
-    try {
-      const rows = await fb(`act_${acc}/${edge}`, { fields: 'id,created_time', limit: 500 }, token);
-      for (const x of rows.data || []) if (x.created_time && /^\d+$/.test(x.id)) marks.push({ id: BigInt(x.id), t: new Date(x.created_time).getTime(), edge });
-    } catch (e) { (r.marksLoi ||= {})[edge] = e.message; }
-  }
-  const target = BigInt(adid);
-  const same = marks.filter(m => String(m.id).length === String(adid).length).sort((a, b) => (a.id < b.id ? -1 : a.id > b.id ? 1 : 0));
-  const lo = same.filter(m => m.id <= target).slice(-3), hi = same.filter(m => m.id >= target).slice(0, 3);
-  const show = m => ({ id: String(m.id), edge: m.edge, t: new Date(m.t).toISOString() });
-  r.moc = { tong: same.length, duoi: lo.map(show), tren: hi.map(show) };
-  const a = lo[lo.length - 1], b = hi[0];
-  if (a && b && b.id !== a.id) r.adidNoiSuy = new Date(a.t + (b.t - a.t) * Number(target - a.id) / Number(b.id - a.id)).toISOString();
-  else if (a && b) r.adidNoiSuy = new Date(a.t).toISOString();
-  return r;
-};
-
-
 // Giá trị cột NV marketing của OMS → tên NV: ID Meta thì tra tên chiến dịch, chữ (vd tên
 // chiến dịch "TD4 - My - Túi giữ lạnh…" do utm_content={{campaign.name}}) thì nhận diện trực tiếp.
 // Đã đúng tên đầy đủ thì trả lại chính nó; không nhận ra được thì trả ''.
@@ -884,7 +765,7 @@ app.use((req, res, next) => {
   if (req.path === '/tg-all/webhook') return next();
   // BỎ QUA mọi đường dẫn /oms — module OMS TỰ LO auth riêng
   if (req.path === '/oms' || req.path.startsWith('/oms/') || req.path === '/go-oms'
-    || req.path === '/oms-admin.html' || req.path === '/sw-push.js'
+    || req.path === '/oms-admin.html' || req.path === '/oms-adid.html' || req.path === '/sw-push.js'
     || req.path === '/oms-manifest.json' || req.path === '/api/oms-button') return next();
   if (req.session && req.session.user) return next();
   if (req.path.startsWith('/api/')) return res.status(401).json({ error: 'Chưa đăng nhập' });

@@ -1,0 +1,140 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>OMS — Thư viện adid</title>
+<script src="https://cdn.tailwindcss.com"></script>
+<style>
+  @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap');
+  body { font-family: 'Inter', sans-serif; background: #f0f2f5; }
+  input[type=text] { border: 1px solid #d1d5db; border-radius: 6px; padding: 6px 10px; font-size: 14px; outline: none; }
+  input[type=text]:focus { border-color: #2563eb; box-shadow: 0 0 0 3px rgba(37,99,235,.12); }
+  .badge { display: inline-block; padding: 1px 8px; border-radius: 9999px; font-size: 11px; font-weight: 500; }
+  td, th { padding: 6px 8px; text-align: left; vertical-align: top; }
+  pre { white-space: pre-wrap; word-break: break-all; }
+</style>
+</head>
+<body class="text-gray-800">
+<div class="max-w-6xl mx-auto px-4 py-6 space-y-5">
+  <div class="flex items-center justify-between">
+    <h1 class="text-xl font-bold">Thư viện adid → quảng cáo</h1>
+    <a href="/oms-admin.html" class="text-sm text-blue-600 hover:underline">← OMS</a>
+  </div>
+  <div id="loginMsg" class="hidden bg-yellow-50 border border-yellow-200 rounded-lg p-4 text-sm">
+    Chưa đăng nhập OMS. Mở <a href="/oms-admin.html" class="text-blue-600 underline">OMS</a>, đăng nhập rồi quay lại trang này.
+  </div>
+
+  <div class="bg-white rounded-xl shadow-sm p-4 text-sm space-y-2">
+    <p>Khách bấm link trong bài viết hoặc bình luận quảng cáo thì đơn không có UTM, chỉ có <b>fbclid</b>. Trong fbclid có
+      <b>adid</b>: mã nội bộ Meta, cố định theo từng quảng cáo (nút, link trong bài và link bình luận của cùng quảng cáo đều
+      cùng adid). Meta không cho tra adid ra quảng cáo, nên OMS tự lập thư viện:</p>
+    <ul class="list-disc ml-5 space-y-1">
+      <li><b>Tự động:</b> khách bấm nút quảng cáo (link có <code>utm_content={{ad.id}}</code> và fbclid) → OMS học adid của quảng cáo đó.</li>
+      <li><b>Thêm tay:</b> NV tự bấm link quảng cáo của mình trên Facebook (nút, link trong bài hoặc bình luận), copy cả link trên thanh
+        địa chỉ (có <code>?fbclid=</code>), dán vào ô dưới cùng ID quảng cáo (Trình quản lý quảng cáo: chọn quảng cáo, số sau
+        <code>selected_ad_ids=</code> trên thanh địa chỉ).</li>
+      <li>adid đổi khi quảng cáo được sửa rồi duyệt lại; mỗi quảng cáo nhân bản sang nhóm mới cũng có adid riêng.</li>
+    </ul>
+  </div>
+
+  <div class="bg-white rounded-xl shadow-sm p-4 space-y-3">
+    <h2 class="font-semibold">Thêm cặp adid → quảng cáo</h2>
+    <div class="grid md:grid-cols-[1fr_220px_auto] gap-2">
+      <input id="fLink" type="text" placeholder="Dán link có ?fbclid=… (hoặc nhập adid)">
+      <input id="fAd" type="text" placeholder="ID quảng cáo">
+      <button id="fSave" class="bg-blue-600 text-white rounded-md px-4 py-1.5 text-sm font-medium hover:bg-blue-700">Lưu</button>
+    </div>
+    <div id="fMsg" class="text-sm"></div>
+  </div>
+
+  <div class="bg-white rounded-xl shadow-sm p-4 space-y-2">
+    <h2 class="font-semibold">adid của đơn chưa ra chiến dịch <span id="cgCount" class="text-gray-400 font-normal"></span></h2>
+    <p class="text-xs text-gray-500">Bấm "Thư viện QC" để xem adid là bài quảng cáo nào (trang, nội dung, ngày chạy), rồi nhập ID quảng cáo tương ứng.</p>
+    <div class="overflow-x-auto"><table class="w-full text-sm"><thead class="bg-gray-50 text-xs text-gray-500"><tr>
+      <th>adid</th><th>Đơn</th><th>Thời gian</th><th>Trang đích</th><th>NV</th><th></th><th>ID quảng cáo</th></tr></thead>
+      <tbody id="cgBody"></tbody></table></div>
+  </div>
+
+  <div class="bg-white rounded-xl shadow-sm p-4 space-y-2">
+    <h2 class="font-semibold">Thư viện <span id="mapCount" class="text-gray-400 font-normal"></span></h2>
+    <div class="overflow-x-auto"><table class="w-full text-sm"><thead class="bg-gray-50 text-xs text-gray-500"><tr>
+      <th>adid</th><th>Quảng cáo</th><th>Nhóm / chiến dịch</th><th>Nguồn</th><th>Lần thấy</th><th>Cập nhật</th><th></th></tr></thead>
+      <tbody id="mapBody"></tbody></table></div>
+  </div>
+
+  <div class="bg-white rounded-xl shadow-sm p-4 space-y-2 text-sm">
+    <h2 class="font-semibold">Học nhanh hơn: đoạn mã cho Ladipage</h2>
+    <p>Dán vào phần mã HTML / JS chung của trang Ladipage (trước <code>&lt;/body&gt;</code>). Mỗi lần khách mở trang từ nút quảng cáo
+      (link có cả fbclid và UTM), trang gửi link về OMS để học adid ngay, không phải chờ có đơn.</p>
+    <pre class="bg-gray-50 border rounded p-3 text-xs" id="snippet">&lt;script&gt;(function(){try{var u=location.href;if(u.indexOf('fbclid=')&lt;0||u.indexOf('utm_')&lt;0)return;navigator.sendBeacon('https://ads.tdmjsc.com/oms/track',u);}catch(e){}})();&lt;/script&gt;</pre>
+  </div>
+</div>
+
+<script>
+let ME = null;
+const esc = s => String(s ?? '').replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
+const fmt = t => t ? new Date(t).toLocaleString('vi-VN', { timeZone: 'Asia/Ho_Chi_Minh', hour12: false }) : '';
+const libLink = adid => `https://www.facebook.com/ads/library/?id=${encodeURIComponent(adid)}`;
+const NGUON = { utm: ['Tự học (nút QC)', 'bg-green-100 text-green-700'], admin: ['Thêm tay', 'bg-blue-100 text-blue-700'],
+  seed: ['Đối chiếu ban đầu', 'bg-gray-100 text-gray-600'] };
+
+async function save(body, msgEl) {
+  msgEl.textContent = 'Đang lưu…'; msgEl.className = 'text-sm text-gray-500';
+  try {
+    const r = await fetch('/oms/api/adid-map', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+    const j = await r.json();
+    if (!r.ok) throw new Error(j.error || r.status);
+    msgEl.textContent = `Đã lưu adid ${j.adid} → ${j.row?.ad_id} (${j.row?.campaign_name || ''})`;
+    msgEl.className = 'text-sm text-green-700';
+    load();
+    return true;
+  } catch (e) { msgEl.textContent = 'Lỗi: ' + e.message; msgEl.className = 'text-sm text-red-600'; return false; }
+}
+
+document.getElementById('fSave').onclick = () => {
+  const v = document.getElementById('fLink').value.trim(), ad = document.getElementById('fAd').value.trim();
+  save(/^\d{10,}$/.test(v) ? { adid: v, ad_id: ad } : { link: v, ad_id: ad }, document.getElementById('fMsg'))
+    .then(ok => { if (ok) { document.getElementById('fLink').value = ''; document.getElementById('fAd').value = ''; } });
+};
+
+async function load() {
+  const r = await fetch('/oms/api/adid-map');
+  if (r.status === 401) { document.getElementById('loginMsg').classList.remove('hidden'); return; }
+  const j = await r.json();
+  if (!r.ok) { alert(j.error || r.status); return; }
+  document.getElementById('cgCount').textContent = `(${j.chuaGhep.length})`;
+  document.getElementById('cgBody').innerHTML = j.chuaGhep.map(c => `<tr class="border-t">
+    <td class="font-mono text-xs">${esc(c.adid)}${c.xung_dot ? '<br><span class="badge bg-red-100 text-red-700">xung đột</span>' : ''}</td>
+    <td>${c.don}</td><td class="text-xs">${fmt(c.tu)}${c.tu !== c.den ? '<br>' + fmt(c.den) : ''}</td>
+    <td class="text-xs max-w-[220px] break-all">${esc((c.url_page || '').split('?')[0])}</td><td class="text-xs">${esc(c.nv)}</td>
+    <td><a href="${libLink(c.adid)}" target="_blank" rel="noopener" class="text-blue-600 text-xs hover:underline whitespace-nowrap">Thư viện QC ↗</a></td>
+    <td><div class="flex gap-1"><input type="text" class="w-40 text-xs" placeholder="ID quảng cáo" data-adid="${esc(c.adid)}">
+      <button class="bg-blue-600 text-white rounded px-2 text-xs" data-save="${esc(c.adid)}">Lưu</button></div>
+      <div class="text-xs" data-msg="${esc(c.adid)}"></div></td></tr>`).join('') || '<tr><td colspan="7" class="text-gray-400 text-sm">Không có</td></tr>';
+  document.querySelectorAll('[data-save]').forEach(b => b.onclick = () => {
+    const adid = b.dataset.save;
+    save({ adid, ad_id: document.querySelector(`input[data-adid="${adid}"]`).value.trim() }, document.querySelector(`[data-msg="${adid}"]`));
+  });
+  document.getElementById('mapCount').textContent = `(${j.map.length})`;
+  document.getElementById('mapBody').innerHTML = j.map.map(m => {
+    const [ten, cls] = NGUON[m.nguon] || [m.nguon, 'bg-gray-100'];
+    return `<tr class="border-t">
+    <td class="font-mono text-xs"><a href="${libLink(m.adid)}" target="_blank" rel="noopener" class="hover:underline">${esc(m.adid)}</a></td>
+    <td class="font-mono text-xs">${esc(m.ad_id)}${m.xung_dot ? `<br><span class="badge bg-red-100 text-red-700">xung đột: UTM báo ${esc(m.xung_dot)}</span>` : ''}</td>
+    <td class="text-xs">${esc(m.adset_name || m.adset_id)}<br><span class="text-gray-500">${esc(m.campaign_name || m.campaign_id)}</span></td>
+    <td><span class="badge ${cls}">${esc(ten)}</span>${m.nguoi_them ? `<div class="text-xs text-gray-500">${esc(m.nguoi_them)}</div>` : ''}</td>
+    <td>${m.so_lan}</td><td class="text-xs">${fmt(m.last_at)}</td>
+    <td>${ME?.role === 'admin' ? `<button class="text-xs text-red-600 hover:underline" data-del="${esc(m.adid)}">Xoá</button>` : ''}</td></tr>`;
+  }).join('') || '<tr><td colspan="7" class="text-gray-400 text-sm">Trống</td></tr>';
+  document.querySelectorAll('[data-del]').forEach(b => b.onclick = async () => {
+    if (!confirm('Xoá cặp adid ' + b.dataset.del + '?')) return;
+    await fetch('/oms/api/adid-map/delete', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ adid: b.dataset.del }) });
+    load();
+  });
+}
+
+fetch('/oms/api/me').then(r => r.ok ? r.json() : null).then(me => { ME = me; load(); });
+</script>
+</body>
+</html>
