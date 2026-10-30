@@ -757,6 +757,49 @@ global.__fbCreativeDebug = async (adId, adid) => {
   }
   return out;
 };
+// Chẩn đoán (/oms/api/adid-time): adid (= ID bản quảng cáo trong Thư viện quảng cáo) ứng với thời điểm nào
+// của quảng cáo — giờ tạo/sửa, nhật ký hoạt động, và thời gian nội suy từ ID các object cùng tài khoản
+// (ID Meta tăng theo thời gian). ID 18 số vượt Number nên so bằng BigInt.
+global.__fbAdidTimeDebug = async (ad, adid) => {
+  const r = { ad, adid };
+  let token = null;
+  for (const src of SOURCES) {
+    try {
+      r.info = await fb(String(ad), { fields: 'name,account_id,created_time,updated_time,effective_status,adset{id,name,created_time,updated_time},campaign{id,created_time,updated_time}' }, src.token);
+      token = src.token; break;
+    } catch (e) { r.infoLoi = e.message; }
+  }
+  if (!token) return r;
+  delete r.infoLoi;
+  const acc = r.info.account_id;
+  const since = Math.floor(new Date(r.info.created_time).getTime() / 1000) - 3600;
+  r.activities = {};
+  for (const oid of [ad, r.info.adset?.id].filter(Boolean)) {
+    try {
+      const rows = await fb(`act_${acc}/activities`, { oid, since, limit: 100,
+        fields: 'event_time,event_type,translated_event_type,object_id,object_name,extra_data' }, token);
+      r.activities[oid] = (rows.data || []).map(a => ({ t: a.event_time, type: a.event_type, ten: a.translated_event_type,
+        obj: a.object_id, extra: String(a.extra_data || '').slice(0, 300) }));
+    } catch (e) { r.activities[oid] = { loi: e.message }; }
+  }
+  // Mốc (ID, giờ tạo) của mọi object cùng tài khoản → nội suy giờ cho adid
+  const marks = [];
+  for (const edge of ['ads', 'adsets', 'campaigns', 'adcreatives']) {
+    try {
+      const rows = await fb(`act_${acc}/${edge}`, { fields: 'id,created_time', limit: 500 }, token);
+      for (const x of rows.data || []) if (x.created_time && /^\d+$/.test(x.id)) marks.push({ id: BigInt(x.id), t: new Date(x.created_time).getTime(), edge });
+    } catch (e) { (r.marksLoi ||= {})[edge] = e.message; }
+  }
+  const target = BigInt(adid);
+  const same = marks.filter(m => String(m.id).length === String(adid).length).sort((a, b) => (a.id < b.id ? -1 : a.id > b.id ? 1 : 0));
+  const lo = same.filter(m => m.id <= target).slice(-3), hi = same.filter(m => m.id >= target).slice(0, 3);
+  const show = m => ({ id: String(m.id), edge: m.edge, t: new Date(m.t).toISOString() });
+  r.moc = { tong: same.length, duoi: lo.map(show), tren: hi.map(show) };
+  const a = lo[lo.length - 1], b = hi[0];
+  if (a && b && b.id !== a.id) r.adidNoiSuy = new Date(a.t + (b.t - a.t) * Number(target - a.id) / Number(b.id - a.id)).toISOString();
+  else if (a && b) r.adidNoiSuy = new Date(a.t).toISOString();
+  return r;
+};
 
 
 // Giá trị cột NV marketing của OMS → tên NV: ID Meta thì tra tên chiến dịch, chữ (vd tên

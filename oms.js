@@ -574,6 +574,16 @@ export function mountOMS(app, { mysql, express, getTeamLead = () => ({}) }) {
     res.json({ ad, adid: adid || null, creativeIds: [...new Set(ids)], adidLaCreative: adid ? ids.includes(adid) : null, tra });
   }));
 
+  // Admin: adid ứng với thời điểm nào của quảng cáo (?pairs=<ID quảng cáo>:<adid>,…)
+  app.get('/oms/api/adid-time', requireRole('admin'), wrap(async (req, res) => {
+    const pairs = String(req.query.pairs || '').split(',').map(s => s.trim().split(':'))
+      .filter(p => p.length === 2 && p.every(v => /^\d{10,}$/.test(v))).slice(0, 5);
+    if (!pairs.length) return res.status(400).json({ error: 'Thiếu ?pairs=<ID quảng cáo>:<adid>,…' });
+    const out = [];
+    for (const [ad, adid] of pairs) out.push(await global.__fbAdidTimeDebug(ad, adid).catch(e => ({ ad, adid, loi: e.message })));
+    res.json(out);
+  }));
+
   // Admin: tra ngay chiến dịch / nhóm quảng cáo cho đơn chưa tra (?all=1: tra lại mọi đơn)
   app.get('/oms/api/fix-ad-refs', requireRole('admin'), wrap(async (req, res) => {
     res.json({ ketqua: await fixAdRefs(req.query.all === '1') });
