@@ -10,6 +10,12 @@
   body{margin:0;background:#0B1322;color:#E7EEF8;font-family:Inter,system-ui,sans-serif;}
   header{background:#10192B;border-bottom:1px solid rgba(255,255,255,.08);padding:14px 20px;position:sticky;top:0;z-index:20;}
   .top{display:flex;align-items:center;gap:12px;flex-wrap:wrap;}
+  /* Menu nhỏ của mục Kết quả kinh doanh (giống thu-chi.html) */
+  header{padding-bottom:0;}
+  .subnav{display:flex;gap:4px;margin-top:12px;overflow-x:auto;}
+  .subnav a{color:#9FB0C8;text-decoration:none;font-size:13px;font-weight:600;padding:9px 14px;border-bottom:2px solid transparent;white-space:nowrap;}
+  .subnav a:hover{color:#E7EEF8;}
+  .subnav a.on{color:#fff;border-bottom-color:#3D5AFE;}
   h1{font-family:'Space Grotesk';font-size:17px;margin:0;font-weight:600;}
   .sub{font-size:12px;color:#8C9BB4;margin:3px 0 0;}
   .ctrl{display:flex;align-items:center;gap:7px;}
@@ -196,6 +202,10 @@
     <span class="user-badge" id="userBadge"></span>
     <a href="/logout" class="link">Đăng xuất</a>
   </div>
+  <nav class="subnav">
+    <a href="/ket-qua-kinh-doanh.html" class="on">📊 Kết quả kinh doanh</a>
+    <a href="/thu-chi.html">💵 Thu chi tiền mặt</a>
+  </nav>
 </header>
 
 <main>

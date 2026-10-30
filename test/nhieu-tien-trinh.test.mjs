@@ -121,3 +121,31 @@ test('telegram-all: thành viên A ghi nhớ không bị B (bản cũ) xoá', as
   const f = JSON.parse(fs.readFileSync(path.join(DATA_DIR, 'tg-all.json'), 'utf8'));
   assert.deepEqual(Object.values(f.chats['-100'].members).map(m => m.name).sort(), ['An', 'Bình', 'Cường']);
 });
+
+test('thu-chi: khoản thu/chi của A và B không xoá nhau; file hỏng thì đọc .bak, không ghi đè thành sổ trống', async () => {
+  const { mountThuChi } = await load('thu-chi.js');
+  const DATA_DIR = tmpDir();
+  const B = fakeApp(), A = fakeApp();
+  mountThuChi(B, { express, DATA_DIR });
+  mountThuChi(A, { express, DATA_DIR });
+  const add = (app, loai, soTien) => app.call('POST', '/api/thu-chi/item', { action: 'add', ngay: '2026-10-30', loai, noiDung: loai + soTien, soTien });
+
+  assert.equal((await A.call('POST', '/api/thu-chi/ton-ban-dau', { soTien: '1.000.000' })).ok, true);
+  assert.equal((await add(A, 'thu', 500000)).ok, true);
+  assert.equal((await add(B, 'chi', '200.000')).ok, true);
+  let r = await B.call('GET', '/api/thu-chi');
+  assert.equal(r.items.length, 2);
+  assert.equal(r.tonHienTai, 1300000);
+  assert.equal((await add(B, 'chi', 0)).ok, false);
+
+  const FILE = path.join(DATA_DIR, 'thu-chi.json');
+  fs.writeFileSync(FILE, '{hỏng');
+  r = await A.call('GET', '/api/thu-chi');
+  assert.equal(r.items.length, 1); // .bak = bản trước lần ghi cuối
+  assert.equal((await add(A, 'thu', 1)).ok, true);
+  assert.equal(JSON.parse(fs.readFileSync(FILE, 'utf8')).items.length, 2);
+
+  fs.writeFileSync(FILE, '{hỏng'); fs.writeFileSync(FILE + '.bak', '{hỏng');
+  assert.equal((await add(A, 'thu', 2)).ok, false);
+  assert.equal(fs.readFileSync(FILE, 'utf8'), '{hỏng');
+});

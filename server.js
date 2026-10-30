@@ -914,11 +914,13 @@ app.use((req, res, next) => {
       '/attribution.html',         // Đơn theo chiến dịch / nguồn
       '/ton-kho.html',             // Tồn kho (MISA AMIS)
       '/ten-hoa-don.html',         // Tên xuất hoá đơn theo lô
+      '/thu-chi.html',             // Sổ quỹ tiền mặt (menu trong Kết quả kinh doanh)
     ];
     const API_CHI_ADMIN =
          p.startsWith('/api/attribution')       // Đơn theo chiến dịch / nguồn
       || p.startsWith('/api/salary')            // gồm cả /api/salary-product/*
       || p.startsWith('/api/business-result')   // Kết quả kinh doanh
+      || p.startsWith('/api/thu-chi')           // Sổ quỹ tiền mặt
       || p.startsWith('/api/bank-accounts')     // STK nhân viên (chuyển lương)
       || p.startsWith('/api/ton-kho')           // Tồn kho (MISA AMIS)
       || p.startsWith('/api/meta-cache')        // ghim / xoá / nạp lại cache
@@ -4565,6 +4567,13 @@ app.post('/api/cash-flow/note', express.json(), (req, res) => {
     mountTonKho(app, { express, DATA_DIR, fetchWithTimeout });
   } catch (e) {
     console.error('[TONKHO] KHÔNG gắn được module (app chính vẫn chạy bình thường):', e.message);
+  }
+  // SỔ QUỸ TIỀN MẶT — thu / chi nhập tay (xem thu-chi.js)
+  try {
+    const { mountThuChi } = await import('./thu-chi.js');
+    mountThuChi(app, { express, DATA_DIR });
+  } catch (e) {
+    console.error('[THUCHI] KHÔNG gắn được module (app chính vẫn chạy bình thường):', e.message);
   }
   // BOT TELEGRAM NHÓM KHO — gửi thông báo vào nhóm nhân viên kho (xem telegram-kho.js)
   try {

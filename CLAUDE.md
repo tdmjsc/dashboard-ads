@@ -70,3 +70,7 @@ Khi đọc được OMS, cột **Kết quả = số đơn về OMS** và CP/kế
 Lead xem được kết quả của mọi NV có `team` = tên lead ở trang Nhân viên (`employees.html`, lưu `employees.json`). Middleware sau bước kiểm tra đăng nhập trong `server.js` tính lại `req.session.user.employees` mỗi request (danh sách trong `users.js` + team). Đừng ghi thành viên team vào `users.js`: chia NV cho lead ở trang Nhân viên. `salaryName` của tài khoản lead phải trùng tên lead ở trang Nhân viên.
 
 `employees.json` cũng theo cách nhiều tiến trình: `refreshEmployees()` (đọc lại khi file đổi, chạy mỗi request) + `commitEmployees(fn)` (đọc file → sửa theo tên → ghi file tạm rồi đổi tên, bản trước sang `employees.json.bak`; khởi động mà file hỏng thì khôi phục từ `.bak`). Đừng sửa `EMPLOYEES` rồi ghi cả mảng ra file.
+
+## Sổ quỹ tiền mặt (`thu-chi.js`, trang `/thu-chi.html`, menu nhỏ trong Kết quả kinh doanh)
+
+Admin (cả kế toán) ghi tay từng khoản thu / chi tiền mặt (ngày, nhóm, nội dung, người nộp/nhận, số tiền). Tiền mặt còn lại = tồn quỹ ban đầu + Σ thu − Σ chi (mọi khoản, không theo kỳ đang xem). Lưu `DATA_DIR/thu-chi.json` theo cách nhiều tiến trình (`commit` theo id, bản trước sang `thu-chi.json.bak`). Khác `json-store.js`: file chính hỏng thì đọc `.bak`, cả hai hỏng thì từ chối ghi (không coi là sổ trống). Khác trang "Dòng tiền" (`dong-tien.html`, chỉ admin thật): trang đó chụp số dư theo ngày, không phải sổ thu chi.
