@@ -767,9 +767,20 @@ global.__fbAdFieldScan = async (ad, adid) => {
   }
   if (!token) return r;
   delete r.loi;
-  const fields = (meta.metadata?.fields || []).map(f => f.name);
+  // metadata=1 có thể không trả gì → dùng danh sách trường / connection của Ad theo tài liệu Marketing API
+  const DOC_FIELDS = ['id', 'account_id', 'ad_active_time', 'ad_review_feedback', 'ad_schedule_end_time', 'ad_schedule_start_time',
+    'adlabels', 'adset', 'adset_id', 'bid_amount', 'campaign', 'campaign_id', 'configured_status', 'conversion_domain',
+    'created_time', 'creative', 'creative_asset_groups_spec', 'demolink_hash', 'display_sequence', 'effective_status',
+    'engagement_audience', 'failed_delivery_checks', 'issues_info', 'last_updated_by_app_id', 'name', 'placement',
+    'preview_shareable_link', 'priority', 'recommendations', 'source_ad', 'source_ad_id', 'status', 'targeting',
+    'tracking_and_conversion_with_defaults', 'tracking_specs', 'updated_time', 'meta_reward_adgroup_status', 'bid_info',
+    'bid_type', 'ad_review_feedback', 'adgroup_review_feedback', 'conversion_specs'];
+  const DOC_CONNS = ['adcreatives', 'copies', 'targetingsentencelines', 'adrules_governed', 'previews?ad_format=DESKTOP_FEED_STANDARD',
+    'previews?ad_format=MOBILE_FEED_STANDARD'];
+  r.metaKeys = Object.keys(meta || {});
+  const fields = [...new Set([...(meta.metadata?.fields || []).map(f => f.name), ...DOC_FIELDS])];
   r.tongTruong = fields.length;
-  r.connections = Object.keys(meta.metadata?.connections || {});
+  r.connections = [...new Set([...Object.keys(meta.metadata?.connections || {}), ...DOC_CONNS])];
   r.coAdid = []; r.loiTruong = {};
   const check = (name, val) => { if (JSON.stringify(val ?? null).includes(String(adid))) r.coAdid.push(name); };
   const ask = async (list) => {
@@ -783,7 +794,9 @@ global.__fbAdFieldScan = async (ad, adid) => {
   }
   // Các connection (previews, adcreatives, …): quét luôn, giới hạn 1 trang
   for (const c of r.connections) {
-    try { check('connection:' + c, await fb(`${ad}/${c}`, { limit: 25 }, token)); } catch { /* connection không hỏi được */ }
+    const [path, qs] = c.split('?');
+    const params = { limit: 25, ...Object.fromEntries(new URLSearchParams(qs || '')) };
+    try { check('connection:' + c, await fb(`${ad}/${path}`, params, token)); } catch (e) { (r.loiConn ||= {})[c] = e.message.slice(0, 120); }
   }
   r.loiTruong = Object.keys(r.loiTruong);
   return r;
