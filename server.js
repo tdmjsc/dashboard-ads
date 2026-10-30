@@ -757,6 +757,37 @@ global.__fbCreativeDebug = async (adId, adid) => {
   }
   return out;
 };
+// Chẩn đoán (/oms/api/ad-field-scan): trường Graph API nào của quảng cáo chứa adid (ID "ad" nội bộ; Ads Manager
+// gọi quảng cáo là adgroup). Đọc danh sách trường (metadata=1), hỏi từng lô; lô lỗi thì hỏi lẻ từng trường.
+global.__fbAdFieldScan = async (ad, adid) => {
+  const r = { ad, adid };
+  let token = null, meta = null;
+  for (const src of SOURCES) {
+    try { meta = await fb(String(ad), { metadata: 1 }, src.token); token = src.token; break; } catch (e) { r.loi = e.message; }
+  }
+  if (!token) return r;
+  delete r.loi;
+  const fields = (meta.metadata?.fields || []).map(f => f.name);
+  r.tongTruong = fields.length;
+  r.connections = Object.keys(meta.metadata?.connections || {});
+  r.coAdid = []; r.loiTruong = {};
+  const check = (name, val) => { if (JSON.stringify(val ?? null).includes(String(adid))) r.coAdid.push(name); };
+  const ask = async (list) => {
+    try { const v = await fb(String(ad), { fields: list.join(',') }, token); for (const f of list) check(f, v[f]); return true; }
+    catch { return false; }
+  };
+  for (let i = 0; i < fields.length; i += 10) {
+    const lot = fields.slice(i, i + 10);
+    if (await ask(lot)) continue;
+    for (const f of lot) if (!(await ask([f]))) r.loiTruong[f] = 1;
+  }
+  // Các connection (previews, adcreatives, …): quét luôn, giới hạn 1 trang
+  for (const c of r.connections) {
+    try { check('connection:' + c, await fb(`${ad}/${c}`, { limit: 25 }, token)); } catch { /* connection không hỏi được */ }
+  }
+  r.loiTruong = Object.keys(r.loiTruong);
+  return r;
+};
 // Chẩn đoán (/oms/api/adid-time): adid (= ID bản quảng cáo trong Thư viện quảng cáo) ứng với thời điểm nào
 // của quảng cáo — giờ tạo/sửa, nhật ký hoạt động, và thời gian nội suy từ ID các object cùng tài khoản
 // (ID Meta tăng theo thời gian). ID 18 số vượt Number nên so bằng BigInt.

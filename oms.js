@@ -574,6 +574,13 @@ export function mountOMS(app, { mysql, express, getTeamLead = () => ({}) }) {
     res.json({ ad, adid: adid || null, creativeIds: [...new Set(ids)], adidLaCreative: adid ? ids.includes(adid) : null, tra });
   }));
 
+  // Admin: trường Graph API nào của quảng cáo chứa adid (?ad=<ID quảng cáo>&adid=<adid>)
+  app.get('/oms/api/ad-field-scan', requireRole('admin'), wrap(async (req, res) => {
+    const ad = String(req.query.ad || '').trim(), adid = String(req.query.adid || '').trim();
+    if (!/^\d{10,}$/.test(ad) || !/^\d{10,}$/.test(adid)) return res.status(400).json({ error: 'Thiếu ?ad=&adid=' });
+    res.json(await global.__fbAdFieldScan(ad, adid));
+  }));
+
   // Admin: adid ứng với thời điểm nào của quảng cáo (?pairs=<ID quảng cáo>:<adid>,…)
   app.get('/oms/api/adid-time', requireRole('admin'), wrap(async (req, res) => {
     const pairs = String(req.query.pairs || '').split(',').map(s => s.trim().split(':'))
