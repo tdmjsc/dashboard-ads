@@ -548,15 +548,20 @@ export function mountOMS(app, { mysql, express, getTeamLead = () => ({}) }) {
   app.get('/oms/api/fbclid-check', requireRole('admin'), wrap(async (req, res) => {
     const rows = await db(`SELECT id, ngay_ve, nv_marketing, utm_campaign, utm_medium, utm_term, utm_content, fbclid,
       fb_ad_id, fb_campaign_name FROM oms_orders WHERE fbclid!='' ORDER BY id DESC LIMIT 40`);
-    const out = rows.map(r => {
+    const out = [];
+    for (const r of rows) {
       const adid = adIdFromFbclid(r.fbclid);
       const utmIds = ['utm_campaign', 'utm_medium', 'utm_term', 'utm_content'].map(k => String(r[k] || '').trim())
         .filter(v => /^\d{10,}$/.test(v));
-      return { id: r.id, ngay_ve: r.ngay_ve, nv: r.nv_marketing, adidTuFbclid: adid || null, idTrongUtm: utmIds,
-        fb_ad_id: r.fb_ad_id || null, chienDich: r.fb_campaign_name || null,
-        khop: adid ? (utmIds.includes(adid) || adid === r.fb_ad_id) : null };
-    });
-    const coCa2 = out.filter(o => o.adidTuFbclid && o.idTrongUtm.length);
+      // adid tra riêng (Meta nói nó là ad / nhóm / chiến dịch nào), UTM tra riêng (không kèm fbclid) → so chiến dịch
+      let tuAdid = null, tuUtm = null;
+      try { tuAdid = adid ? await global.__fbAdRef(adid) : null; } catch (e) { tuAdid = { loi: e.message }; }
+      try { tuUtm = utmIds.length ? await lookupAdRef({ ...r, fbclid: '' }) : null; } catch (e) { tuUtm = { loi: e.message }; }
+      out.push({ id: r.id, ngay_ve: r.ngay_ve, nv: r.nv_marketing, adidTuFbclid: adid || null, idTrongUtm: utmIds,
+        tuAdid, tuUtm,
+        khop: tuAdid?.campaign_id && tuUtm?.campaign_id ? tuAdid.campaign_id === tuUtm.campaign_id : null });
+    }
+    const coCa2 = out.filter(o => o.khop !== null);
     res.json({ tongDonCoFbclid: out.length, coCaUtm: coCa2.length, khop: coCa2.filter(o => o.khop).length, don: out });
   }));
 
