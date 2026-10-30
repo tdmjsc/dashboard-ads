@@ -52,6 +52,15 @@
   .btn:hover{opacity:.9;} .btn:disabled{opacity:.45;cursor:not-allowed;}
   .btn.ghost{background:none;border:1px solid rgba(255,255,255,.18);color:#C4D0E2;}
   .msg{font-size:12.5px;}
+  /* Ô ngày dd/mm/yyyy tự làm (ô date gốc hiện theo ngôn ngữ trình duyệt, vd tiếng Anh) */
+  .dwrap{position:relative;display:flex;align-items:center;}
+  .dwrap input.d{padding-right:34px;font-variant-numeric:tabular-nums;}
+  .dwrap .cal{position:absolute;right:4px;background:none;border:none;cursor:pointer;font-size:14px;padding:4px 6px;border-radius:6px;opacity:.75;}
+  .dwrap .cal:hover{opacity:1;background:rgba(255,255,255,.08);}
+  .dwrap input[type=date]{position:absolute;right:0;bottom:0;width:1px;height:1px;opacity:0;pointer-events:none;border:none;padding:0;}
+  input.d.bad{border-color:#ff9b8a;}
+  .filter .dwrap input.d{width:128px;}
+  #khoang{display:inline-flex;align-items:center;gap:6px;} #khoang[hidden],#thang[hidden]{display:none;}
 
   .filter{display:flex;align-items:center;gap:8px;flex-wrap:wrap;font-size:12px;color:#9FB0C8;font-weight:400;font-family:Inter;}
   .filter input,.filter select{padding:6px 9px;font-size:12.5px;width:auto;}
@@ -127,7 +136,7 @@
   <div class="card">
     <div class="card-h"><span class="t" id="formTitle">Ghi khoản thu / chi</span></div>
     <form class="form" id="form" autocomplete="off">
-      <label>Ngày<input type="date" id="fNgay" required></label>
+      <label>Ngày<span class="dwrap"><input class="d" id="fNgay" required></span></label>
       <label>Loại
         <div class="seg" id="fLoai">
           <button type="button" data-v="thu" class="thu on">＋ Thu</button>
@@ -156,8 +165,8 @@
           <option value="khoang">Khoảng ngày</option>
           <option value="tatca">Tất cả</option>
         </select>
-        <input type="month" id="thang">
-        <span id="khoang" hidden><input type="date" id="tu"> → <input type="date" id="den"></span>
+        <span id="thang"><select id="thangM"></select> <select id="thangY"></select></span>
+        <span id="khoang" hidden><span class="dwrap"><input class="d" id="tu"></span> → <span class="dwrap"><input class="d" id="den"></span></span>
         <select id="locLoai"><option value="">Thu + Chi</option><option value="thu">Chỉ thu</option><option value="chi">Chỉ chi</option></select>
         <input id="tim" placeholder="Tìm nội dung…" style="width:150px;">
       </span>
@@ -203,6 +212,32 @@ const toNum=v=>parseInt(String(v||'').replace(/[^\d]/g,''),10)||0;
 const ngayVi=d=>d?d.slice(8,10)+'/'+d.slice(5,7)+'/'+d.slice(0,4):'';
 let DATA=null, loai='thu', editId=null;
 
+/* Ô ngày dd/mm/yyyy (ô date gốc hiện theo ngôn ngữ trình duyệt, vd "October 2026").
+   getD/setD dùng dạng YYYY-MM-DD như máy chủ. Nút 📅 mở lịch của trình duyệt. */
+function isoFromVi(v){
+  const m=/^(\d{1,2})\/(\d{1,2})\/(\d{4})$/.exec(String(v).trim()); if(!m) return '';
+  const d=new Date(+m[3],m[2]-1,+m[1]);
+  if(d.getFullYear()!==+m[3]||d.getMonth()!==m[2]-1||d.getDate()!==+m[1]) return '';
+  return m[3]+'-'+String(m[2]).padStart(2,'0')+'-'+String(m[1]).padStart(2,'0');
+}
+const getD=id=>isoFromVi($(id).value);
+function setD(id,iso){ $(id).value=iso?iso.slice(8,10)+'/'+iso.slice(5,7)+'/'+iso.slice(0,4):''; $(id).classList.remove('bad'); }
+function dateInput(id,onChange){
+  const el=$(id); el.placeholder='dd/mm/yyyy'; el.inputMode='numeric'; el.maxLength=10;
+  const pick=document.createElement('input'); pick.type='date'; pick.tabIndex=-1;
+  const btn=document.createElement('button'); btn.type='button'; btn.className='cal'; btn.textContent='📅'; btn.title='Chọn trên lịch';
+  el.after(btn,pick);
+  btn.addEventListener('click',()=>{ pick.value=getD(id); try{pick.showPicker();}catch{pick.click();} });
+  pick.addEventListener('change',()=>{ if(pick.value){ setD(id,pick.value); onChange&&onChange(); } });
+  el.addEventListener('input',e=>{   // gõ 30102026 → 30/10/2026
+    if(e.inputType&&e.inputType.startsWith('delete')) return;
+    const n=el.value.replace(/[^\d]/g,'').slice(0,8);
+    el.value=n.length>4?n.slice(0,2)+'/'+n.slice(2,4)+'/'+n.slice(4):n.length>2?n.slice(0,2)+'/'+n.slice(2):n;
+    if(n.length===8&&getD(id)){ el.classList.remove('bad'); onChange&&onChange(); }
+  });
+  el.addEventListener('blur',()=>{ el.classList.toggle('bad',!!el.value&&!getD(id)); });
+}
+
 // Ô tiền: tự thêm dấu chấm hàng nghìn khi gõ
 function moneyInput(el){
   el.addEventListener('input',()=>{ const n=toNum(el.value); el.value=n?fmt(n):''; });
@@ -219,8 +254,8 @@ $('fLoai').addEventListener('click',e=>{ const b=e.target.closest('button'); if(
 function khoang(){
   const k=$('kieuXem').value;
   if(k==='tatca') return {from:'',to:''};
-  if(k==='khoang') return {from:$('tu').value,to:$('den').value};
-  const m=$('thang').value; if(!m) return {from:'',to:''};
+  if(k==='khoang') return {from:getD('tu'),to:getD('den')};
+  const m=$('thangY').value+'-'+$('thangM').value;
   const [y,mo]=m.split('-').map(Number);
   return {from:m+'-01',to:m+'-'+String(new Date(y,mo,0).getDate()).padStart(2,'0')};
 }
@@ -296,21 +331,22 @@ function renderGroups(){
 }
 
 function resetForm(){
-  editId=null; $('form').reset(); $('fNgay').value=DATA?DATA.homNay:new Date().toISOString().slice(0,10);
+  editId=null; $('form').reset(); setD('fNgay',DATA?DATA.homNay:new Date(Date.now()+7*3600e3).toISOString().slice(0,10));
   $('formTitle').textContent='Ghi khoản thu / chi'; $('fCancel').hidden=true; setLoai(loai);
   if(DATA) renderRows();
 }
 
 $('form').addEventListener('submit',async e=>{
   e.preventDefault();
-  const body={action:editId?'update':'add',id:editId,ngay:$('fNgay').value,loai,nhom:$('fNhom').value,
+  const body={action:editId?'update':'add',id:editId,ngay:getD('fNgay'),loai,nhom:$('fNhom').value,
     noiDung:$('fNoiDung').value,doiTuong:$('fDoiTuong').value,soTien:toNum($('fSoTien').value)};
+  if(!body.ngay){ $('fMsg').innerHTML='<span class="err">Ngày phải dạng dd/mm/yyyy, vd 30/10/2026</span>'; return; }
   $('fSave').disabled=true; $('fMsg').textContent='';
   try{
     const j=await api('/api/thu-chi/item',body);
     if(!j.ok){ $('fMsg').innerHTML='<span class="err">'+esc(j.message)+'</span>'; return; }
     const keepNgay=body.ngay, wasEdit=!!editId;
-    resetForm(); $('fNgay').value=keepNgay;   // ghi nhiều khoản cùng ngày liền nhau
+    resetForm(); setD('fNgay',keepNgay);   // ghi nhiều khoản cùng ngày liền nhau
     $('fMsg').innerHTML='<span class="ok">✓ Đã '+(wasEdit?'sửa':'lưu')+'</span>';
     setTimeout(()=>{$('fMsg').textContent='';},2500);
     await load(); $('fNoiDung').focus();
@@ -323,7 +359,7 @@ $('rows').addEventListener('click',async e=>{
   const ed=e.target.closest('[data-ed]'), del=e.target.closest('[data-del]');
   if(ed){
     const it=DATA.items.find(x=>x.id===ed.dataset.ed); if(!it) return;
-    editId=it.id; $('fNgay').value=it.ngay; $('fNhom').value=it.nhom||''; $('fDoiTuong').value=it.doiTuong||'';
+    editId=it.id; setD('fNgay',it.ngay); $('fNhom').value=it.nhom||''; $('fDoiTuong').value=it.doiTuong||'';
     $('fNoiDung').value=it.noiDung; $('fSoTien').value=fmt(it.soTien);
     $('formTitle').textContent='Sửa khoản ngày '+ngayVi(it.ngay); $('fCancel').hidden=false; setLoai(it.loai);
     renderRows(); window.scrollTo({top:0,behavior:'smooth'});
@@ -351,14 +387,18 @@ $('tbdSave').addEventListener('click',async()=>{
 $('kieuXem').addEventListener('change',()=>{
   const k=$('kieuXem').value; $('thang').hidden=k!=='thang'; $('khoang').hidden=k!=='khoang'; load();
 });
-['thang','tu','den'].forEach(id=>$(id).addEventListener('change',load));
+['thangM','thangY'].forEach(id=>$(id).addEventListener('change',load));
+dateInput('fNgay'); dateInput('tu',load); dateInput('den',load);
 $('locLoai').addEventListener('change',()=>DATA&&renderRows());
 $('tim').addEventListener('input',()=>DATA&&renderRows());
 
 (function init(){
   const n=new Date(Date.now()+7*3600e3).toISOString();
-  $('thang').value=n.slice(0,7); $('fNgay').value=n.slice(0,10);
-  $('tu').value=n.slice(0,8)+'01'; $('den').value=n.slice(0,10);
+  const y=+n.slice(0,4);
+  $('thangM').innerHTML=Array.from({length:12},(_,i)=>'<option value="'+String(i+1).padStart(2,'0')+'">Tháng '+(i+1)+'</option>').join('');
+  $('thangY').innerHTML=Array.from({length:y-2024+2},(_,i)=>'<option>'+(2024+i)+'</option>').join('');
+  $('thangM').value=n.slice(5,7); $('thangY').value=String(y);
+  setD('fNgay',n.slice(0,10)); setD('tu',n.slice(0,8)+'01'); setD('den',n.slice(0,10));
   load();
 })();
 fetch('/api/me').then(r=>r.ok?r.json():null).then(me=>{ if(me&&me.displayName) $('userBadge').textContent='👤 '+me.displayName; }).catch(()=>{});
