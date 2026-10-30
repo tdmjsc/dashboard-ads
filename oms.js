@@ -565,6 +565,15 @@ export function mountOMS(app, { mysql, express, getTeamLead = () => ({}) }) {
     res.json({ tongDonCoFbclid: out.length, coCaUtm: coCa2.length, khop: coCa2.filter(o => o.khop).length, don: out });
   }));
 
+  // Admin: adid trong fbclid có phải ID creative của quảng cáo không (?ad=<ID quảng cáo>&adid=<adid>)
+  app.get('/oms/api/ad-creative', requireRole('admin'), wrap(async (req, res) => {
+    const ad = String(req.query.ad || '').trim(), adid = String(req.query.adid || '').trim();
+    if (!/^\d{10,}$/.test(ad)) return res.status(400).json({ error: 'Thiếu ?ad=<ID quảng cáo>' });
+    const tra = await global.__fbCreativeDebug(ad, /^\d{10,}$/.test(adid) ? adid : '');
+    const ids = tra.flatMap(t => [t.ad?.creative?.id, ...(t.ad?.adcreatives?.data || []).map(c => c.id)]).filter(Boolean);
+    res.json({ ad, adid: adid || null, creativeIds: [...new Set(ids)], adidLaCreative: adid ? ids.includes(adid) : null, tra });
+  }));
+
   // Admin: tra ngay chiến dịch / nhóm quảng cáo cho đơn chưa tra (?all=1: tra lại mọi đơn)
   app.get('/oms/api/fix-ad-refs', requireRole('admin'), wrap(async (req, res) => {
     res.json({ ketqua: await fixAdRefs(req.query.all === '1') });

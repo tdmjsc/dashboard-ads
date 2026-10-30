@@ -700,6 +700,24 @@ global.__fbAdRefDebug = async (id) => {
   }
   return out;
 };
+// Chẩn đoán (/oms/api/ad-creative): adid trong fbclid có phải ID creative không — đọc creative của
+// quảng cáo, và đọc thẳng adid với trường tối thiểu (lỗi "Unsupported get request" = token không thấy)
+global.__fbCreativeDebug = async (adId, adid) => {
+  const out = [];
+  for (const [i, src] of SOURCES.entries()) {
+    const r = { token: i + 1 };
+    try {
+      r.ad = await fb(String(adId), { fields: 'name,account_id,creative{id,name,object_story_id,effective_object_story_id},adcreatives{id,name}' }, src.token);
+    } catch (e) { r.adLoi = e.message; }
+    if (adid) {
+      try { r.adid = await fb(String(adid), { fields: 'id' }, src.token); } catch (e) { r.adidLoi = e.message; }
+      try { r.adidCreative = await fb(String(adid), { fields: 'id,name,account_id,object_story_id' }, src.token); } catch (e) { r.adidCreativeLoi = e.message; }
+    }
+    out.push(r);
+    if (r.ad) break;
+  }
+  return out;
+};
 
 
 // Giá trị cột NV marketing của OMS → tên NV: ID Meta thì tra tên chiến dịch, chữ (vd tên
