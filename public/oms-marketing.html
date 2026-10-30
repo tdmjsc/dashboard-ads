@@ -178,10 +178,10 @@ function esc(s) { const d=document.createElement('div'); d.textContent=s||''; re
 // Chiến dịch / nhóm quảng cáo của đơn (tra từ UTM, xem oms-ad-ref.js) + UTM gốc Ladipage gửi về
 function adRefLine(o){
   const utm=['utm_source','utm_campaign','utm_medium','utm_content','utm_term']
-    .filter(k=>o[k]).map(k=>`${k}=${esc(o[k])}`).join(' · ');
+    .filter(k=>o[k]).map(k=>`${k}=${esc(o[k])}`).concat(o.fbclid?['fbclid ✓']:[]).join(' · ');
   const qc=o.fb_campaign_id
     ? `📢 ${esc(o.fb_campaign_name||o.fb_campaign_id)}${o.fb_adset_id?` › ${esc(o.fb_adset_name||o.fb_adset_id)}`:''}`
-    : (o.fb_ref_at ? '📢 Chưa rõ chiến dịch' : (utm ? '📢 Chưa tra chiến dịch' : '📢 Không có UTM'));
+    : (o.fb_ref_at ? '📢 Chưa rõ chiến dịch' : (utm ? '📢 Chưa tra chiến dịch' : '📢 Không có UTM / fbclid'));
   return `<div class="text-blue-600 break-words">${qc}</div>${utm?`<div class="text-gray-400 break-words">${utm}</div>`:''}`;
 }
 function badgeTT(tt) {

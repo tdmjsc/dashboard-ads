@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { adRefFromUtm } from '../oms-ad-ref.js';
+import { adRefFromUtm, adIdFromFbclid, findFbclid } from '../oms-ad-ref.js';
 
 const META = {
   '1200000000000001': { ad_id: '1200000000000001', adset_id: '1200000000000002', adset_name: 'Nhóm A', campaign_id: '1200000000000003', campaign_name: 'TD1 - Máy đo' },
@@ -40,4 +40,25 @@ test('name or unknown id gives nothing', async () => {
 
 test('rate limit error propagates', async () => {
   await assert.rejects(adRefFromUtm({ utm_content: '1200000000000001' }, { byId: async () => { throw new Error('rl'); } }));
+});
+
+// Link thật: bấm link trong bình luận của bài quảng cáo (30/10/2026)
+const FBCLID = 'IwdGRjcAVRCupleHRuA2FlbQEwAHBkb2YFZmRpZBZRFCC9GbjAJOGOj_0cjWJd_cUYzxopYWRpZAGrN49A6439c3J0YwZhcHBfaWQKNjYyODU2ODM3OQABH5eoI2z05NEqlNFSSzsidncXMH8iI_ejXv6CeXFnSYVjzzY6S9LeNXoIU87p_aem_PxrdaN2aLdl5JuPoFlc7EA';
+
+test('fbclid carries the ad id', () => {
+  assert.equal(adIdFromFbclid(FBCLID), '120250903464480253');
+  assert.equal(adIdFromFbclid('IwAR3xYzOldStyleEncrypted'), '');
+  assert.equal(adIdFromFbclid(''), '');
+});
+
+test('fbclid found in page URL', () => {
+  assert.equal(findFbclid({ url_page: 'https://www.tdmjsc.com/gelduoichuott?fbclid=' + FBCLID }), FBCLID);
+  assert.equal(findFbclid({ fbclid: 'abc' }), 'abc');
+  assert.equal(findFbclid({ url_page: 'https://x.com/a' }), '');
+});
+
+test('order from comment link (fbclid only) resolves to ad, adset, campaign', async () => {
+  const byId2 = async id => id === '120250903464480253' ? { ad_id: id, adset_id: '1', campaign_id: '2' } : null;
+  const r = await adRefFromUtm({ fbclid: FBCLID }, { byId: byId2 });
+  assert.deepEqual(r, { ad_id: '120250903464480253', adset_id: '1', campaign_id: '2' });
 });

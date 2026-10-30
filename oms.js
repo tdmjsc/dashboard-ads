@@ -5,7 +5,7 @@
 // =====================================================================
 import { sendApns, apnsConfigured } from './apns.js';
 import { omsDateBoundary } from './oms-date.js';
-import { adRefFromUtm, hasUtm, AD_REF_FROM } from './oms-ad-ref.js';
+import { adRefFromUtm, hasUtm, findFbclid, AD_REF_FROM } from './oms-ad-ref.js';
 
 // ---- Trạng thái đơn hàng hợp lệ ----
 const TRANG_THAI = ['Đơn mới', 'Đã chốt', 'Đang ship', 'Ship thành công', 'Hoàn thành công', 'Không mua',
@@ -202,6 +202,9 @@ async function ensureTables(pool) {
     "fb_adset_name VARCHAR(255) DEFAULT ''",
     "fb_ad_id VARCHAR(32) DEFAULT ''",
     "fb_ref_at DATETIME NULL",
+    // fbclid (có ID quảng cáo, kể cả khi khách bấm link trong bình luận) + URL trang Ladipage gửi về
+    "fbclid VARCHAR(512) DEFAULT ''",
+    "url_page VARCHAR(1000) DEFAULT ''",
   ];
   for (const col of addCols) {
     try { await pool.query(`ALTER TABLE oms_orders ADD COLUMN ${col}`); } catch(e) {}
@@ -367,17 +370,18 @@ export function mountOMS(app, { mysql, express, getTeamLead = () => ({}) }) {
       await ensureTables(getPool()); // cột fb_* có thể chưa có khi máy chủ chưa nhận đơn nào
       const cond = all ? '1=1' : `(fb_ref_at IS NULL OR (fb_campaign_id='' AND fb_ref_at < UTC_TIMESTAMP() - INTERVAL 6 HOUR
         AND ngay_ve > UTC_TIMESTAMP() - INTERVAL 14 DAY))`;
-      const rows = await db(`SELECT utm_campaign, utm_medium, utm_term, utm_content, COUNT(*) AS don
-        FROM oms_orders WHERE ngay_ve >= ? AND (utm_campaign!='' OR utm_medium!='' OR utm_term!='' OR utm_content!='')
-        AND ${cond} GROUP BY utm_campaign, utm_medium, utm_term, utm_content ORDER BY MAX(ngay_ve) DESC LIMIT 300`,
+      const rows = await db(`SELECT utm_campaign, utm_medium, utm_term, utm_content, fbclid, COUNT(*) AS don
+        FROM oms_orders WHERE ngay_ve >= ?
+        AND (utm_campaign!='' OR utm_medium!='' OR utm_term!='' OR utm_content!='' OR fbclid!='')
+        AND ${cond} GROUP BY utm_campaign, utm_medium, utm_term, utm_content, fbclid ORDER BY MAX(ngay_ve) DESC LIMIT 300`,
         [omsDateBoundary(AD_REF_FROM)]);
       const out = { bo: rows.length, ra: 0, khongRa: 0, don: 0 };
       for (const r of rows) {
         let ref;
         try { ref = await lookupAdRef(r); }
         catch (e) { out.dung = e.message; break; } // rate limit / mạng: dừng, lần chạy sau tra tiếp
-        await saveAdRef('ngay_ve >= ? AND utm_campaign<=>? AND utm_medium<=>? AND utm_term<=>? AND utm_content<=>?',
-          [omsDateBoundary(AD_REF_FROM), r.utm_campaign, r.utm_medium, r.utm_term, r.utm_content], ref);
+        await saveAdRef('ngay_ve >= ? AND utm_campaign<=>? AND utm_medium<=>? AND utm_term<=>? AND utm_content<=>? AND fbclid<=>?',
+          [omsDateBoundary(AD_REF_FROM), r.utm_campaign, r.utm_medium, r.utm_term, r.utm_content, r.fbclid], ref);
         if (ref.campaign_id) out.ra++; else out.khongRa++;
         out.don += Number(r.don) || 0;
       }
@@ -399,7 +403,7 @@ export function mountOMS(app, { mysql, express, getTeamLead = () => ({}) }) {
       SUM(CASE WHEN trang_thai IN ('Đã chốt','Đang ship','Ship thành công') THEN 1 ELSE 0 END) AS chot,
       SUM(CASE WHEN trang_thai='Không mua' THEN 1 ELSE 0 END) AS khongMua,
       SUM(CASE WHEN trang_thai IN ('Đã chốt','Đang ship','Ship thành công') THEN tong_tien ELSE 0 END) AS doanhThu,
-      SUM(CASE WHEN fb_ref_at IS NULL AND (utm_campaign!='' OR utm_medium!='' OR utm_term!='' OR utm_content!='')
+      SUM(CASE WHEN fb_ref_at IS NULL AND (utm_campaign!='' OR utm_medium!='' OR utm_term!='' OR utm_content!='' OR fbclid!='')
         THEN 1 ELSE 0 END) AS dangTra
       FROM oms_orders WHERE ngay_ve >= ? AND ngay_ve < ?
       GROUP BY fb_campaign_id, fb_adset_id, nv_marketing`,
@@ -551,6 +555,7 @@ export function mountOMS(app, { mysql, express, getTeamLead = () => ({}) }) {
     const utmCampaign = d.utm_campaign || '';
     const utmContent = d.utm_content || '';
     const utmTerm = d.utm_term || '';
+    const fbclid = findFbclid(d); // link bình luận không có UTM nhưng fbclid mang ID quảng cáo
     let nvMarketing = d.utm_content || d.nhan_vien || d.user || d.marketing || '';
     // utm_content hay là ID quảng cáo Meta ({{ad.id}}) hoặc tên chiến dịch chứ không phải
     // tên NV → đổi ra tên NV. Link Registry được ưu tiên khi có link khớp bên dưới.
@@ -609,7 +614,7 @@ export function mountOMS(app, { mysql, express, getTeamLead = () => ({}) }) {
     const now = new Date().toISOString().slice(0, 19).replace('T', ' ');
 
     // Ghi nhận nội dung gốc từ webhook (bỏ URL, UTM, tracking, field hệ thống)
-    const skipKeys = new Set(['utm_source','utm_medium','utm_campaign','utm_content','utm_term',
+    const skipKeys = new Set(['utm_source','utm_medium','utm_campaign','utm_content','utm_term','fbclid',
       'url_page','page_url','referer','referrer','ip','user_agent','_token','_method',
       'form_id','variant_id','form_type','page_id','landing_page']);
     const isJunk = (v) => {
@@ -634,16 +639,18 @@ export function mountOMS(app, { mysql, express, getTeamLead = () => ({}) }) {
     const createdOrder = await db(`INSERT INTO oms_orders
       (ngay_ve, nv_marketing, ten_kh, sdt, dia_chi_full, tinh, quan, phuong, dia_chi,
        trang_thai, san_pham, so_luong, gia_ban, tong_tien,
-       utm_source, utm_medium, utm_campaign, utm_content, utm_term, ghi_chu, tin_nhan_goc, nguon_du_lieu)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'Đơn mới', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+       utm_source, utm_medium, utm_campaign, utm_content, utm_term, ghi_chu, tin_nhan_goc, nguon_du_lieu,
+       fbclid, url_page)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'Đơn mới', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       [now, nvMarketing, ten, sdt, diaChiFull, addr.tinh, addr.quan, addr.phuong, addr.diaChi,
        sanPham, soLuong, gia, gia * soLuong,
        utmSource, utmMedium, utmCampaign, utmContent, utmTerm,
-       d.ghi_chu || '', tinNhanGoc, orderNguon]);
+       d.ghi_chu || '', tinNhanGoc, orderNguon,
+       fbclid.slice(0, 512), String(urlPage).slice(0, 1000)]);
 
     // Tra chiến dịch / nhóm quảng cáo (gọi Graph API) sau khi đã ghi đơn → Ladipage không phải chờ.
     // Lỗi thì fb_ref_at còn trống, fixAdRefs tra lại.
-    const utm = { utm_campaign: utmCampaign, utm_medium: utmMedium, utm_term: utmTerm, utm_content: utmContent };
+    const utm = { utm_campaign: utmCampaign, utm_medium: utmMedium, utm_term: utmTerm, utm_content: utmContent, fbclid };
     if (hasUtm(utm)) {
       lookupAdRef(utm).then(ref => saveAdRef('id=?', [createdOrder.insertId], ref))
         .catch(e => console.error('[OMS] Tra chiến dịch Meta của đơn lỗi:', e.message));
