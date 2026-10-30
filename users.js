@@ -45,6 +45,7 @@ export const USERS = [
   { user: 'mkt.phong',    pass: 'Phong@32927',    role: 'viewer', employees: ['Lưu Xuân Phong'],       salaryName: 'Lưu Xuân Phong' },
   { user: 'mkt.thuphuong',    pass: 'Phuong@98272',    role: 'viewer', employees: ['Nguyễn Thị Thu Phương'],       salaryName: 'Nguyễn Thị Thu Phương' },
   { user: 'mkt.anhquoc',    pass: 'Quoc@32927',    role: 'viewer', employees: ['Nguyễn Anh Quốc'],       salaryName: 'Nguyễn Anh Quốc' },
+  { user: 'mkt.phanphuong',    pass: 'Td@121212',    role: 'viewer', employees: ['Phan Thị Phương'],       salaryName: 'Phan Thị Phương' },
 
 
   // ----- NHÂN VIÊN PHÁT TRIỂN SẢN PHẨM (xem trang SP của mình + lương của mình) -----
