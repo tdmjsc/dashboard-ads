@@ -543,6 +543,23 @@ export function mountOMS(app, { mysql, express, getTeamLead = () => ({}) }) {
     res.json(out);
   }));
 
+  // Admin: kiểm chứng adid trong fbclid có đúng là ID quảng cáo không — so với ID quảng cáo tra từ UTM
+  // của các đơn có cả hai (khách bấm nút quảng cáo: link mang cả UTM lẫn fbclid)
+  app.get('/oms/api/fbclid-check', requireRole('admin'), wrap(async (req, res) => {
+    const rows = await db(`SELECT id, ngay_ve, nv_marketing, utm_campaign, utm_medium, utm_term, utm_content, fbclid,
+      fb_ad_id, fb_campaign_name FROM oms_orders WHERE fbclid!='' ORDER BY id DESC LIMIT 40`);
+    const out = rows.map(r => {
+      const adid = adIdFromFbclid(r.fbclid);
+      const utmIds = ['utm_campaign', 'utm_medium', 'utm_term', 'utm_content'].map(k => String(r[k] || '').trim())
+        .filter(v => /^\d{10,}$/.test(v));
+      return { id: r.id, ngay_ve: r.ngay_ve, nv: r.nv_marketing, adidTuFbclid: adid || null, idTrongUtm: utmIds,
+        fb_ad_id: r.fb_ad_id || null, chienDich: r.fb_campaign_name || null,
+        khop: adid ? (utmIds.includes(adid) || adid === r.fb_ad_id) : null };
+    });
+    const coCa2 = out.filter(o => o.adidTuFbclid && o.idTrongUtm.length);
+    res.json({ tongDonCoFbclid: out.length, coCaUtm: coCa2.length, khop: coCa2.filter(o => o.khop).length, don: out });
+  }));
+
   // Admin: tra ngay chiến dịch / nhóm quảng cáo cho đơn chưa tra (?all=1: tra lại mọi đơn)
   app.get('/oms/api/fix-ad-refs', requireRole('admin'), wrap(async (req, res) => {
     res.json({ ketqua: await fixAdRefs(req.query.all === '1') });
