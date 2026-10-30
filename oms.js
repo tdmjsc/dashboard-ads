@@ -5,7 +5,7 @@
 // =====================================================================
 import { sendApns, apnsConfigured } from './apns.js';
 import { omsDateBoundary } from './oms-date.js';
-import { adRefFromUtm, hasUtm, findFbclid, AD_REF_FROM } from './oms-ad-ref.js';
+import { adRefFromUtm, hasUtm, findFbclid, adIdFromFbclid, AD_REF_FROM } from './oms-ad-ref.js';
 
 // ---- Trạng thái đơn hàng hợp lệ ----
 const TRANG_THAI = ['Đơn mới', 'Đã chốt', 'Đang ship', 'Ship thành công', 'Hoàn thành công', 'Không mua',
@@ -526,6 +526,21 @@ export function mountOMS(app, { mysql, express, getTeamLead = () => ({}) }) {
   // (token Meta không thấy ID đó, hoặc tên chiến dịch không có mã/tên NV)
   app.get('/oms/api/fix-mkt-ids', requireRole('admin'), wrap(async (req, res) => {
     res.json({ ketqua: await fixMktIds() });
+  }));
+
+  // Admin: chẩn đoán vì sao đơn (theo SĐT) không ra chiến dịch — fbclid, ID quảng cáo đọc được, lỗi Meta
+  app.get('/oms/api/ad-ref-debug', requireRole('admin'), wrap(async (req, res) => {
+    const rows = await db(`SELECT id, ngay_ve, utm_source, utm_campaign, utm_medium, utm_term, utm_content, fbclid, url_page,
+      fb_campaign_id, fb_campaign_name, fb_adset_id, fb_adset_name, fb_ad_id, fb_ref_at
+      FROM oms_orders WHERE sdt=? ORDER BY id DESC LIMIT 3`, [String(req.query.sdt || '').trim()]);
+    const out = [];
+    for (const r of rows) {
+      const adid = adIdFromFbclid(r.fbclid);
+      out.push({ ...r, adidTuFbclid: adid || null,
+        traMeta: adid && global.__fbAdRefDebug ? await global.__fbAdRefDebug(adid) : null,
+        traLai: await lookupAdRef(r).catch(e => ({ loi: e.message })) });
+    }
+    res.json(out);
   }));
 
   // Admin: tra ngay chiến dịch / nhóm quảng cáo cho đơn chưa tra (?all=1: tra lại mọi đơn)

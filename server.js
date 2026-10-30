@@ -688,6 +688,18 @@ async function fbAdRef(id) {
   return ref;
 }
 global.__fbAdRef = fbAdRef;
+// Chẩn đoán (/oms/api/ad-ref-debug): thử từng token × từng loại (ad / nhóm / chiến dịch), không cache,
+// trả cả lỗi Meta để biết vì sao không tra ra
+global.__fbAdRefDebug = async (id) => {
+  const out = [];
+  for (const [i, src] of SOURCES.entries()) {
+    for (const fields of ['adset{id,name},campaign{id,name}', 'name,campaign{id,name}', 'name,objective']) {
+      try { out.push({ token: i + 1, fields, ok: await fb(String(id), { fields }, src.token) }); break; }
+      catch (e) { out.push({ token: i + 1, fields, loi: e.message }); }
+    }
+  }
+  return out;
+};
 
 
 // Giá trị cột NV marketing của OMS → tên NV: ID Meta thì tra tên chiến dịch, chữ (vd tên
