@@ -4,6 +4,7 @@
 //  - Mỗi tài khoản: { user, pass, role, employees }
 //      role: 'admin'  -> xem TẤT CẢ, là chủ hệ thống (không cần employees)
 //      role: 'viewer' -> chỉ xem những người ghi trong "employees"
+//                        (lead xem thêm cả team chia ở trang Nhân viên — không ghi team ở đây)
 //  - "employees": ghi TÊN ĐẦY ĐỦ (giống hệt tên hiển thị / tên trong Sandbox).
 //
 //  Tên đầy đủ của các nhân viên (chép cho đúng dấu):
@@ -22,14 +23,11 @@ export const USERS = [
   { user: 'ketoan', pass: 'Tdmjsc@1234', role: 'admin', khongBoGhim: true },
 
   // ----- TEAM LEAD MARKETING -----
-  //  employees = danh sách người xem được KẾT QUẢ Marketing (cả team)
-  //  salaryName = chỉ xem LƯƠNG của chính mình
-  { user: 'mkt.phuong', pass: 'Phuong@45678', role: 'viewer',
-    employees: ['Trịnh Đức Phương', 'Đoàn Việt Hà', 'Nguyễn Duy Huân', 'Vũ Thuý An', 'Lê Thị Ánh Tuyết', 'Phạm Quang Tùng'],
-    salaryName: 'Trịnh Đức Phương' },
-  { user: 'mkt.truong', pass: 'Truong@1234', role: 'viewer',
-    employees: ['Tạ Quang Trường', 'Nguyễn Thị Trà My', 'Dương Văn Minh', 'Lê Thị Ánh', 'Lưu Xuân Phong', 'Nguyễn Thị Thu Phương'],
-    salaryName: 'Tạ Quang Trường' },
+  //  Thành viên team KHÔNG ghi ở đây: chia NV cho lead ở trang Nhân viên (employees.html).
+  //  Lead (tích "Lead" ở trang Nhân viên) tự xem được KQ Marketing của mọi NV có team = tên mình.
+  //  salaryName = tên lead (phải trùng tên ở trang Nhân viên); chỉ xem LƯƠNG của chính mình
+  { user: 'mkt.phuong', pass: 'Phuong@45678', role: 'viewer', employees: ['Trịnh Đức Phương'], salaryName: 'Trịnh Đức Phương' },
+  { user: 'mkt.truong', pass: 'Truong@1234', role: 'viewer', employees: ['Tạ Quang Trường'], salaryName: 'Tạ Quang Trường' },
 
   // ----- NHÂN VIÊN MARKETING (xem KQ marketing của mình + lương của mình) -----
   { user: 'mkt.hieu',  pass: 'Hieu@1452',  role: 'viewer', employees: ['Nguyễn Trung Hiếu'], salaryName: 'Nguyễn Trung Hiếu' },

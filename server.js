@@ -71,14 +71,57 @@ const EMPLOYEES_DEFAULT = [
 ];
 
 // Load/Save employees
+// Máy chủ có thể chạy nhiều tiến trình, mỗi cái một EMPLOYEES trong bộ nhớ → KHÔNG ghi cả bộ nhớ ra file
+// (tiến trình giữ bản cũ sẽ xoá thay đổi tiến trình khác vừa lưu, vd chia team ở trang Nhân viên).
+//   • refreshEmployees()   đọc lại file khi file đổi (so mtime) — chạy đầu mỗi request + trong getTeamLead.
+//   • commitEmployees(fn)  đọc file mới nhất → fn(list) sửa theo tên → ghi ngay (file tạm + đổi tên),
+//                          bản trước đó chép sang employees.json.bak. fn trả về false thì không ghi.
+// File chính hỏng/mất lúc khởi động → khôi phục từ .bak; chỉ khi cả hai đều không đọc được mới dùng DEFAULT.
+const EMP_BAK = EMP_FILE + '.bak';
 let EMPLOYEES = [];
-function loadEmployees() {
+let _empMtime = 0;
+function parseEmpFile(file) {
+  const raw = JSON.parse(fs.readFileSync(file, 'utf8'));
+  const list = Array.isArray(raw) ? raw : raw.employees;
+  if (!Array.isArray(list)) throw new Error('sai định dạng');
+  return list;
+}
+function refreshEmployees() {
   try {
-    const raw = JSON.parse(fs.readFileSync(EMP_FILE, 'utf8'));
-    EMPLOYEES = Array.isArray(raw) ? raw : (raw.employees || []);
-    // Migration: nếu file cũ thiếu field team/isLead → bổ sung từ DEFAULT
+    const mtime = fs.statSync(EMP_FILE).mtimeMs;
+    if (mtime === _empMtime) return EMPLOYEES;
+    EMPLOYEES = parseEmpFile(EMP_FILE);
+    _empMtime = mtime;
+  } catch {} // lỗi đọc → giữ bản trong bộ nhớ
+  return EMPLOYEES;
+}
+function commitEmployees(fn) {
+  let list;
+  try { list = parseEmpFile(EMP_FILE); } catch { list = JSON.parse(JSON.stringify(EMPLOYEES)); }
+  const out = fn(list);
+  if (out === false) return out;
+  try {
+    try { parseEmpFile(EMP_FILE); fs.copyFileSync(EMP_FILE, EMP_BAK); } catch {} // chỉ sao lưu bản đọc được
+    const tmp = EMP_FILE + '.' + process.pid + '.tmp';
+    fs.writeFileSync(tmp, JSON.stringify(list, null, 2));
+    fs.renameSync(tmp, EMP_FILE);
+    EMPLOYEES = list;
+    _empMtime = fs.statSync(EMP_FILE).mtimeMs;
+  } catch (e) { console.error('[employees] Lỗi ghi file:', e.message); }
+  return out;
+}
+function loadEmployees() {
+  let restored = null;
+  try { parseEmpFile(EMP_FILE); } catch (e) {
+    try { restored = parseEmpFile(EMP_BAK); console.error('[employees] employees.json lỗi (' + e.message + ') → khôi phục từ .bak'); }
+    catch { if (fs.existsSync(EMP_FILE)) console.error('[employees] employees.json lỗi, không có .bak → dùng DEFAULT'); }
+  }
+  commitEmployees(list => {
     let migrated = false;
-    for (const emp of EMPLOYEES) {
+    if (restored) { list.splice(0, list.length, ...restored); migrated = true; }
+    else if (!list.length && !fs.existsSync(EMP_FILE)) migrated = true;
+    // Migration: nếu file cũ thiếu field team/isLead → bổ sung từ DEFAULT
+    for (const emp of list) {
       if (emp.team === undefined || emp.isLead === undefined) {
         const def = EMPLOYEES_DEFAULT.find(d => d.full === emp.full);
         if (emp.team === undefined) { emp.team = def ? def.team : ''; migrated = true; }
@@ -89,24 +132,20 @@ function loadEmployees() {
     }
     // Thêm NV mới từ DEFAULT mà file cũ chưa có
     for (const def of EMPLOYEES_DEFAULT) {
-      if (!EMPLOYEES.find(e => e.full === def.full)) {
-        EMPLOYEES.push(JSON.parse(JSON.stringify(def)));
+      if (!list.find(e => e.full === def.full)) {
+        list.push(JSON.parse(JSON.stringify(def)));
         migrated = true;
       }
     }
-    if (migrated) saveEmployees();
-  } catch {
-    EMPLOYEES = JSON.parse(JSON.stringify(EMPLOYEES_DEFAULT));
-    saveEmployees();
-  }
-}
-function saveEmployees() {
-  try { fs.writeFileSync(EMP_FILE, JSON.stringify(EMPLOYEES, null, 2)); } catch (e) { console.error('[employees] Lỗi ghi file:', e.message); }
+    if (!migrated) { EMPLOYEES = list; return false; }
+  });
+  refreshEmployees();
 }
 loadEmployees();
 
 // Tự sinh TEAM_LEAD từ danh sách nhân viên
 function getTeamLead() {
+  refreshEmployees();
   const map = {};
   const leads = EMPLOYEES.filter(e => e.isLead && e.active);
   for (const lead of leads) map[lead.full] = [];
@@ -765,6 +804,25 @@ app.use((req, res, next) => {
   res.redirect('/login');
 });
 
+// Leader xem được cả team: employees của phiên = danh sách trong users.js + NV đang làm có team = tên leader
+// (menu Nhân viên). Tính lại mỗi request → thêm NV vào team là leader thấy ngay, không cần sửa users.js / đăng nhập lại.
+app.use((req, res, next) => {
+  refreshEmployees();
+  const u = req.session && req.session.user;
+  if (!u || u.role !== 'viewer' || !u.salaryName) return next();
+  const base = (USERS.find(x => x.user === u.user) || {}).employees || [];
+  const list = EMPLOYEES;
+  const isLead = list.some(e => e.active !== false && e.isLead && e.full === u.salaryName);
+  const merged = [...base];
+  if (isLead) {
+    if (!merged.includes(u.salaryName)) merged.push(u.salaryName);
+    for (const e of list) if (e.active !== false && !e.isLead && e.team === u.salaryName && !merged.includes(e.full)) merged.push(e.full);
+  }
+  // Chỉ gán khi khác → phiên không bị ghi lại mỗi request
+  if (JSON.stringify(merged) !== JSON.stringify(u.employees || [])) u.employees = merged;
+  next();
+});
+
 // Cho trang biết người đang đăng nhập là ai (để ẩn/hiện menu, lọc theo người)
 app.get('/api/me', (req, res) => {
   const u = req.session.user || {};
@@ -797,19 +855,21 @@ app.post('/api/employees/add', express.json(), (req, res) => {
   if (me.role !== 'admin') return res.status(403).json({ ok: false });
   const { full, short: shortName, code, bhxh, aliases, team, isLead } = req.body || {};
   if (!full || !full.trim()) return res.json({ ok: false, message: 'Thiếu tên nhân viên' });
-  if (EMPLOYEES.find(e => e.active && e.full === full.trim())) return res.json({ ok: false, message: 'Nhân viên đã tồn tại' });
-  // Tự tạo mã nếu không điền
-  let empCode = (code || '').trim().toUpperCase();
-  if (!empCode) {
-    const maxNum = EMPLOYEES.reduce((m, e) => { const n = parseInt((e.code || '').replace(/\D/g, ''), 10); return n > m ? n : m; }, 0);
-    empCode = 'TD' + (maxNum + 1);
-  }
-  EMPLOYEES.push({
-    code: empCode, short: (shortName || '').trim() || full.trim().split(' ').pop(),
-    full: full.trim(), bhxh: parseInt(bhxh) || 0, aliases: Array.isArray(aliases) ? aliases : [],
-    team: (team || '').trim(), isLead: !!isLead, active: true,
+  const out = commitEmployees(list => {
+    if (list.find(e => e.active && e.full === full.trim())) return false;
+    // Tự tạo mã nếu không điền
+    let empCode = (code || '').trim().toUpperCase();
+    if (!empCode) {
+      const maxNum = list.reduce((m, e) => { const n = parseInt((e.code || '').replace(/\D/g, ''), 10); return n > m ? n : m; }, 0);
+      empCode = 'TD' + (maxNum + 1);
+    }
+    list.push({
+      code: empCode, short: (shortName || '').trim() || full.trim().split(' ').pop(),
+      full: full.trim(), bhxh: parseInt(bhxh) || 0, aliases: Array.isArray(aliases) ? aliases : [],
+      team: (team || '').trim(), isLead: !!isLead, active: true,
+    });
   });
-  saveEmployees();
+  if (out === false) return res.json({ ok: false, message: 'Nhân viên đã tồn tại' });
   res.json({ ok: true });
 });
 // Sửa nhân viên
@@ -818,16 +878,18 @@ app.post('/api/employees/update', express.json(), (req, res) => {
   if (me.role !== 'admin') return res.status(403).json({ ok: false });
   const { full, ...fields } = req.body || {};
   if (!full) return res.json({ ok: false, message: 'Thiếu tên nhân viên' });
-  const emp = EMPLOYEES.find(e => e.full === full);
-  if (!emp) return res.json({ ok: false, message: 'Không tìm thấy' });
-  // Cập nhật các field được gửi
-  if (fields.short !== undefined) emp.short = fields.short;
-  if (fields.code !== undefined) emp.code = fields.code;
-  if (fields.bhxh !== undefined) emp.bhxh = parseInt(fields.bhxh) || 0;
-  if (fields.team !== undefined) emp.team = fields.team;
-  if (fields.isLead !== undefined) emp.isLead = !!fields.isLead;
-  if (fields.aliases !== undefined) emp.aliases = Array.isArray(fields.aliases) ? fields.aliases : [];
-  saveEmployees();
+  const out = commitEmployees(list => {
+    const emp = list.find(e => e.full === full);
+    if (!emp) return false;
+    // Cập nhật các field được gửi
+    if (fields.short !== undefined) emp.short = fields.short;
+    if (fields.code !== undefined) emp.code = fields.code;
+    if (fields.bhxh !== undefined) emp.bhxh = parseInt(fields.bhxh) || 0;
+    if (fields.team !== undefined) emp.team = fields.team;
+    if (fields.isLead !== undefined) emp.isLead = !!fields.isLead;
+    if (fields.aliases !== undefined) emp.aliases = Array.isArray(fields.aliases) ? fields.aliases : [];
+  });
+  if (out === false) return res.json({ ok: false, message: 'Không tìm thấy' });
   res.json({ ok: true });
 });
 // Xoá nhân viên (soft delete)
@@ -835,10 +897,12 @@ app.post('/api/employees/delete', express.json(), (req, res) => {
   const me = req.session.user || {};
   if (me.role !== 'admin') return res.status(403).json({ ok: false });
   const { full } = req.body || {};
-  const emp = EMPLOYEES.find(e => e.full === full);
-  if (!emp) return res.json({ ok: false, message: 'Không tìm thấy' });
-  emp.active = false;
-  saveEmployees();
+  const out = commitEmployees(list => {
+    const emp = list.find(e => e.full === full);
+    if (!emp) return false;
+    emp.active = false;
+  });
+  if (out === false) return res.json({ ok: false, message: 'Không tìm thấy' });
   res.json({ ok: true });
 });
 
@@ -1837,8 +1901,7 @@ app.get('/api/marketing/report', async (req, res) => {
 
     // Sandbox vẫn trả dòng cho NV đã nghỉ việc → chỉ giữ NV đang có ở menu Nhân viên (active) + Admin.
     // Đọc lại employees.json: máy chủ có thể chạy nhiều tiến trình, EMPLOYEES trong bộ nhớ có thể cũ.
-    let empList = EMPLOYEES;
-    try { const raw = JSON.parse(fs.readFileSync(EMP_FILE, 'utf8')); empList = Array.isArray(raw) ? raw : (raw.employees || EMPLOYEES); } catch {}
+    const empList = refreshEmployees();
     const conLam = new Set(['admin']);
     for (const e of empList) if (e.active !== false) [e.full, ...(e.aliases || [])].forEach(n => conLam.add(norm(n)));
     rows = rows.filter(r => conLam.has(norm(r.name)));
