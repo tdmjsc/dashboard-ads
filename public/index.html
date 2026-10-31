@@ -149,6 +149,18 @@
   .adset-metrics>span{display:flex;flex-direction:column;}
   .adset-metrics b{font-family:'Space Grotesk';font-weight:600;font-size:13.5px;}
   .adset-metrics small{font-size:10.5px;color:var(--faint);text-transform:uppercase;letter-spacing:.3px;margin-top:1px;}
+  .ad-ids{margin-top:9px;border-top:1px dashed var(--line);padding-top:8px;display:flex;flex-direction:column;gap:6px;}
+  .ad-line{display:flex;flex-wrap:wrap;align-items:center;gap:6px 10px;font-size:12px;}
+  .ad-line .ad-nm{color:var(--muted);max-width:280px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+  .adid-chip{font-family:'Space Grotesk';background:var(--teal-bg);color:var(--teal);border-radius:6px;padding:1px 7px;font-size:11.5px;}
+  .adid-chip.bad{background:var(--red-bg);color:var(--red);}
+  .adid-none{color:var(--red);font-weight:600;}
+  .adid-form{display:inline-flex;gap:6px;align-items:center;flex-wrap:wrap;}
+  .adid-form input{border:1px solid var(--line);border-radius:6px;padding:4px 8px;font-size:12px;width:260px;max-width:70vw;}
+  .adid-form button{background:var(--accent);color:#fff;border:0;border-radius:6px;padding:4px 10px;font-size:12px;cursor:pointer;}
+  .ad-line a{color:var(--accent);text-decoration:none;white-space:nowrap;}
+  .ad-line details summary{cursor:pointer;color:var(--faint);list-style:none;}
+  .adid-msg{font-size:11.5px;}
   .empty b{display:block;color:var(--text);font-family:'Space Grotesk';margin-bottom:6px;}
   .note{margin-top:18px;font-size:12.5px;color:var(--muted);display:flex;gap:9px;align-items:flex-start;background:#FBFCFD;border:1px dashed var(--line);border-radius:10px;padding:13px 15px;}
   .note svg{flex:none;margin-top:1px;color:var(--faint);}
@@ -389,6 +401,45 @@ async function loadOms(since,until){
   render();   // kết quả + CP/kết quả đổi sang đơn OMS (cả ô tổng phía trên)
 }
 const omsCamp=c=>OMS&&OMS.camps?OMS.camps[c.id]:null;
+/* adid (mã nội bộ Meta trong fbclid) của từng quảng cáo — thư viện ở OMS: đơn từ link trong bài / bình luận
+   chỉ có fbclid, ghép về nhóm nhờ adid. NV lấy adid: mở link chia sẻ bản xem trước, bấm nút / link đặt hàng,
+   dán link trang bán hàng (có ?fbclid=) vào ô dưới quảng cáo. */
+let ADIDS={};
+async function loadAdids(){
+  const ids=[...new Set(CAMPAIGNS.flatMap(c=>(c.adsets||[]).flatMap(a=>(a.ads||[]).map(x=>x.id))))];
+  const map={};
+  for(let i=0;i<ids.length;i+=200){
+    try{ const d=await (await fetch('/api/ads/adids?ads='+ids.slice(i,i+200).join(','))).json(); if(d&&d.ok) Object.assign(map,d.map); }catch(e){}
+  }
+  ADIDS=map;
+  if(state.view==='camp') renderCamp();
+}
+function adidBox(a){
+  if(!a.ads||!a.ads.length) return '';
+  const lines=a.ads.slice().sort((x,y)=>(y.on?1:0)-(x.on?1:0)).map(ad=>{
+    const have=ADIDS[ad.id]||[];
+    const form=`<span class="adid-form"><input id="adidIn_${ad.id}" placeholder="Dán link trang bán hàng có ?fbclid=…">
+      <button onclick="saveAdid('${ad.id}')">Lưu</button>${ad.preview?` <a href="${esc(ad.preview)}" target="_blank" rel="noopener" title="Mở quảng cáo dạng demo trên Facebook, bấm nút / link đặt hàng rồi copy link trang bán hàng">Mở xem trước ↗</a>`:''}</span>`;
+    const chips=have.map(h=>`<span class="adid-chip${h.xung_dot?' bad':''}" title="${h.xung_dot?'Xung đột: UTM báo quảng cáo '+esc(h.xung_dot):'Nguồn: '+esc(h.nguon)}">${esc(h.adid)}</span>`).join('');
+    return `<div class="ad-line"><span class="ad-nm" title="${esc(ad.name)} · ID ${ad.id}">${ad.on?'':'⏸ '}${esc(ad.name)}</span>
+      ${have.length?`adid ${chips} <details><summary>+ thêm (sau khi sửa QC)</summary>${form}</details>`:`<span class="adid-none">Chưa có adid</span> ${form}`}
+      <span class="adid-msg" id="adidMsg_${ad.id}"></span></div>`;
+  }).join('');
+  return `<div class="ad-ids">${lines}</div>`;
+}
+async function saveAdid(adId){
+  const inp=document.getElementById('adidIn_'+adId), msg=document.getElementById('adidMsg_'+adId);
+  msg.style.color='var(--muted)'; msg.textContent='Đang lưu…';
+  try{
+    const r=await fetch('/api/ads/adid',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({ad_id:adId,link:inp.value})});
+    const d=await r.json();
+    if(!d.ok) throw new Error(d.error||r.status);
+    const d2=await (await fetch('/api/ads/adids?ads='+adId)).json();
+    if(d2&&d2.ok) ADIDS[adId]=d2.map[adId]||[];
+    renderCamp();
+    const m2=document.getElementById('adidMsg_'+adId); if(m2){m2.style.color='var(--teal)'; m2.textContent='Đã lưu adid '+d.adid;}
+  }catch(e){ msg.style.color='var(--red)'; msg.textContent=e.message; }
+}
 /* nhóm quảng cáo: khớp theo id nhóm */
 function omsAdset(o,a){
   return o&&o.adsets&&a.id&&o.adsets[a.id]?{key:a.id,v:o.adsets[a.id]}:null;
@@ -481,6 +532,7 @@ async function loadData(opts){
     } else { msg.style.color=''; }
     render();
     loadOms(since, until);         // số đơn OMS theo chiến dịch / nhóm (chạy song song)
+    loadAdids();                   // adid của từng quảng cáo (ô dưới mỗi nhóm)
     loadMarketing(since, until);   // tải số contact thật để tính CPA theo nhân viên (chạy song song)
   }catch(e){ msg.style.display='block'; msg.textContent='Không kết nối được backend. Kiểm tra server đang chạy. ('+e.message+')'; }
 }
@@ -680,6 +732,7 @@ function adsetBlock(c){
         ${a.mDon!==undefined?`<span><b style="color:#3949AB">${fmtVND(a.mDon)}</b><small>đơn Meta</small></span>
         <span><b style="color:#3949AB">${a.mDon?fmtVND(Math.round(a.spent/a.mDon))+' ₫':'—'}</b><small>CP/đơn Meta</small></span>`:''}
       </div>
+      ${adidBox(a)}
     </div>`;
   }).join('');
   // Đơn OMS của nhóm không có chi tiêu trong khoảng (khách bấm từ trước) hoặc chỉ ra chiến dịch

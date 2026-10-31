@@ -482,6 +482,26 @@ export function mountOMS(app, { mysql, express, getTeamLead = () => ({}) }) {
     } finally { fixingAdRefs = false; }
   }
 
+  // Cho trang Ads (server.js /api/ads/adids, /api/ads/adid): adid đã có theo quảng cáo, và lưu adid từ link
+  global.__omsAdidsForAds = async (ids) => {
+    if (!getPool() || !ids.length) return {};
+    await ensureTables(getPool());
+    const rows = await db(`SELECT adid, ad_id, nguon, xung_dot, last_at FROM oms_adid_map WHERE ad_id IN (?)
+      ORDER BY last_at DESC`, [ids]);
+    const out = {};
+    for (const r of rows) (out[r.ad_id] ||= []).push({ adid: r.adid, nguon: r.nguon, xung_dot: r.xung_dot, last_at: r.last_at });
+    return out;
+  };
+  global.__omsAddAdid = async (link, ref, nguoi) => {
+    if (!getPool()) return { error: 'OMS chưa cấu hình DB' };
+    await ensureTables(getPool());
+    const raw = String(link || '').trim();
+    const adid = /^\d{10,}$/.test(raw) ? raw : adIdFromFbclid(utmFromUrl(raw)?.fbclid || '');
+    if (!adid) return { error: 'Link không có adid: phải là link trang bán hàng (có ?fbclid=…) bấm từ quảng cáo — mở link chia sẻ bản xem trước rồi bấm nút / link đặt hàng, không dùng "bài viết có bình luận"' };
+    const ketqua = await learnAdid(adid, ref, 'admin', nguoi);
+    return { ketqua, adid };
+  };
+
   // Thống kê đơn theo chiến dịch + nhóm quảng cáo cho trang Ads (/api/ads/oms-orders ở server.js).
   // since/until = ngày VN (YYYY-MM-DD), since bị nâng lên AD_REF_FROM (tu). Đơn chưa tra ra chiến
   // dịch nằm ở dòng fb_campaign_id=''.

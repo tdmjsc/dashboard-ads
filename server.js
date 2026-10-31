@@ -454,6 +454,8 @@ async function fetchAccount(acc, token, days, since, until) {
   // Các lời gọi ad/adset dưới đây đều LỌC theo đúng chiến dịch đã giữ (campaign.id IN …)
   // nên chỉ kéo phần cần thiết, giảm mạnh số lời gọi so với kéo cả tài khoản.
   const idChunks = chunkArr(keepIds, 50);
+  // Quảng cáo của từng nhóm (cho ô adid trên trang Ads, xem oms-ad-ref.js): id, tên, link chia sẻ bản xem trước
+  const adsByAdset = {};
 
   await Promise.all([
 
@@ -463,13 +465,15 @@ async function fetchAccount(acc, token, days, since, until) {
         const chosen = {};
         for (const ids of idChunks) {
           const ads = await fbAll(`act_${acc}/ads`, {
-            fields: 'campaign_id,effective_status,preview_shareable_link,creative{effective_object_story_id}',
+            fields: 'id,name,adset_id,campaign_id,effective_status,preview_shareable_link,creative{effective_object_story_id}',
             filtering: [{ field: 'campaign.id', operator: 'IN', value: ids }],
             limit: 500,
           }, token);
           for (const ad of ads) {
             const cid = ad.campaign_id;
             if (!cid || !byId[cid]) continue;
+            if (ad.adset_id) (adsByAdset[ad.adset_id] ||= []).push({ id: String(ad.id), name: ad.name || '',
+              on: ad.effective_status === 'ACTIVE', preview: ad.preview_shareable_link || '' });
             // Bài đều ĐÃ ĐĂNG CÔNG KHAI lên page → trỏ thẳng vào BÀI GỐC: mở ra ngay
             // trên app điện thoại, có sẵn bình luận, KHÔNG có màn hình "chấp nhận" như
             // link xem trước. Phải dùng permalink.php?story_fbid=..&id=.. (dạng ghép
@@ -548,6 +552,8 @@ async function fetchAccount(acc, token, days, since, until) {
     })(),
 
   ]);
+  for (const camp of Object.values(byId))
+    for (const as of camp.adsets) as.ads = adsByAdset[as.id] || [];
 
   return Object.values(byId);
 }
@@ -1379,6 +1385,32 @@ app.get('/api/ads/oms-orders', async (req, res) => {
   } catch (e) {
     res.status(500).json({ ok: false, error: e.message });
   }
+});
+
+// adid đã có của các quảng cáo (?ads=id,id…) → ô adid dưới mỗi nhóm trên trang Ads (thư viện adid ở OMS)
+app.get('/api/ads/adids', async (req, res) => {
+  try {
+    if (typeof global.__omsAdidsForAds !== 'function') return res.json({ ok: false, error: 'OMS chưa bật' });
+    const ids = String(req.query.ads || '').split(',').map(s => s.trim()).filter(v => /^\d{10,}$/.test(v)).slice(0, 1000);
+    res.json({ ok: true, map: await global.__omsAdidsForAds(ids) });
+  } catch (e) { res.status(500).json({ ok: false, error: e.message }); }
+});
+// Lưu adid cho 1 quảng cáo: { ad_id, link } — link trang bán hàng bấm từ quảng cáo (có ?fbclid=…, vd mở link
+// chia sẻ bản xem trước rồi bấm nút / link đặt hàng). NV chỉ lưu được cho quảng cáo của chiến dịch mình được xem.
+app.post('/api/ads/adid', async (req, res) => {
+  try {
+    if (typeof global.__omsAddAdid !== 'function') return res.status(503).json({ ok: false, error: 'OMS chưa bật' });
+    const me = req.session.user;
+    const adId = String(req.body?.ad_id || '').trim();
+    if (!/^\d{10,}$/.test(adId)) return res.status(400).json({ ok: false, error: 'Thiếu ID quảng cáo' });
+    const ref = await fbAdRef(adId);
+    if (!ref?.ad_id) return res.status(400).json({ ok: false, error: `ID ${adId} không phải quảng cáo, hoặc token Meta không đọc được` });
+    if (me.role !== 'admin' && !(me.employees || []).includes(detectEmployee(ref.campaign_name || '')))
+      return res.status(403).json({ ok: false, error: 'Quảng cáo không thuộc chiến dịch của bạn' });
+    const out = await global.__omsAddAdid(String(req.body?.link || ''), { ...ref, ad_id: adId },
+      me.salaryName || (me.employees && me.employees[0]) || me.user || '');
+    res.status(out.error ? 400 : 200).json({ ok: !out.error, ...out });
+  } catch (e) { res.status(500).json({ ok: false, error: e.message }); }
 });
 
 /* =========================================================================
