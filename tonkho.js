@@ -24,8 +24,8 @@ const DEFAULT_CONFIG = {
   salesDays: 30,        // Số ngày gần nhất dùng để tính tốc độ bán
   hkdAutoRenew: false,  // Tự đăng nhập lại MISA khi token hết hạn. CHỈ bật khi tài khoản MISA dành riêng cho máy chủ:
                         // MISA chỉ cho 1 máy đăng nhập mỗi tài khoản, máy chủ đăng nhập lại sẽ làm người đang dùng bị thoát.
-  hkdKeepAliveMinutes: 60, // Khi bật tự gia hạn: cứ N phút xin token mới một lần (0 = chỉ khi token hết hạn) để phiên AMIS
-                        // không bị bỏ không ~12 giờ giữa hai lần gia hạn (phiên AMIS đã chết sau ~12 giờ không dùng, 29–30/10/2026).
+  hkdKeepAliveMinutes: 480, // Khi bật tự gia hạn: cứ N phút làm mới token một lần (0 = chỉ khi token hết hạn, như trình duyệt:
+                        // token sống ~24 giờ). 8 giờ = 3 lần/ngày, không dày như mỗi giờ để khỏi khác thường với MISA.
   alertThreshold: 10,   // Nhắn Telegram nhóm kho khi tồn MISA của một mã hàng xuống dưới số này
   dictItemType: 2,      // data_type của danh mục Vật tư hàng hoá trong get_dictionary
   dictStockType: 3,     // data_type của danh mục Kho trong get_dictionary
