@@ -7,7 +7,7 @@
 //  Dữ liệu lưu ở DATA_DIR/ton-kho.json (ngoài project, không mất khi deploy).
 // =====================================================================
 import path from 'node:path';
-import { parsePastedRequest, fetchInventory, tokenExpiry, renewSession } from './misa-tonkho.js';
+import { parsePastedRequest, fetchInventory, tokenExpiry, renewSession, refreshSession } from './misa-tonkho.js';
 import { mountTenHoaDon } from './ten-hoa-don.js';
 import { jsonStore } from './json-store.js';
 
@@ -298,7 +298,7 @@ export function mountTonKho(app, { express, DATA_DIR, fetchWithTimeout }) {
   }
 
   // ===================== MISA AMIS HỘ KINH DOANH (request nội bộ) =====================
-  // STORE.hkd = { url, headers, body, savedAt, savedBy } — do admin dán "Copy as cURL".
+  // STORE.hkd = { url, headers, body, aid, savedAt, savedBy } — do admin dán "Copy as cURL" (+ mã làm mới AidEncode).
   async function syncFromHkd() {
     if (syncing) return syncing;
     syncing = (async () => {
@@ -334,7 +334,16 @@ export function mountTonKho(app, { express, DATA_DIR, fetchWithTimeout }) {
     const cur = STORE.hkd;
     const same = s => s.hkd && s.hkd.savedAt === cur.savedAt;
     try {
-      const next = await renewSession(cur, fetchWithTimeout);
+      // Có mã làm mới (AidEncode) thì làm mới như trang MISA g2; không được thì thử đăng nhập lại qua phiên AMIS
+      let next;
+      if (cur.aid) {
+        try { next = await refreshSession(cur, fetchWithTimeout); }
+        catch (e) {
+          if (e.kind !== 'auth') throw e;
+          try { next = await renewSession(cur, fetchWithTimeout); }
+          catch (e2) { e2.message = e.message + ' / ' + e2.message; e2.trace = [...(e.trace || []), ...(e2.trace || [])]; throw e2; }
+        }
+      } else next = await renewSession(cur, fetchWithTimeout);
       next.lastRenewError = '';
       commit(s => { if (!same(s)) return false; s.hkd = next; });
       console.log('[TONKHO] đã tự gia hạn phiên MISA (lần ' + next.renewCount + ')');
@@ -434,7 +443,7 @@ export function mountTonKho(app, { express, DATA_DIR, fetchWithTimeout }) {
       configured: !!STORE.hkd || !!(c.appId && c.accessCode && c.orgCompanyCode),
       // Không bao giờ trả header/token của request đã dán về trình duyệt
       hkd: STORE.hkd ? { savedAt: STORE.hkd.savedAt, savedBy: STORE.hkd.savedBy, tokenExp: STORE.hkd.tokenExpAt || tokenExpiry(STORE.hkd.headers),
-        renewedAt: STORE.hkd.renewedAt || '', renewCount: STORE.hkd.renewCount || 0, lastRenewError: STORE.hkd.lastRenewError || '', lastRenewTrace: STORE.hkd.lastRenewTrace || [] } : null,
+        hasAid: !!STORE.hkd.aid, renewedAt: STORE.hkd.renewedAt || '', renewCount: STORE.hkd.renewCount || 0, lastRenewError: STORE.hkd.lastRenewError || '', lastRenewTrace: STORE.hkd.lastRenewTrace || [] } : null,
       hkdAutoRenew: !!c.hkdAutoRenew,
       autoMinutes: c.autoMinutes,
       alert: { threshold: alertTh(), nLow: lowItems().length, last: STORE.lastAlert || null },
@@ -477,6 +486,10 @@ export function mountTonKho(app, { express, DATA_DIR, fetchWithTimeout }) {
     let parsed;
     try { parsed = parsePastedRequest(req.body?.raw); }
     catch (e) { return res.json({ ok: false, message: e.message }); }
+    // Mã làm mới: chuỗi AidEncode trong localStorage của trang MISA (bỏ dấu nháy nếu dán kèm)
+    const aid = String(req.body?.aid || '').trim().replace(/^["']|["']$/g, '');
+    if (aid && !/^[A-Za-z0-9+/=_-]{20,}$/.test(aid)) return res.json({ ok: false, message: 'Mã làm mới không đúng dạng — chép lại bằng copy(localStorage.AidEncode).' });
+    if (aid) parsed.aid = aid;
     commit(s => { s.hkd = { ...parsed, savedAt: new Date().toISOString(), savedBy: req.session?.user?.user || '' }; });
     try { const r = await syncFromHkd(); res.json({ ok: true, n: r.n }); }
     catch (e) { res.json({ ok: false, saved: true, message: e.message }); }

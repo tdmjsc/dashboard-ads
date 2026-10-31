@@ -74,3 +74,7 @@ Lead xem được kết quả của mọi NV có `team` = tên lead ở trang Nh
 ## Sổ quỹ tiền mặt (`thu-chi.js`, trang `/thu-chi.html`, menu nhỏ trong Kết quả kinh doanh)
 
 Admin (cả kế toán) ghi tay từng khoản thu / chi tiền mặt (ngày, nhóm, nội dung, người nộp/nhận, số tiền). Tiền mặt còn lại = tồn quỹ ban đầu + Σ thu − Σ chi (mọi khoản, không theo kỳ đang xem). Lưu `DATA_DIR/thu-chi.json` theo cách nhiều tiến trình (`commit` theo id, bản trước sang `thu-chi.json.bak`). Khác `json-store.js`: file chính hỏng thì đọc `.bak`, cả hai hỏng thì từ chối ghi (không coi là sổ trống). Khác trang "Dòng tiền" (`dong-tien.html`, chỉ admin thật): trang đó chụp số dư theo ngày, không phải sổ thu chi.
+
+## Tồn kho MISA Hộ kinh doanh: gia hạn token (`misa-tonkho.js`)
+
+Admin dán request `paging_filter` (cURL) + **mã làm mới** `AidEncode` (`copy(localStorage.AidEncode)` trong Console trang MISA). Từ 10/2026 MISA chuyển HKD sang môi trường g2: trang MISA làm mới token bằng `POST /hkd/g1/api/auth/v1/account/refresh_token` `{tid, did, mid, sid: AidEncode}` + `X-Device` (`refreshSession`; tid/did từ X-MISA-Context, mid = claim `uid` của token; mỗi lần trả AidEncode mới, mã cũ bỏ). Cách cũ đăng nhập lại qua phiên AMIS (`renewSession`, `app/redirect/hkd` → `/hkd/callback?sid=`) từ máy chủ giờ bị đẩy sang `hkd.misa.vn/api/oauth/amis/login` (29–31/10/2026), chỉ còn là dự phòng. Tab MISA còn mở cùng tài khoản sẽ tự làm mới và làm mã của máy chủ hết hiệu lực → dán xong phải đóng tab. Khi bật tự gia hạn, máy chủ làm mới mỗi `hkdKeepAliveMinutes` (60) phút.

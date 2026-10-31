@@ -195,9 +195,12 @@
         <li>Mở MISA bằng Chrome, vào <b>Báo cáo → Tổng hợp tồn kho</b>.</li>
         <li>Nhấn <b>F12</b>, chọn tab <b>Network</b>, rồi bấm <b>Xem báo cáo</b> trên MISA.</li>
         <li>Bấm chuột phải vào dòng <b>paging_filter</b> cuối cùng → <b>Copy → Copy as cURL (bash)</b>.</li>
-        <li>Dán vào ô dưới đây rồi bấm <b>Lưu và kiểm tra</b>.</li>
+        <li>Dán vào ô dưới đây.</li>
+        <li>Vẫn trong F12, chọn tab <b>Console</b>, gõ <code>copy(localStorage.AidEncode)</code> rồi Enter, dán vào ô <b>Mã làm mới</b>. Có mã này máy chủ tự làm mới token như trang MISA, không cần dán lại mỗi khi hết hạn.</li>
+        <li>Bấm <b>Lưu và kiểm tra</b>, rồi <b>đóng tab MISA đó</b> (không bấm Đăng xuất): trang MISA còn mở sẽ tự làm mới và làm mã của máy chủ hết hiệu lực.</li>
       </ol>
-      <textarea class="paste" id="hkdRaw" spellcheck="false" autocomplete="off" placeholder="curl 'https://amisapp.misa.vn/hkd/g1/api/report/v1/report/dynamic/v2/paging_filter' …"></textarea>
+      <textarea class="paste" id="hkdRaw" spellcheck="false" autocomplete="off" placeholder="curl 'https://amisapp.misa.vn/hkd/g2/api/report/v1/report/dynamic/v2/paging_filter' …"></textarea>
+      <input type="text" id="hkdAid" spellcheck="false" autocomplete="off" placeholder="Mã làm mới (kết quả của copy(localStorage.AidEncode))" style="width:100%;margin-top:8px;font-family:ui-monospace,Menlo,monospace;font-size:12px;border:1px solid var(--line);border-radius:10px;padding:10px;outline:none">
       <div class="actions">
         <button class="btn primary" id="btnHkdSave">Lưu và kiểm tra</button>
         <button class="btn hidden" id="btnHkdRenew" title="Xin token MISA mới bằng phiên đăng nhập đã lưu, không cần dán lại">Thử tự gia hạn ngay</button>
@@ -440,16 +443,17 @@ function renderHkd() {
   const tr = (h && h.lastRenewError && h.lastRenewTrace) || [];
   $('hkdTrace').classList.toggle('hidden', !tr.length);
   $('hkdTrace').textContent = tr.length ? 'Vết gia hạn lần gần nhất (gửi nguyên văn cho người hỗ trợ):\n' + tr.join('\n') : '';
+  if (h) $('hkdState').textContent += h.hasAid ? ' · có mã làm mới' : ' · chưa có mã làm mới';
   if (h && h.renewCount) $('hkdState').textContent += ` · đã tự gia hạn ${h.renewCount} lần, gần nhất ${dt(h.renewedAt)}`;
   if (h && h.lastRenewError) $('hkdState').textContent += ` · tự gia hạn lỗi: ${h.lastRenewError}`;
 }
 $('btnHkdSave').addEventListener('click', async () => {
-  const raw = $('hkdRaw').value;
+  const raw = $('hkdRaw').value, aid = $('hkdAid').value.trim();
   if (!raw.trim()) return setMsg('hkdMsg', 'Chưa dán nội dung request.', 'bad');
   const b = $('btnHkdSave'); b.disabled = true; setMsg('hkdMsg', 'Đang kết nối MISA…');
   try {
-    const r = await api('/api/ton-kho/hkd-config', { method: 'POST', body: JSON.stringify({ raw }) });
-    if (r.ok || r.saved) $('hkdRaw').value = '';
+    const r = await api('/api/ton-kho/hkd-config', { method: 'POST', body: JSON.stringify({ raw, aid }) });
+    if (r.ok || r.saved) { $('hkdRaw').value = ''; $('hkdAid').value = ''; }
     setMsg('hkdMsg', r.ok ? `Đã kết nối và lấy ${fmt(r.n)} dòng tồn kho.` : r.message, r.ok ? 'ok' : 'bad');
   } catch (e) { setMsg('hkdMsg', e.message, 'bad'); }
   b.disabled = false;

@@ -246,6 +246,63 @@ function readContext(raw) {
   return null;
 }
 
+/* ---------- Làm mới token bằng "mã làm mới" (AidEncode) ----------
+   Từ 10/2026 MISA chuyển Hộ kinh doanh sang môi trường g2. Trang MISA không còn đăng nhập lại qua AMIS
+   khi token hết hạn mà tự gọi refresh_token (cfg/config.js của g2: sme_auth_api_refresh_token, vẫn ở /g1/;
+   hàm refreshToken trong bundle index-*.js, đọc 31/10/2026):
+     POST /hkd/g1/api/auth/v1/account/refresh_token  JSON { tid, did, mid, sid: AidEncode }  + header X-Device
+     → Data.AccessToken.{Token, TokenExpired}, Data.AidEncode (mã mới, mã cũ bỏ), Data.SessionId, Data.AmisSessionId
+   tid/did lấy từ X-MISA-Context, mid = claim "uid" của token. AidEncode chỉ có trong localStorage của trang
+   MISA nên admin dán riêng (lệnh copy(localStorage.AidEncode) trong Console). Không cần cookie phiên AMIS. */
+const HKD_REFRESH_URL = AMIS_ORIGIN + '/hkd/g1/api/auth/v1/account/refresh_token';
+
+function jwtClaims(headers) {
+  try { return JSON.parse(Buffer.from(String(headers.authorization || '').replace(/^Bearer\s+/i, '').split('.')[1], 'base64url').toString('utf8')); }
+  catch { return {}; }
+}
+
+// Thay token + mã phiên trong headers theo dữ liệu MISA trả về (giữ nguyên ngữ cảnh chi nhánh, sổ…)
+function applyLogin(cfg, headers, data) {
+  headers.authorization = 'Bearer ' + data.AccessToken.Token;
+  const old = readContext(cfg.headers['x-misa-context'] || '');
+  const fresh = data.Context || { SessionId: data.SessionId, AmisSessionId: data.AmisSessionId };
+  if (old) {
+    for (const k of ['SessionId', 'AmisSessionId']) if (fresh[k] != null) old.obj[k] = fresh[k];
+    headers['x-misa-context'] = old.encode(JSON.stringify(old.obj));
+  } else if (data.Context) headers['x-misa-context'] = JSON.stringify({ ...data.Context, Language: 'vi' });
+  const ttl = Number(data.AccessToken.TokenExpired) || 0;
+  return ttl > 0 ? new Date(Date.now() + ttl * 1000).toISOString() : '';
+}
+
+// Trả về cấu hình mới (token mới + aid mới). Ném MisaError('auth') nếu MISA không nhận mã làm mới.
+export async function refreshSession(cfg, fetchImpl) {
+  const trace = ['làm mới bằng refresh_token'];
+  const fail = (msg, kind = 'auth') => { const e = new MisaError(msg, kind); e.trace = trace; return e; };
+  if (!cfg.aid) throw fail('Chưa có mã làm mới (AidEncode).');
+  const ctx = readContext(cfg.headers['x-misa-context'] || '')?.obj || {};
+  const body = { tid: ctx.TenantId, did: ctx.DatabaseId, mid: jwtClaims(cfg.headers).uid, sid: cfg.aid };
+  if (!body.tid || !body.did || !body.mid) throw fail('Request đã dán thiếu TenantId/DatabaseId/UserId để làm mới token.');
+  const ua = cfg.headers['user-agent'];
+  let r, j;
+  try {
+    r = await fetchImpl(HKD_REFRESH_URL, {
+      method: 'POST', redirect: 'manual', body: JSON.stringify(body),
+      headers: { ...(ua ? { 'user-agent': ua } : {}), 'content-type': 'application/json', accept: 'application/json, text/plain, */*',
+        origin: AMIS_ORIGIN, referer: AMIS_ORIGIN + '/hkd/', ...(cfg.headers['x-device'] ? { 'x-device': cfg.headers['x-device'] } : {}) },
+    });
+    j = await r.json();
+  } catch (e) { trace.push('lỗi: ' + e.message); throw fail('MISA không trả lời khi làm mới token: ' + e.message, 'network'); }
+  const data = j && j.Success === true ? j.Data : null;
+  trace.push(`POST ${MISA_HOST}/hkd/g1/api/auth/v1/account/refresh_token → ${r.status}, Success=${j && j.Success}, Code=${j && j.Code}`
+    + (j && Array.isArray(j.ErrorsMessage) && j.ErrorsMessage.length ? ', ' + j.ErrorsMessage.join('; ') : ''));
+  if (!data || !data.AccessToken || !data.AccessToken.Token)
+    throw fail('MISA không nhận mã làm mới (AidEncode). Cần dán lại request và mã làm mới.');
+  const headers = { ...cfg.headers };
+  const tokenExpAt = applyLogin(cfg, headers, data);
+  return { ...cfg, headers, aid: data.AidEncode || cfg.aid, lastRenewTrace: trace, renewedAt: new Date().toISOString(),
+    renewCount: (cfg.renewCount || 0) + 1, tokenExpAt };
+}
+
 // Trả về cấu hình mới (headers đã có token mới). Ném MisaError('auth') nếu phiên AMIS đã hết.
 export async function renewSession(cfg, fetchImpl) {
   const jar = parseCookies(cfg.headers.cookie);
@@ -307,14 +364,9 @@ export async function renewSession(cfg, fetchImpl) {
   trace.push(`POST ${MISA_HOST}/hkd/g1/api/auth/v1/account/login/misa_id → ${r.status}, Success=${j && j.Success}, Code=${j && j.Code}`);
   if (!token) throw fail('MISA từ chối cấp token mới (bước đăng nhập lại). Cần dán lại request mới.');
 
-  const headers = { ...cfg.headers, authorization: 'Bearer ' + token, cookie: cookieString(jar) };
+  const headers = { ...cfg.headers, cookie: cookieString(jar) };
   // Giữ nguyên ngữ cảnh cũ (chi nhánh, dữ liệu kế toán…), chỉ thay mã phiên — giống cách trang MISA tự làm
-  const old = readContext(cfg.headers['x-misa-context'] || '');
-  if (old && data.Context) {
-    for (const k of ['SessionId', 'AmisSessionId']) if (data.Context[k] != null) old.obj[k] = data.Context[k];
-    headers['x-misa-context'] = old.encode(JSON.stringify(old.obj));
-  } else if (data.Context) headers['x-misa-context'] = JSON.stringify({ ...data.Context, Language: 'vi' });
-  const ttl = Number(data.AccessToken.TokenExpired) || 0;
-  return { ...cfg, headers, lastRenewTrace: trace, renewedAt: new Date().toISOString(), renewCount: (cfg.renewCount || 0) + 1,
-    tokenExpAt: ttl > 0 ? new Date(Date.now() + ttl * 1000).toISOString() : '' };
+  const tokenExpAt = applyLogin(cfg, headers, data);
+  return { ...cfg, headers, ...(data.AidEncode ? { aid: data.AidEncode } : {}), lastRenewTrace: trace,
+    renewedAt: new Date().toISOString(), renewCount: (cfg.renewCount || 0) + 1, tokenExpAt };
 }
