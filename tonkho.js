@@ -24,6 +24,8 @@ const DEFAULT_CONFIG = {
   salesDays: 30,        // Số ngày gần nhất dùng để tính tốc độ bán
   hkdAutoRenew: false,  // Tự đăng nhập lại MISA khi token hết hạn. CHỈ bật khi tài khoản MISA dành riêng cho máy chủ:
                         // MISA chỉ cho 1 máy đăng nhập mỗi tài khoản, máy chủ đăng nhập lại sẽ làm người đang dùng bị thoát.
+  hkdKeepAliveMinutes: 60, // Khi bật tự gia hạn: cứ N phút xin token mới một lần (0 = chỉ khi token hết hạn) để phiên AMIS
+                        // không bị bỏ không ~12 giờ giữa hai lần gia hạn (phiên AMIS đã chết sau ~12 giờ không dùng, 29–30/10/2026).
   alertThreshold: 10,   // Nhắn Telegram nhóm kho khi tồn MISA của một mã hàng xuống dưới số này
   dictItemType: 2,      // data_type của danh mục Vật tư hàng hoá trong get_dictionary
   dictStockType: 3,     // data_type của danh mục Kho trong get_dictionary
@@ -358,6 +360,19 @@ export function mountTonKho(app, { express, DATA_DIR, fetchWithTimeout }) {
     const last = STORE.lastSync ? Date.parse(STORE.lastSync.at) : 0;
     if (Date.now() - last < c.autoMinutes * 60 * 1000) return;
     syncNow().catch(e => console.warn('[TONKHO] tự đồng bộ lỗi:', e.message));
+  }, 60 * 1000).unref?.();
+
+  // Giữ phiên AMIS sống: gia hạn chủ động mỗi hkdKeepAliveMinutes phút. Đánh dấu keepAliveAt trong commit
+  // trước khi gọi MISA để các tiến trình khác không gia hạn cùng lúc (và lần lỗi không bị thử lại mỗi phút).
+  setInterval(() => {
+    reload();
+    const c = cfg(), h = STORE.hkd, every = Number(c.hkdKeepAliveMinutes) || 0;
+    if (!h || !c.hkdAutoRenew || every <= 0 || syncing || STORE.lastSync?.kind === 'auth') return;
+    const lastOf = x => Math.max(...[x.savedAt, x.renewedAt, x.lastRenewErrorAt, x.keepAliveAt].map(t => Date.parse(t || '') || 0));
+    const due = s => s.hkd && s.hkd.savedAt === h.savedAt && Date.now() - lastOf(s.hkd) >= every * 60 * 1000;
+    if (!due(STORE)) return;
+    if (commit(s => { if (!due(s)) return false; s.hkd.keepAliveAt = new Date().toISOString(); }) === false) return;
+    renewHkd().catch(e => console.warn('[TONKHO] giữ phiên MISA lỗi:', e.message));
   }, 60 * 1000).unref?.();
 
   // ===================== TỐC ĐỘ BÁN TỪ OMS =====================
