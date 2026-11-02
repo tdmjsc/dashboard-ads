@@ -418,8 +418,8 @@ function adidBox(a){
   if(!a.ads||!a.ads.length) return '';
   const lines=a.ads.slice().sort((x,y)=>(y.on?1:0)-(x.on?1:0)).map(ad=>{
     const have=ADIDS[ad.id]||[];
-    const form=`<span class="adid-form"><input id="adidIn_${ad.id}" placeholder="Dán link trang bán hàng có ?fbclid=…">
-      <button onclick="saveAdid('${ad.id}')">Lưu</button>${ad.preview?` <a href="${esc(ad.preview)}" target="_blank" rel="noopener" title="Mở quảng cáo dạng demo trên Facebook, bấm nút / link đặt hàng rồi copy link trang bán hàng">Mở xem trước ↗</a>`:''}</span>`;
+    const form=`<span class="adid-form"><input id="adidIn_${ad.id}" placeholder="Dán link bấm từ quảng cáo">
+      <button onclick="saveAdid('${ad.id}')">Lưu</button>${ad.preview?` <a href="${esc(ad.preview)}" target="_blank" rel="noopener" title="Bấm Hiển thị quảng cáo, vào bảng tin Facebook bấm nút / link đặt hàng trên bài quảng cáo, copy link dán vào ô">Mở xem trước ↗</a>`:''}</span>`;
     const chips=have.map(h=>`<span class="adid-chip${h.xung_dot?' bad':''}" title="${h.xung_dot?'Xung đột: UTM báo quảng cáo '+esc(h.xung_dot):'Nguồn: '+esc(h.nguon)}">${esc(h.adid)}</span>`).join('');
     return `<div class="ad-line"><span class="ad-nm" title="${esc(ad.name)} · ID ${ad.id}">${ad.on?'':'⏸ '}${esc(ad.name)}</span>
       ${have.length?`adid ${chips} <details><summary>+ thêm (sau khi sửa QC)</summary>${form}</details>`:`<span class="adid-none">Chưa có adid</span> ${form}`}

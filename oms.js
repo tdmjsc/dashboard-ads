@@ -497,7 +497,7 @@ export function mountOMS(app, { mysql, express, getTeamLead = () => ({}) }) {
     await ensureTables(getPool());
     const raw = String(link || '').trim();
     const adid = /^\d{10,}$/.test(raw) ? raw : adIdFromFbclid(utmFromUrl(raw)?.fbclid || '');
-    if (!adid) return { error: 'Link không có adid: phải là link trang bán hàng (có ?fbclid=…) bấm từ quảng cáo — mở link chia sẻ bản xem trước rồi bấm nút / link đặt hàng, không dùng "bài viết có bình luận"' };
+    if (!adid) return { error: 'Link không có adid. Phải là link bấm từ bài quảng cáo trên bảng tin Facebook (Mở xem trước → Hiển thị quảng cáo → vào bảng tin bấm nút / link đặt hàng). Link web gõ tay hoặc "bài viết có bình luận" không có adid.' };
     const ketqua = await learnAdid(adid, ref, 'admin', nguoi);
     return { ketqua, adid };
   };
@@ -678,7 +678,7 @@ export function mountOMS(app, { mysql, express, getTeamLead = () => ({}) }) {
     const adId = String(b.ad_id || '').trim();
     let adid = String(b.adid || '').trim();
     if (!adid && b.link) adid = adIdFromFbclid(utmFromUrl(b.link)?.fbclid || '');
-    if (!/^\d{10,}$/.test(adid)) return res.status(400).json({ error: 'Không đọc được adid (link phải có ?fbclid=… bấm từ quảng cáo)' });
+    if (!/^\d{10,}$/.test(adid)) return res.status(400).json({ error: 'Không đọc được adid: dán link bấm từ bài quảng cáo trên bảng tin Facebook' });
     if (!/^\d{10,}$/.test(adId)) return res.status(400).json({ error: 'Thiếu ID quảng cáo' });
     const ref = await global.__fbAdRef(adId);
     if (!ref?.ad_id) return res.status(400).json({ error: `ID ${adId} không phải quảng cáo, hoặc token Meta không đọc được` });

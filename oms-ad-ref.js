@@ -69,13 +69,21 @@ export async function adRefFromUtm(u, { byId, adidRef, learn }) {
   return ref;
 }
 
-// Link (URL trang có ?fbclid=…&utm_…=…) → { fbclid, utm_* } để học / thêm tay
+// Link NV dán / trang gửi về → { fbclid, utm_* } để học / thêm tay. Chịu mọi kiểu copy: link đầy đủ, thiếu
+// https://, link bọc l.facebook.com/l.php?u=… (giữ tay vào nút → Sao chép liên kết), chỉ đoạn "fbclid=…",
+// hoặc chỉ chuỗi fbclid (Iw…), kèm khoảng trắng / chữ thừa. Không có gì → null.
 export function utmFromUrl(url) {
-  let q;
-  try { q = new URL(String(url || '').trim()).searchParams; } catch { return null; }
-  const out = { fbclid: q.get('fbclid') || '' };
-  for (const k of ['utm_campaign', 'utm_medium', 'utm_term', 'utm_content']) out[k] = q.get(k) || '';
-  return out;
+  let s = String(url || '').trim();
+  if (!s) return null;
+  for (let i = 0; i < 3 && /%[0-9a-f]{2}/i.test(s); i++) { try { s = decodeURIComponent(s); } catch { break; } }
+  const get = k => {
+    const m = new RegExp(`(?:^|[?&#\\s])${k}=([^&#\\s"'<>]+)`).exec(s);
+    return m ? m[1].replace(/\+/g, ' ') : '';
+  };
+  const out = { fbclid: get('fbclid') };
+  if (!out.fbclid) { const m = /(?:^|[^A-Za-z0-9_-])(Iw[A-Za-z0-9_-]{30,})/.exec(s); if (m) out.fbclid = m[1]; }
+  for (const k of ['utm_campaign', 'utm_medium', 'utm_term', 'utm_content']) out[k] = get(k);
+  return out.fbclid || out.utm_content || out.utm_medium || out.utm_term || out.utm_campaign ? out : null;
 }
 
 export function hasUtm(u) {

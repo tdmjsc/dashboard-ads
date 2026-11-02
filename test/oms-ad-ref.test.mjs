@@ -91,3 +91,20 @@ test('UTM wins over the library; no learning without an ad id in UTM', async () 
   await adRefFromUtm({ utm_term: TUNG.adset_id, fbclid: BINH_LUAN }, deps); // chỉ có ID nhóm → không học
   assert.deepEqual(learned, []);
 });
+
+test('pasted link: any copy form gives the adid', () => {
+  const fb = BINH_LUAN, want = '52658161396313';
+  const forms = [
+    'https://www.tdmjsc.com/gelduoichuototochinhhang?fbclid=' + fb,
+    '  www.tdmjsc.com/gelduoichuototochinhhang?fbclid=' + fb + '  ',
+    'tdmjs.com/binhutra?utm_source=ct&fbclid=' + fb + '&utm_content=My+-+B%C3%ACnh',
+    'https://l.facebook.com/l.php?u=' + encodeURIComponent('https://www.tdmjsc.com/gel?fbclid=' + fb) + '&h=AT0abc',
+    'fbclid=' + fb,
+    fb,
+    'Link: https://www.tdmjsc.com/gel?fbclid=' + fb + ' (bấm từ QC)',
+  ];
+  for (const f of forms) assert.equal(adIdFromFbclid(utmFromUrl(f)?.fbclid || ''), want, f);
+  assert.equal(utmFromUrl(NUT).utm_content, '52658160753113');
+  assert.equal(utmFromUrl('https://www.tdmjsc.com/gelduoichuototochinhhang'), null);
+  assert.equal(utmFromUrl(''), null);
+});
