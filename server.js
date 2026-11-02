@@ -202,6 +202,8 @@ while (process.env[`TOKEN_${n}`]) {
   SOURCES.push({
     token: process.env[`TOKEN_${n}`],
     accounts: (process.env[`ACCOUNTS_${n}`] || '').split(',').map(s => s.trim()).filter(Boolean),
+    key: `TOKEN_${n}`,
+    label: process.env[`TOKEN_${n}_NAME`] || '',   // tên tự đặt để dễ nhận (vd TOKEN_1_NAME=BM 1)
   });
   n++;
 }
@@ -209,6 +211,8 @@ if (SOURCES.length === 0 && process.env.META_ACCESS_TOKEN) {
   SOURCES.push({
     token: process.env.META_ACCESS_TOKEN,
     accounts: (process.env.AD_ACCOUNT_IDS || '').split(',').map(s => s.trim()).filter(Boolean),
+    key: 'META_ACCESS_TOKEN',
+    label: process.env.META_ACCESS_TOKEN_NAME || '',
   });
 }
 
@@ -334,6 +338,15 @@ async function fb(endpoint, params, token) {
   if (acc) readUsage(res, acc);
   const json = await res.json();
   if (json.error) throw metaError(json.error, acc);
+  return json;
+}
+// Ghi lên Meta (tắt/bật camp, đổi ngân sách — bot cảnh báo ads-alert.js). Token cần quyền ads_management.
+async function fbPost(id, params, token) {
+  const body = new URLSearchParams({ access_token: token });
+  for (const [k, v] of Object.entries(params || {})) body.set(k, typeof v === 'string' ? v : JSON.stringify(v));
+  const res = await fetchWithTimeout(`${BASE}/${id}`, { method: 'POST', body });
+  const json = await res.json();
+  if (json.error) throw metaError(json.error, null);
   return json;
 }
 async function fbAll(endpoint, params, token) {
@@ -769,6 +782,8 @@ app.use((req, res, next) => {
   if (req.path === '/thailand' || req.path.startsWith('/thailand/')) return next();
   // Webhook bot "chat all" Telegram — tự kiểm tra secret_token (xem telegram-all.js)
   if (req.path === '/tg-all/webhook') return next();
+  // Webhook bot cảnh báo camp đắt — tự kiểm tra secret_token (xem ads-alert.js)
+  if (req.path === '/tg-ads/webhook') return next();
   // BỎ QUA mọi đường dẫn /oms — module OMS TỰ LO auth riêng
   if (req.path === '/oms' || req.path.startsWith('/oms/') || req.path === '/go-oms'
     || req.path === '/oms-admin.html' || req.path === '/oms-adid.html' || req.path === '/sw-push.js'
@@ -780,18 +795,30 @@ app.use((req, res, next) => {
 
 // Leader xem được cả team: employees của phiên = danh sách trong users.js + NV đang làm có team = tên leader
 // (menu Nhân viên). Tính lại mỗi request → thêm NV vào team là leader thấy ngay, không cần sửa users.js / đăng nhập lại.
+function teamEmployees(base, salaryName) {
+  const list = EMPLOYEES;
+  const isLead = list.some(e => e.active !== false && e.isLead && e.full === salaryName);
+  const merged = [...base];
+  if (isLead) {
+    if (!merged.includes(salaryName)) merged.push(salaryName);
+    for (const e of list) if (e.active !== false && !e.isLead && e.team === salaryName && !merged.includes(e.full)) merged.push(e.full);
+  }
+  return merged;
+}
+// Quyền xem của 1 tài khoản đăng nhập khi không có phiên (bot cảnh báo ads-alert.js): { role, employees }
+function employeesOfLogin(login) {
+  refreshEmployees();
+  const u = USERS.find(x => x.user === login);
+  if (!u) return null;
+  const base = u.employees || [];
+  return { role: u.role, employees: u.role === 'viewer' && u.salaryName ? teamEmployees(base, u.salaryName) : base };
+}
 app.use((req, res, next) => {
   refreshEmployees();
   const u = req.session && req.session.user;
   if (!u || u.role !== 'viewer' || !u.salaryName) return next();
   const base = (USERS.find(x => x.user === u.user) || {}).employees || [];
-  const list = EMPLOYEES;
-  const isLead = list.some(e => e.active !== false && e.isLead && e.full === u.salaryName);
-  const merged = [...base];
-  if (isLead) {
-    if (!merged.includes(u.salaryName)) merged.push(u.salaryName);
-    for (const e of list) if (e.active !== false && !e.isLead && e.team === u.salaryName && !merged.includes(e.full)) merged.push(e.full);
-  }
+  const merged = teamEmployees(base, u.salaryName);
   // Chỉ gán khi khác → phiên không bị ghi lại mỗi request
   if (JSON.stringify(merged) !== JSON.stringify(u.employees || [])) u.employees = merged;
   next();
@@ -4627,6 +4654,16 @@ app.post('/api/cash-flow/note', express.json(), (req, res) => {
     mountTgAll(app, { express, DATA_DIR, fetchWithTimeout });
   } catch (e) {
     console.error('[TGALL] KHÔNG gắn được module (app chính vẫn chạy bình thường):', e.message);
+  }
+  // BOT TELEGRAM CẢNH BÁO CAMP ĐẮT + tắt/bật/đổi ngân sách từ Telegram (xem ads-alert.js)
+  try {
+    const { mountAdsAlert } = await import('./ads-alert.js');
+    const tokenForAcc = acc => (SOURCES.find(s => s.accounts.includes(String(acc))) || {}).token || '';
+    tokenForAcc.sources = () => SOURCES;
+    mountAdsAlert(app, { express, DATA_DIR, fetchWithTimeout, getCampaigns, fbGet: fb, fbPost, tokenForAcc, employeesOfLogin, detectEmployee,
+      accountName: acc => ACCOUNT_NAMES[acc] || `TK ${acc}` });
+  } catch (e) {
+    console.error('[ADSALERT] KHÔNG gắn được module (app chính vẫn chạy bình thường):', e.message);
   }
 })();
 

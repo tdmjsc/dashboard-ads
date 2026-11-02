@@ -1,0 +1,188 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Cảnh báo Telegram</title>
+<link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@500;600;700&family=Inter:wght@400;500;600&display=swap" rel="stylesheet">
+<style>
+  *{box-sizing:border-box;}
+  body{margin:0;background:#0B1322;color:#E7EEF8;font-family:Inter,system-ui,sans-serif;}
+  header{background:#10192B;border-bottom:1px solid rgba(255,255,255,.08);padding:14px 20px;position:sticky;top:0;z-index:20;}
+  .top{display:flex;align-items:center;gap:12px;flex-wrap:wrap;}
+  h1{font-family:'Space Grotesk';font-size:17px;margin:0;font-weight:600;margin-right:auto;}
+  .link{color:#9DB2FF;text-decoration:none;font-size:13px;padding:7px 11px;border:1px solid rgba(157,178,255,.25);border-radius:8px;white-space:nowrap;}
+  .link:hover{background:rgba(157,178,255,.1);}
+  main{padding:20px;max-width:980px;margin:0 auto;}
+  .card{background:#141E33;border:1px solid rgba(255,255,255,.07);border-radius:13px;margin-bottom:18px;overflow:hidden;}
+  .card-h{padding:13px 18px;border-bottom:1px solid rgba(255,255,255,.07);font-weight:600;font-size:14px;font-family:'Space Grotesk';display:flex;align-items:center;gap:10px;flex-wrap:wrap;}
+  .card-h .t{margin-right:auto;}
+  .body{padding:16px 18px;font-size:13.5px;line-height:1.55;color:#C4D0E2;}
+  .body p{margin:0 0 10px;}
+  .form{display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:12px;padding:16px 18px;}
+  .form label{display:flex;flex-direction:column;gap:5px;font-size:11.5px;color:#9FB0C8;font-weight:600;}
+  .form label.chk{flex-direction:row;align-items:center;gap:8px;font-size:13px;color:#C4D0E2;}
+  input{background:rgba(255,255,255,.06);border:1px solid rgba(255,255,255,.14);color:#E7EEF8;border-radius:8px;padding:8px 10px;font-size:13.5px;font-family:inherit;color-scheme:dark;min-width:0;width:100%;}
+  input[type=checkbox]{width:auto;}
+  input:focus{outline:none;border-color:#3D5AFE;}
+  .act{grid-column:1/-1;display:flex;gap:8px;align-items:center;flex-wrap:wrap;}
+  .btn{background:#3D5AFE;color:#fff;border:none;border-radius:8px;padding:9px 18px;font-size:13px;font-weight:600;cursor:pointer;font-family:inherit;text-decoration:none;display:inline-block;}
+  .btn:hover{opacity:.9;} .btn:disabled{opacity:.45;cursor:not-allowed;}
+  .btn.ghost{background:none;border:1px solid rgba(255,255,255,.18);color:#C4D0E2;}
+  .msg{font-size:12.5px;} .err{color:#ff9b8a;} .ok{color:#7BE3B5;} .mute{color:#8C9BB4;}
+  .tbl-wrap{overflow-x:auto;}
+  table{width:100%;border-collapse:collapse;font-size:13px;}
+  th,td{padding:9px 14px;border-bottom:1px solid rgba(255,255,255,.06);text-align:left;vertical-align:top;}
+  th{font-size:11px;color:#9FB0C8;text-transform:uppercase;letter-spacing:.4px;font-weight:600;}
+  td.num{text-align:right;font-variant-numeric:tabular-nums;white-space:nowrap;}
+  .pill{display:inline-block;font-size:11.5px;font-weight:600;padding:2px 8px;border-radius:20px;}
+  .pill.ok{background:rgba(123,227,181,.15);} .pill.err{background:rgba(255,155,138,.15);}
+  .hidden{display:none;}
+  @media (max-width:600px){header{padding:12px 16px;} main{padding:16px;} th,td{padding:8px 10px;}}
+</style>
+</head>
+<body>
+<header>
+  <div class="top">
+    <h1>🔔 Cảnh báo camp đắt qua Telegram</h1>
+    <a class="link" href="/">← Trang Ads</a>
+  </div>
+</header>
+<main>
+  <div class="card">
+    <div class="card-h"><span class="t">Telegram của bạn</span></div>
+    <div class="body">
+      <p id="me-desc" class="mute">Đang tải…</p>
+      <div class="act" style="display:flex">
+        <button class="btn" id="btn-link" onclick="connect()">Kết nối Telegram</button>
+        <button class="btn ghost hidden" id="btn-unlink" onclick="unlink()">Huỷ kết nối</button>
+        <span class="msg" id="me-msg"></span>
+      </div>
+    </div>
+  </div>
+
+  <div id="admin" class="hidden">
+    <div class="card">
+      <div class="card-h"><span class="t">Cài đặt (admin)</span><span class="msg" id="run-info"></span></div>
+      <div class="form">
+        <label class="chk"><input type="checkbox" id="c-on"> Bật kiểm tra tự động</label>
+        <label class="chk"><input type="checkbox" id="c-adminAll"> Admin nhận cảnh báo mọi camp</label>
+        <label>Ngưỡng CP / kết quả (đ)<input id="c-cprMax" inputmode="numeric"></label>
+        <label>Kiểm tra mỗi (phút)<input id="c-everyMin" inputmode="numeric"></label>
+        <label>Từ giờ<input id="c-fromHour" inputmode="numeric"></label>
+        <label>Đến giờ<input id="c-toHour" inputmode="numeric"></label>
+        <label>Nút −/+ ngân sách (%)<input id="c-step" inputmode="numeric"></label>
+        <label>Ngân sách tối đa đặt qua bot (đ/ngày)<input id="c-maxBudget" inputmode="numeric"></label>
+        <div class="act">
+          <button class="btn" onclick="saveCfg()">Lưu</button>
+          <button class="btn ghost" onclick="preview()">Xem camp đang đắt</button>
+          <button class="btn ghost" onclick="preview(true)">Kiểm tra + gửi ngay</button>
+          <button class="btn ghost" onclick="perms()">Kiểm tra quyền token Meta</button>
+          <span class="msg" id="cfg-msg"></span>
+        </div>
+      </div>
+      <div class="body mute" style="padding-top:0">
+        Báo khi chi tiêu hôm nay &gt; ngưỡng × max(số kết quả, 1). Kết quả = đơn về OMS; camp tin nhắn chưa có đơn OMS thì dùng kết quả Meta.
+        Mỗi camp báo 1 lần/ngày, báo lại khi tiêu thêm ≥ 1 ngưỡng mà vẫn đắt.
+      </div>
+    </div>
+
+    <div class="card hidden" id="out-card">
+      <div class="card-h"><span class="t" id="out-title"></span></div>
+      <div class="tbl-wrap" id="out"></div>
+    </div>
+
+    <div class="card">
+      <div class="card-h"><span class="t">Người đã kết nối</span></div>
+      <div class="tbl-wrap" id="links"></div>
+    </div>
+
+    <div class="card">
+      <div class="card-h"><span class="t">Nhật ký thao tác</span></div>
+      <div class="tbl-wrap" id="log"></div>
+    </div>
+  </div>
+</main>
+<script>
+const $ = id => document.getElementById(id);
+const esc = s => String(s == null ? '' : s).replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
+const fmt = n => Math.round(Number(n) || 0).toLocaleString('vi-VN');
+const tm = s => s ? new Date(s).toLocaleString('vi-VN', { hour12: false }) : '';
+const CFG_KEYS = ['cprMax', 'everyMin', 'fromHour', 'toHour', 'step', 'maxBudget'];
+async function api(url, opts) {
+  const r = await fetch(url, opts);
+  return r.json().catch(() => ({ ok: false, error: 'HTTP ' + r.status }));
+}
+const post = (url, body) => api(url, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body || {}) });
+
+async function loadMe() {
+  const j = await api('/api/ads-alert/me');
+  if (!j.ok) { $('me-desc').textContent = j.error || 'Không tải được.'; return; }
+  if (!j.bat) $('me-desc').innerHTML = '<span class="err">Bot cảnh báo chưa bật trên máy chủ (thiếu TELEGRAM_ADS_BOT_TOKEN).</span>';
+  else if (j.daKetNoi) $('me-desc').innerHTML = `<span class="ok">Đã kết nối</span> với Telegram <b>${esc(j.tgName)}</b>. Bot sẽ nhắn khi camp của bạn có CP/kết quả hôm nay vượt <b>${fmt(j.cprMax)} đ</b>`
+    + (j.tuDong ? '.' : ' <span class="mute">(admin chưa bật kiểm tra tự động)</span>.') + ' Bấm nút trên tin để tắt/bật camp hoặc đổi ngân sách.';
+  else $('me-desc').innerHTML = 'Chưa kết nối. Bấm <b>Kết nối Telegram</b> → Telegram mở bot' + (j.bot ? ' <b>@' + esc(j.bot) + '</b>' : '') + ' → bấm <b>Start</b>.';
+  $('btn-link').textContent = j.daKetNoi ? 'Kết nối lại' : 'Kết nối Telegram';
+  $('btn-link').disabled = !j.bat;
+  $('btn-unlink').classList.toggle('hidden', !j.daKetNoi);
+  if (j.admin) { $('admin').classList.remove('hidden'); loadAdmin(); }
+}
+async function connect() {
+  const j = await post('/api/ads-alert/link');
+  if (!j.ok) { $('me-msg').innerHTML = `<span class="err">${esc(j.error)}</span>`; return; }
+  window.open(j.url, '_blank');
+  $('me-msg').innerHTML = `Nếu Telegram không tự mở: <a href="${esc(j.url)}" target="_blank" style="color:#9DB2FF">mở link này</a> (hết hạn sau 15 phút). Bấm Start rồi tải lại trang.`;
+}
+async function unlink() {
+  if (!confirm('Huỷ kết nối Telegram? Bạn sẽ không nhận cảnh báo nữa.')) return;
+  await post('/api/ads-alert/unlink');
+  $('me-msg').textContent = '';
+  loadMe();
+}
+
+async function loadAdmin() {
+  const j = await api('/api/ads-alert');
+  if (!j.ok) return;
+  $('c-on').checked = !!j.cfg.on;
+  $('c-adminAll').checked = !!j.cfg.adminAll;
+  for (const k of CFG_KEYS) $('c-' + k).value = j.cfg[k];
+  const r = j.lastRun;
+  $('run-info').innerHTML = r ? `Lượt gần nhất: ${tm(r.at)}` + (r.loi ? ` · <span class="err">${esc(r.loi)}</span>` : r.xong ? ` · ${r.dat || 0} camp đắt, gửi ${r.daGui || 0} tin` + (r.oms === false ? ' · <span class="err">không đọc được OMS (đang dùng kết quả Meta)</span>' : '') : ' · đang chạy') : '<span class="mute">Chưa chạy lượt nào</span>';
+  $('links').innerHTML = j.links.length ? `<table><tr><th>Tài khoản</th><th>Telegram</th><th>Nhận camp của</th><th>Kết nối lúc</th></tr>`
+    + j.links.map(l => `<tr><td>${esc(l.login)}</td><td>${esc(l.tgName)}</td><td>${l.role === 'admin' ? (j.cfg.adminAll ? 'Mọi camp (admin)' : '<span class="mute">Admin — đang tắt nhận mọi camp</span>') : esc((l.nv || []).join(', ')) || '<span class="mute">—</span>'}</td><td>${tm(l.at)}</td></tr>`).join('') + '</table>'
+    : '<div class="body mute">Chưa ai kết nối.</div>';
+  $('log').innerHTML = j.log.length ? `<table><tr><th>Lúc</th><th>Ai</th><th>Camp</th><th>Việc</th><th></th></tr>`
+    + j.log.slice(0, 100).map(e => `<tr><td>${tm(e.at)}</td><td>${esc(e.who)}</td><td>${esc(e.ten || e.camp)}</td><td>${esc(e.viec)}</td><td>${e.ok ? '<span class="pill ok">OK</span>' : `<span class="pill err">Lỗi</span> ${esc(e.loi)}`}</td></tr>`).join('') + '</table>'
+    : '<div class="body mute">Chưa có thao tác nào.</div>';
+}
+async function saveCfg() {
+  const body = { on: $('c-on').checked, adminAll: $('c-adminAll').checked };
+  for (const k of CFG_KEYS) body[k] = Number(String($('c-' + k).value).replace(/[.,\s]/g, ''));
+  const j = await post('/api/ads-alert/cfg', body);
+  $('cfg-msg').innerHTML = j.ok ? '<span class="ok">Đã lưu</span>' : `<span class="err">${esc(j.error || 'Lưu lỗi')}</span>`;
+  loadAdmin(); loadMe();
+}
+function showOut(title, html) { $('out-card').classList.remove('hidden'); $('out-title').textContent = title; $('out').innerHTML = html; }
+async function preview(send) {
+  if (send && !confirm('Kiểm tra và gửi cảnh báo ngay cho mọi người đã kết nối?')) return;
+  showOut('Đang kiểm tra…', '<div class="body mute">Đang đọc số liệu hôm nay từ Meta + OMS…</div>');
+  const j = await api('/api/ads-alert/check' + (send ? '?send=1' : ''));
+  if (!j.ok) return showOut('Lỗi', `<div class="body err">${esc(j.error)}</div>`);
+  if (send) { showOut('Đã kiểm tra', `<div class="body">${j.dat} camp đắt · đã gửi ${j.daGui} tin (camp đã báo hôm nay mà chưa tiêu thêm 1 ngưỡng thì không báo lại).</div>`); loadAdmin(); return; }
+  const warn = j.oms ? '' : '<div class="body err">Không đọc được OMS — đang tính theo kết quả Meta.</div>';
+  showOut(`Camp đang đắt hôm nay (${j.list.length})`, warn + (j.list.length
+    ? `<table><tr><th>Camp</th><th>NV</th><th>Chi</th><th>Kết quả</th><th>CP/KQ</th><th>Người nhận</th></tr>`
+      + j.list.map(c => `<tr><td>${esc(c.ten)}</td><td>${esc(c.nv)}</td><td class="num">${fmt(c.spend)}</td><td class="num">${c.res} ${esc(c.label)}</td><td class="num">${c.cpr == null ? '—' : fmt(c.cpr)}</td><td class="num">${c.nguoiNhan || '<span class="err">0</span>'}</td></tr>`).join('') + '</table>'
+    : '<div class="body mute">Không có camp nào vượt ngưỡng.</div>'));
+}
+async function perms() {
+  showOut('Quyền token Meta', '<div class="body mute">Đang kiểm tra…</div>');
+  const j = await api('/api/ads-alert?perm=1');
+  if (!j.ok || !j.perm) return showOut('Lỗi', '<div class="body err">Không kiểm tra được.</div>');
+  showOut('Quyền token Meta (cần ads_management để tắt/bật/đổi ngân sách)', `<table><tr><th>Token (.env)</th><th>Chủ token</th><th>Tài khoản QC</th><th>ads_management</th><th>Quyền đang có</th></tr>`
+    + j.perm.map(p => `<tr><td><b>${esc(p.bien)}</b>${p.ten ? '<br>' + esc(p.ten) : ''}</td><td>${esc(p.chu || '')}</td><td>${p.taiKhoan.map(esc).join('<br>')}</td><td>${p.loi ? `<span class="pill err">Lỗi</span> ${esc(p.loi)}` : p.adsManagement ? '<span class="pill ok">Có</span>' : '<span class="pill err">Chưa có</span>'}</td><td class="mute">${esc((p.quyen || []).join(', '))}</td></tr>`).join('') + '</table>');
+}
+loadMe();
+</script>
+</body>
+</html>
