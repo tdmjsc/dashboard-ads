@@ -59,6 +59,9 @@
   .viewtoggle{display:inline-flex;background:var(--card);border:1px solid var(--line);border-radius:10px;padding:3px;gap:3px;}
   .viewtoggle button{font-family:'Inter';font-size:13.5px;font-weight:500;color:var(--muted);background:transparent;border:none;cursor:pointer;padding:8px 15px;border-radius:7px;transition:all .15s;}
   .viewtoggle button.active{background:var(--ink);color:#fff;}
+  .viewbar{display:flex;align-items:center;gap:10px;flex-wrap:wrap;}
+  .guide-btn{font-size:13.5px;font-weight:500;color:var(--accent);background:var(--card);border:1px solid var(--line);border-radius:10px;padding:10px 14px;text-decoration:none;white-space:nowrap;}
+  .guide-btn:hover{border-color:var(--accent);}
 
   .accounts{display:flex;gap:7px;flex-wrap:wrap;}
   .acc-tab{border:1px solid var(--line);background:var(--card);padding:9px 15px;border-radius:10px;cursor:pointer;font-size:13.5px;color:var(--muted);font-weight:500;display:flex;align-items:center;gap:9px;transition:all .15s;}
@@ -212,7 +215,7 @@
     .toolbar{width:100%;}
     .toolbar .pick,.search{flex:1 1 45%;}
     .search input{width:100%;}
-    .viewtoggle{width:100%;} .viewtoggle button{flex:1;}
+    .viewbar{width:100%;} .viewtoggle{width:100%;} .viewtoggle button{flex:1;} .guide-btn{width:100%;text-align:center;}
 
     /* BẢNG chuyển thành THẺ xếp dọc */
     .tablescroll{overflow-x:visible;}
@@ -276,7 +279,6 @@
         <a href="/my-salary.html" class="logout" id="navMySalary">Lương của tôi</a>
         <a href="/thailand" class="logout" id="navThailand">🇹🇭 Đơn Thái Lan</a>
         <a href="/go-tmdt" class="logout" id="navTmdt" title="Chat sàn TMĐT + Facebook (tmdt.tdmjsc.com)">💬 Chat TMĐT</a>
-        <a href="https://docs.google.com/document/d/1AWfzEFTFkRtjKGkYbeQ33X27mAKHGT5wWI2SQ4PkRqA/edit?hl=vi&amp;tab=t.0" class="logout" target="_blank" rel="noopener" title="Cách điền adid cho quảng cáo (Google Docs)">📘 Hướng dẫn thêm adid</a>
         <span class="user-badge" id="userBadge"></span>
         <a href="/logout" class="logout">Đăng xuất</a>
       </div>
@@ -297,9 +299,12 @@
 <div class="wrap">
   <div class="controls">
     <div class="controls-row">
-      <div class="viewtoggle">
-        <button id="v-camp" class="active" onclick="setView('camp')">Theo chiến dịch</button>
-        <button id="v-emp" onclick="setView('emp')">Theo nhân viên</button>
+      <div class="viewbar">
+        <div class="viewtoggle">
+          <button id="v-camp" class="active" onclick="setView('camp')">Theo chiến dịch</button>
+          <button id="v-emp" onclick="setView('emp')">Theo nhân viên</button>
+        </div>
+        <a class="guide-btn" href="https://docs.google.com/document/d/1AWfzEFTFkRtjKGkYbeQ33X27mAKHGT5wWI2SQ4PkRqA/edit?hl=vi&amp;tab=t.0" target="_blank" rel="noopener" title="Cách điền adid cho quảng cáo (Google Docs)">📘 Hướng dẫn thêm adid</a>
       </div>
       <div class="toolbar">
         <select class="pick" id="empfilter" aria-label="Lọc theo nhân viên"></select>
