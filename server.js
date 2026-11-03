@@ -1050,6 +1050,13 @@ async function fetchAccountRetry(acc, token, days, since, until, tries = 3) {
 const INFLIGHT = new Map();
 const WARMING = Symbol('warming'); // tín hiệu "đang nạp ngầm" cho các endpoint
 
+// Bot cảnh báo (ads-alert.js) vừa tắt/bật/đổi ngân sách trên Meta → bỏ cache RAM nạp trước lúc đó, ở MỌI tiến trình
+// (mỗi tiến trình một DATA_CACHE riêng → đánh dấu bằng thời điểm sửa file mốc trong DATA_DIR).
+const ADS_CHANGED_FILE = path.join(DATA_DIR, 'ads-meta-changed.stamp');
+function adsChangedAt() { try { return fs.statSync(ADS_CHANGED_FILE).mtimeMs; } catch { return 0; } }
+function markAdsChanged() { try { fs.writeFileSync(ADS_CHANGED_FILE, new Date().toISOString()); } catch (e) { console.error('[ADS] ghi mốc sửa Meta lỗi:', e.message); } }
+const ramFresh = c => c && c.complete && Date.now() - c.at < CACHE_MS && c.at > adsChangedAt();
+
 // Đọc NHANH cache có sẵn (đồng bộ), KHÔNG gọi Facebook — để endpoint quyết định
 // phục vụ ngay hay nạp ngầm. Trả về mảng campaigns nếu có cache, ngược lại null.
 function cachedCampaigns(since, until) {
@@ -1058,13 +1065,14 @@ function cachedCampaigns(since, until) {
   if (rec && rec.pinned && Array.isArray(rec.campaigns)) return rec.campaigns;         // đã ghim
   if (isPastRange(until) && rec && Array.isArray(rec.campaigns)) return rec.campaigns;  // khoảng đã qua
   const c = DATA_CACHE.get(key);
-  if (c && c.complete && Date.now() - c.at < CACHE_MS) return c.campaigns;              // RAM 3 phút
+  if (ramFresh(c)) return c.campaigns;                                                  // RAM 3 phút
   return null;
 }
 
 // Nạp toàn bộ campaign (mọi tài khoản) từ Facebook + lưu cache. CHỈ lưu đệm khi
 // nạp ĐỦ tất cả tài khoản, để tránh lưu nhầm dữ liệu thiếu (gây dashboard về 0).
 async function fetchAllAccounts(since, until, days, key, past) {
+  const startedAt = Date.now();   // mốc cache = lúc BẮT ĐẦU nạp (sửa Meta trong lúc nạp thì bản này coi như cũ)
   const accList = [];
   for (const src of SOURCES)
     for (const acc of src.accounts)
@@ -1129,7 +1137,7 @@ async function fetchAllAccounts(since, until, days, key, past) {
   const fullData = (failed === 0 && campaigns.length > 0);
 
   if (complete) {
-    DATA_CACHE.set(key, { at: Date.now(), campaigns, complete: true });
+    DATA_CACHE.set(key, { at: startedAt, campaigns, complete: true });
   }
   // Khoảng đã qua + lấy đủ → LƯU VĨNH VIỄN (không đụng vào bản đã ghim)
   if (past && fullData && !(META_CACHE[key] && META_CACHE[key].pinned)) {
@@ -1157,7 +1165,7 @@ async function getCampaigns(since, until, opts = {}) {
   // (2) Cache RAM ngắn hạn (3 phút) cho khoảng có hôm nay.
   if (!force) {
     const cached = DATA_CACHE.get(key);
-    if (cached && cached.complete && Date.now() - cached.at < CACHE_MS) return cached.campaigns;
+    if (ramFresh(cached)) return cached.campaigns;
   }
 
   // (3) Chống gọi trùng: nếu đang nạp key này thì dùng chung, không gọi Facebook lần nữa.
@@ -4748,7 +4756,9 @@ app.post('/api/cash-flow/note', express.json(), (req, res) => {
     const { mountAdsAlert } = await import('./ads-alert.js');
     const tokenForAcc = acc => (SOURCES.find(s => s.accounts.includes(String(acc))) || {}).token || '';
     tokenForAcc.sources = () => SOURCES;
-    mountAdsAlert(app, { express, DATA_DIR, fetchWithTimeout, getCampaigns, fbGet: fb, fbPost, tokenForAcc, employeesOfLogin, detectEmployee,
+    mountAdsAlert(app, { express, DATA_DIR, fetchWithTimeout, getCampaigns, fbGet: fb,
+      fbPost: async (...a) => { const r = await fbPost(...a); markAdsChanged(); return r; },   // trang Ads thấy ngay thay đổi
+      tokenForAcc, employeesOfLogin, detectEmployee,
       accountName: acc => ACCOUNT_NAMES[acc] || `TK ${acc}` });
   } catch (e) {
     console.error('[ADSALERT] KHÔNG gắn được module (app chính vẫn chạy bình thường):', e.message);
