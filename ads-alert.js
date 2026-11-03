@@ -5,10 +5,11 @@
 //    → bot nhận /start <mã> → ghi chat của người đó). NV nhận camp của mình (gồm team nếu là lead),
 //    admin nhận mọi camp (tắt được trong cài đặt).
 //  • "Đắt" = chi tiêu hôm nay > ngưỡng CP/kết quả × max(kết quả, 1). Kết quả = đơn về OMS (như cột Kết quả
-//    trang Ads); camp tin nhắn chưa có đơn OMS thì dùng kết quả Meta. Mỗi camp báo 1 lần / ngày, báo lại khi
-//    tiêu thêm ≥ 1 lần ngưỡng mà vẫn đắt.
-//  • Nút trên tin: Tắt / Bật camp, −/+ x% ngân sách, nhập ngân sách mới, xem số mới nhất. Trước mỗi thao tác
-//    máy chủ đọc lại camp từ Meta và kiểm tra người bấm có quyền với camp đó (theo tên NV trong tên camp).
+//    trang Ads); camp tin nhắn chưa có đơn OMS thì dùng kết quả Meta. Camp có từ 2 nhóm quảng cáo thì xét và báo
+//    riêng từng nhóm (người dùng chọn 3/11/2026); camp / nhóm đã tắt thì không báo. Mỗi camp / nhóm báo 1 lần / ngày,
+//    báo lại khi tiêu thêm ≥ 1 lần ngưỡng mà vẫn đắt.
+//  • Nút trên tin: Tắt / Bật camp (hoặc nhóm), −/+ x% ngân sách (nhóm dùng ngân sách chiến dịch CBO thì đổi
+//    ngân sách chiến dịch), nhập ngân sách mới, xem số mới nhất. Trước mỗi thao tác máy chủ đọc lại từ Meta và kiểm tra người bấm có quyền với camp đó (theo tên NV trong tên camp).
 //    Ghi lên Meta cần token có quyền ads_management (xem /api/ads-alert?perm=1).
 //  • Nhận tin qua webhook /tg-ads/webhook (loại trừ khỏi middleware đăng nhập, kiểm tra secret_token).
 //  • Dữ liệu ở DATA_DIR/ads-alert.json theo cách nhiều tiến trình (json-store.js). Lượt kiểm tra được "giành"
@@ -75,58 +76,80 @@ export function mountAdsAlert(app, {
 
   /* ---------- Số liệu hôm nay ---------- */
   // Kết quả = đơn OMS (như cột Kết quả trang Ads); camp tin nhắn chưa có đơn OMS → kết quả Meta.
+  // Trả { c: {campaign_id: đơn}, s: {adset_id: đơn} } hoặc null khi không đọc được OMS.
   async function omsToday(day) {
     if (typeof global.__omsAdStats !== 'function') return null;
     try {
       const st = await global.__omsAdStats(day, day);
       if (!st) return null;
-      const by = {};
-      for (const r of st.rows) if (r.fb_campaign_id) by[r.fb_campaign_id] = (by[r.fb_campaign_id] || 0) + r.don;
+      const by = { c: {}, s: {} };
+      for (const r of st.rows) {
+        if (r.fb_campaign_id) by.c[r.fb_campaign_id] = (by.c[r.fb_campaign_id] || 0) + r.don;
+        if (r.fb_adset_id) by.s[r.fb_adset_id] = (by.s[r.fb_adset_id] || 0) + r.don;
+      }
       return by;
     } catch (e) { console.error('[ADSALERT] đọc OMS lỗi:', e.message); return null; }
   }
-  function statOf(c, oms) {
-    const spend = (c.daily || []).reduce((t, d) => t + (d.spent || 0), 0);
-    const meta = (c.daily || []).reduce((t, d) => t + (d.results || 0), 0);
-    const don = oms ? (oms[String(c.id)] || 0) : 0;
-    const useOms = !!oms && (don > 0 || c.obj !== 'tin nhắn');
+  function statOf(spend, meta, don, obj, hasOms) {
+    const useOms = hasOms && (don > 0 || obj !== 'tin nhắn');
     const res = useOms ? don : meta;
-    const label = useOms ? 'đơn OMS' : (c.obj || 'kết quả') + ' (Meta)';
+    const label = useOms ? 'đơn OMS' : (obj || 'kết quả') + ' (Meta)';
     return { spend, res, label, cpr: res ? spend / res : null };
   }
   const isExpensive = (st, cfg) => cfg.cprMax > 0 && st.spend > cfg.cprMax * Math.max(st.res, 1);
 
-  function alertText(c, st, cfg, head = '⚠️ <b>Camp đang đắt</b>') {
-    const budget = c.budget ? `${fmt(c.budget)} đ/ngày` : 'chưa rõ';
-    return `${head}\n<b>${esc(c.name)}</b>\n`
-      + `NV: ${esc(c.employee)} · ${esc(c.accName || c.acc)}\n`
+  // "Đơn vị" được xét + báo: cả camp (k='c') hoặc 1 nhóm quảng cáo (k='s')
+  const baseOf = c => ({ acc: String(c.acc), accName: c.accName, employee: c.employee, campName: c.name });
+  function campUnit(c, oms) {
+    const spend = (c.daily || []).reduce((t, d) => t + (d.spent || 0), 0);
+    const meta = (c.daily || []).reduce((t, d) => t + (d.results || 0), 0);
+    return { ...baseOf(c), k: 'c', id: String(c.id), name: c.name, on: !!c.on, budget: c.budget || 0,
+      st: statOf(spend, meta, oms ? (oms.c[String(c.id)] || 0) : 0, c.obj, !!oms) };
+  }
+  // Nhóm không có ngân sách riêng = ngân sách ở chiến dịch (CBO)
+  function setUnit(c, a, oms) {
+    return { ...baseOf(c), k: 's', id: String(a.id), name: a.name, on: !!(c.on && a.on), budget: a.budget || 0, cbo: a.budget ? 0 : (c.budget || 0),
+      st: statOf(a.spent || 0, a.results || 0, oms ? (oms.s[String(a.id)] || 0) : 0, c.obj, !!oms) };
+  }
+  // Camp có từ 2 nhóm → xét từng nhóm; 1 nhóm → xét cả camp
+  const unitsOf = (c, oms) => (c.adsets || []).length >= 2 ? c.adsets.map(a => setUnit(c, a, oms)) : [campUnit(c, oms)];
+  const kindName = k => k === 's' ? 'nhóm' : 'camp';
+
+  function alertText(u, cfg, head) {
+    const st = u.st;
+    const budget = u.budget ? `${fmt(u.budget)} đ/ngày` : u.cbo ? `theo chiến dịch (CBO) ${fmt(u.cbo)} đ/ngày` : 'chưa rõ';
+    return `${head || (u.k === 's' ? '⚠️ <b>Nhóm quảng cáo đang đắt</b>' : '⚠️ <b>Camp đang đắt</b>')}\n<b>${esc(u.name)}</b>\n`
+      + (u.k === 's' ? `Chiến dịch: ${esc(u.campName)}\n` : '')
+      + `NV: ${esc(u.employee)} · ${esc(u.accName || u.acc)}\n`
       + `Hôm nay (đến ${hhmm()}): chi <b>${fmt(st.spend)} đ</b> · <b>${st.res}</b> ${esc(st.label)}\n`
       + `CP/kết quả: <b>${st.cpr == null ? 'chưa có kết quả' : fmt(st.cpr) + ' đ'}</b> (ngưỡng ${fmt(cfg.cprMax)} đ)\n`
-      + `Ngân sách: ${budget} · ${c.on ? '🟢 đang chạy' : '⚪️ đang tắt'}`;
+      + `Ngân sách: ${budget} · ${u.on ? '🟢 đang chạy' : '⚪️ đang tắt'}`;
   }
-  function keyboard(acc, camp, on, step) {
-    const d = a => `a|${a}|${acc}|${camp}`;
+  // callback_data: a|<việc>|<c|s>|<acc>|<id>
+  function keyboard(k, acc, id, on, step) {
+    const d = a => `a|${a}|${k}|${acc}|${id}`;
+    const nm = kindName(k);
     return { inline_keyboard: [
-      [on ? { text: '⏸ Tắt camp', callback_data: d('off') } : { text: '▶️ Bật camp', callback_data: d('on') },
+      [on ? { text: `⏸ Tắt ${nm}`, callback_data: d('off') } : { text: `▶️ Bật ${nm}`, callback_data: d('on') },
         { text: '🔄 Số mới nhất', callback_data: d('ref') }],
       [{ text: `➖ ${step}% NS`, callback_data: d('dn') }, { text: `➕ ${step}% NS`, callback_data: d('up') },
         { text: '✏️ Nhập NS', callback_data: d('set') }],
     ] };
   }
 
-  // Ai nhận cảnh báo của camp c: NV có camp (gồm lead của team), admin nếu adminAll
-  function recipients(c, cfg) {
+  // Ai nhận cảnh báo: NV có camp (gồm lead của team), admin nếu adminAll
+  function recipients(u, cfg) {
     const out = [];
     for (const [login, l] of Object.entries(STORE.links || {})) {
       const who = employeesOfLogin(login);
       if (!who || !l.chatId) continue;
-      if (who.role === 'admin' ? cfg.adminAll : (who.employees || []).includes(c.employee)) out.push(l.chatId);
+      if (who.role === 'admin' ? cfg.adminAll : (who.employees || []).includes(u.employee)) out.push(l.chatId);
     }
     return out;
   }
 
   /* ---------- Kiểm tra ---------- */
-  // send=false: chỉ tính (xem trước), không gửi, không đánh dấu
+  // send=false: chỉ tính (xem trước), không gửi, không đánh dấu. Camp / nhóm đã tắt thì bỏ qua.
   async function check({ send = true } = {}) {
     reload();
     const cfg = STORE.cfg;
@@ -135,28 +158,24 @@ export function mountAdsAlert(app, {
     const list = [];
     for (const c of camps || []) {
       if (!c.on) continue;
-      const st = statOf(c, oms);
-      if (!isExpensive(st, cfg)) continue;
-      list.push({ c, st });
+      for (const u of unitsOf(c, oms)) if (u.on && isExpensive(u.st, cfg)) list.push(u);
     }
-    if (!send) return { day, oms: !!oms, list: list.map(({ c, st }) => ({ id: c.id, ten: c.name, nv: c.employee, ...st, nguoiNhan: recipients(c, cfg).length })) };
+    if (!send) return { day, oms: !!oms, list: list.map(u => ({ id: u.id, loai: kindName(u.k), ten: u.name, camp: u.campName, nv: u.employee, ...u.st, nguoiNhan: recipients(u, cfg).length })) };
 
     let n = 0;
-    for (const { c, st } of list) {
-      const id = String(c.id);
+    for (const u of list) {
       // Đánh dấu trước khi gửi (nhiều tiến trình không báo trùng). Báo lại khi tiêu thêm ≥ 1 ngưỡng mà vẫn đắt.
       const go = commit(s => {
         const today = (s.sent[day] ||= {});
-        const prev = today[id];
-        if (prev && st.spend < prev.spend + cfg.cprMax) return false;
-        today[id] = { at: new Date().toISOString(), spend: st.spend, res: st.res };
+        const prev = today[u.id];
+        if (prev && u.st.spend < prev.spend + cfg.cprMax) return false;
+        today[u.id] = { at: new Date().toISOString(), spend: u.st.spend, res: u.st.res };
         for (const d of Object.keys(s.sent)) if (d < day) delete s.sent[d];
       });
       if (go === false) continue;
-      const to = recipients(c, cfg);
-      for (const chatId of to) {
-        const j = await say(chatId, alertText(c, st, cfg), { reply_markup: keyboard(c.acc, id, c.on, cfg.step) });
-        if (!j.ok) addLog({ who: 'bot', camp: id, ten: c.name, viec: 'gửi cảnh báo', ok: false, loi: j.description || 'Telegram từ chối' });
+      for (const chatId of recipients(u, cfg)) {
+        const j = await say(chatId, alertText(u, cfg), { reply_markup: keyboard(u.k, u.acc, u.id, u.on, cfg.step) });
+        if (!j.ok) addLog({ who: 'bot', camp: u.id, ten: u.name, viec: 'gửi cảnh báo', ok: false, loi: j.description || 'Telegram từ chối' });
         else n++;
       }
     }
@@ -188,8 +207,9 @@ export function mountAdsAlert(app, {
     ? 'Token Meta chưa có quyền ads_management (sửa chiến dịch). Báo admin tạo lại token.'
     : (e.message || 'Lỗi Meta');
 
-  // Đọc camp từ Meta + kiểm tra quyền người bấm. Trả { camp, tk, who } hoặc ném lỗi dễ hiểu.
-  async function loadCamp(tgId, acc, campId) {
+  // Đọc camp / nhóm từ Meta + kiểm tra quyền người bấm (theo tên NV trong tên camp).
+  // Trả { obj, k, campName, tk, who } hoặc ném lỗi dễ hiểu.
+  async function loadObj(tgId, k, acc, id) {
     reload();
     const link = userOfTg(tgId);
     if (!link) throw new Error('Telegram này chưa kết nối tài khoản dashboard (trang Cảnh báo Telegram).');
@@ -197,21 +217,36 @@ export function mountAdsAlert(app, {
     if (!who) throw new Error('Tài khoản dashboard không còn tồn tại.');
     const tk = tokenForAcc(acc);
     if (!tk) throw new Error('Không có token cho tài khoản quảng cáo này.');
-    const camp = await fbGet(campId, { fields: 'id,name,account_id,effective_status,daily_budget,lifetime_budget' }, tk);
-    if (String(camp.account_id) !== String(acc)) throw new Error('Camp không thuộc tài khoản quảng cáo này.');
-    const nv = detectEmployee(camp.name || '');
-    if (who.role !== 'admin' && !(who.employees || []).includes(nv)) throw new Error('Bạn không có quyền với camp này.');
-    return { camp, tk, who: link[0] };
+    const fields = 'id,name,account_id,effective_status,daily_budget,lifetime_budget'
+      + (k === 's' ? ',campaign{id,name,daily_budget,lifetime_budget}' : '');
+    const obj = await fbGet(id, { fields }, tk);
+    if (String(obj.account_id) !== String(acc)) throw new Error('Không thuộc tài khoản quảng cáo này.');
+    const campName = k === 's' ? ((obj.campaign || {}).name || '') : obj.name;
+    const nv = detectEmployee(campName || '');
+    if (who.role !== 'admin' && !(who.employees || []).includes(nv)) throw new Error(`Bạn không có quyền với ${kindName(k)} này.`);
+    return { obj, k, campName, tk, who: link[0] };
   }
 
-  // Ngân sách: camp dùng ngân sách chiến dịch (CBO) thì sửa camp; không thì sửa các nhóm đang chạy có ngân sách ngày.
-  async function budgetTargets(camp, tk) {
-    if (camp.lifetime_budget && Number(camp.lifetime_budget) > 0) throw new Error('Camp dùng ngân sách trọn đời — đổi trên Ads Manager.');
-    if (camp.daily_budget && Number(camp.daily_budget) > 0) return [{ id: camp.id, name: 'camp', budget: Number(camp.daily_budget) }];
-    const r = await fbGet(`${camp.id}/adsets`, { fields: 'id,name,daily_budget,lifetime_budget,effective_status', limit: 200 }, tk);
-    const sets = (r.data || []).filter(a => a.effective_status === 'ACTIVE' && Number(a.daily_budget) > 0);
+  // Ngân sách cần sửa:
+  //  • nhóm: ngân sách ngày của nhóm; nhóm không có ngân sách riêng (CBO) → ngân sách chiến dịch
+  //  • camp: ngân sách chiến dịch (CBO); không có thì các nhóm đang chạy có ngân sách ngày
+  async function budgetTargets({ obj, k, tk }) {
+    const lifetime = o => o && Number(o.lifetime_budget) > 0;
+    const daily = o => o && Number(o.daily_budget) > 0;
+    if (k === 's') {
+      if (lifetime(obj)) throw new Error('Nhóm dùng ngân sách trọn đời — đổi trên Ads Manager.');
+      if (daily(obj)) return [{ id: obj.id, label: 'Nhóm ' + esc(obj.name), budget: Number(obj.daily_budget) }];
+      const c = obj.campaign;
+      if (lifetime(c)) throw new Error('Chiến dịch dùng ngân sách trọn đời — đổi trên Ads Manager.');
+      if (daily(c)) return [{ id: c.id, label: 'Chiến dịch (CBO, chung mọi nhóm)', budget: Number(c.daily_budget) }];
+      throw new Error('Không tìm thấy ngân sách ngày của nhóm / chiến dịch.');
+    }
+    if (lifetime(obj)) throw new Error('Camp dùng ngân sách trọn đời — đổi trên Ads Manager.');
+    if (daily(obj)) return [{ id: obj.id, label: 'Camp', budget: Number(obj.daily_budget) }];
+    const r = await fbGet(`${obj.id}/adsets`, { fields: 'id,name,daily_budget,lifetime_budget,effective_status', limit: 200 }, tk);
+    const sets = (r.data || []).filter(a => a.effective_status === 'ACTIVE' && daily(a));
     if (!sets.length) throw new Error('Không tìm thấy nhóm đang chạy có ngân sách ngày.');
-    return sets.map(a => ({ id: a.id, name: a.name, budget: Number(a.daily_budget) }));
+    return sets.map(a => ({ id: a.id, label: 'Nhóm ' + esc(a.name), budget: Number(a.daily_budget) }));
   }
   async function setBudgets(targets, newOf, tk, maxBudget) {
     const plan = targets.map(t => ({ ...t, moi: Math.max(1000, Math.round(newOf(t.budget) / 1000) * 1000) }));
@@ -220,57 +255,67 @@ export function mountAdsAlert(app, {
     const done = [];
     for (const p of plan) {
       await fbPost(p.id, { daily_budget: String(p.moi) }, tk);
-      done.push(`${p.name === 'camp' ? 'Camp' : 'Nhóm ' + esc(p.name)}: ${fmt(p.budget)} → <b>${fmt(p.moi)} đ</b>`);
+      done.push(`${p.label}: ${fmt(p.budget)} → <b>${fmt(p.moi)} đ</b>`);
     }
     return done.join('\n');
   }
 
-  async function campStatus(acc, campId) {
+  // Số hôm nay của 1 camp / nhóm (cho nút 🔄)
+  async function unitStatus(k, acc, id) {
     const day = vnDay();
     const [camps, oms] = await Promise.all([getCampaigns(day, day), omsToday(day)]);
-    const c = (camps || []).find(x => String(x.id) === String(campId) && String(x.acc) === String(acc));
-    return c ? { c, st: statOf(c, oms) } : null;
+    for (const c of camps || []) {
+      if (String(c.acc) !== String(acc)) continue;
+      if (k === 'c' && String(c.id) === String(id)) return campUnit(c, oms);
+      const a = k === 's' && (c.adsets || []).find(x => String(x.id) === String(id));
+      if (a) return setUnit(c, a, oms);
+    }
+    return null;
   }
 
   async function onCallback(cq) {
-    const [, act, acc, campId] = String(cq.data || '').split('|');
+    const parts = String(cq.data || '').split('|');
+    if (parts.length === 4) parts.splice(2, 0, 'c');   // nút của tin cũ (trước khi báo theo nhóm): a|việc|acc|camp
+    const [, act, k, acc, id] = parts;
     const chatId = cq.message && cq.message.chat.id;
     const answer = text => tg('answerCallbackQuery', { callback_query_id: cq.id, text: String(text).slice(0, 190), show_alert: text.length > 60 });
-    if (!/^\d+$/.test(acc || '') || !/^\d+$/.test(campId || '')) return answer('Nút không hợp lệ.');
+    if (!['c', 's'].includes(k) || !/^\d+$/.test(acc || '') || !/^\d+$/.test(id || '')) return answer('Nút không hợp lệ.');
     let ctx;
-    try { ctx = await loadCamp(cq.from.id, acc, campId); }
+    try { ctx = await loadObj(cq.from.id, k, acc, id); }
     catch (e) { return answer(metaMsg(e)); }
-    const { camp, tk, who } = ctx;
+    const { obj, tk, who, campName } = ctx;
+    const nm = kindName(k);
+    const title = `<b>${esc(obj.name)}</b>` + (k === 's' ? ` (chiến dịch ${esc(campName)})` : '');
     const cfg = STORE.cfg;
     const reply = (text, extra) => say(chatId, text, { reply_to_message_id: cq.message.message_id, allow_sending_without_reply: true, ...extra });
-    const log = (viec, ok, loi) => addLog({ who, camp: campId, ten: camp.name, viec, ok, loi });
+    const log = (viec, ok, loi) => addLog({ who, camp: id, ten: (k === 's' ? 'Nhóm ' : '') + obj.name, viec, ok, loi });
     try {
       if (act === 'off' || act === 'on') {
-        await fbPost(campId, { status: act === 'off' ? 'PAUSED' : 'ACTIVE' }, tk);
-        const txt = act === 'off' ? '⏸ Đã TẮT camp' : '▶️ Đã BẬT camp';
+        await fbPost(id, { status: act === 'off' ? 'PAUSED' : 'ACTIVE' }, tk);
+        const txt = act === 'off' ? `⏸ Đã TẮT ${nm}` : `▶️ Đã BẬT ${nm}`;
         log(txt.slice(2), true);
-        await tg('editMessageReplyMarkup', { chat_id: chatId, message_id: cq.message.message_id, reply_markup: keyboard(acc, campId, act === 'on', cfg.step) });
+        await tg('editMessageReplyMarkup', { chat_id: chatId, message_id: cq.message.message_id, reply_markup: keyboard(k, acc, id, act === 'on', cfg.step) });
         await answer(txt);
-        await reply(`${txt} <b>${esc(camp.name)}</b>\n(${esc(who)} lúc ${hhmm()})`);
+        await reply(`${txt} ${title}\n(${esc(who)} lúc ${hhmm()})`);
       } else if (act === 'dn' || act === 'up') {
-        const k = 1 + (act === 'up' ? 1 : -1) * cfg.step / 100;
-        const done = await setBudgets(await budgetTargets(camp, tk), b => b * k, tk, cfg.maxBudget);
+        const f = 1 + (act === 'up' ? 1 : -1) * cfg.step / 100;
+        const done = await setBudgets(await budgetTargets(ctx), b => b * f, tk, cfg.maxBudget);
         log(`Ngân sách ${act === 'up' ? '+' : '−'}${cfg.step}%`, true);
         await answer('Đã đổi ngân sách');
-        await reply(`💰 Đổi ngân sách <b>${esc(camp.name)}</b> (${act === 'up' ? '+' : '−'}${cfg.step}%):\n${done}\n(${esc(who)} lúc ${hhmm()})`);
+        await reply(`💰 Đổi ngân sách ${title} (${act === 'up' ? '+' : '−'}${cfg.step}%):\n${done}\n(${esc(who)} lúc ${hhmm()})`);
       } else if (act === 'set') {
-        const targets = await budgetTargets(camp, tk);
+        const targets = await budgetTargets(ctx);
         if (targets.length > 1) return answer(`Camp có ${targets.length} nhóm đang chạy với ngân sách riêng — dùng nút −/+ % hoặc đổi trên Ads Manager.`);
-        commit(s => { s.pending[String(chatId)] = { acc, camp: campId, exp: Date.now() + 10 * 60e3 }; });
+        commit(s => { s.pending[String(chatId)] = { k, acc, id, exp: Date.now() + 10 * 60e3 }; });
         await answer('Gõ ngân sách mới');
-        await reply(`✏️ Gõ ngân sách/ngày mới cho <b>${esc(camp.name)}</b> (hiện ${fmt(targets[0].budget)} đ), vd <code>500000</code> hoặc <code>500k</code>. Hết hạn sau 10 phút.`,
+        await reply(`✏️ Gõ ngân sách/ngày mới cho ${title}\n${targets[0].label}, hiện ${fmt(targets[0].budget)} đ. Vd <code>500000</code> hoặc <code>500k</code>. Hết hạn sau 10 phút.`,
           { reply_markup: { force_reply: true, selective: true } });
       } else if (act === 'ref') {
         await answer('Đang lấy số mới…');
-        const s = await campStatus(acc, campId);
-        if (!s) return reply(`Hôm nay chưa có số liệu chi tiêu cho <b>${esc(camp.name)}</b>.`);
-        s.c.on = camp.effective_status === 'ACTIVE';
-        await reply(alertText(s.c, s.st, cfg, '🔄 <b>Số mới nhất</b>'), { reply_markup: keyboard(acc, campId, s.c.on, cfg.step) });
+        const u = await unitStatus(k, acc, id);
+        if (!u) return reply(`Hôm nay chưa có số liệu chi tiêu cho ${title}.`);
+        u.on = obj.effective_status === 'ACTIVE';
+        await reply(alertText(u, cfg, '🔄 <b>Số mới nhất</b>'), { reply_markup: keyboard(k, acc, id, u.on, cfg.step) });
       } else return answer('Nút không hợp lệ.');
     } catch (e) {
       log(act, false, metaMsg(e));
@@ -322,16 +367,17 @@ export function mountAdsAlert(app, {
     const v = parseMoney(text);
     if (!v) return say(chatId, 'Không đọc được số tiền. Gõ vd <code>500000</code> hoặc <code>500k</code>.');
     commit(s => { delete s.pending[chatId]; });
+    const k = p.k || 'c', id = p.id || p.camp;
     let ctx;
     try {
-      ctx = await loadCamp(msg.from.id, p.acc, p.camp);
-      const targets = await budgetTargets(ctx.camp, ctx.tk);
+      ctx = await loadObj(msg.from.id, k, p.acc, id);
+      const targets = await budgetTargets(ctx);
       if (targets.length > 1) throw new Error('Camp có nhiều nhóm với ngân sách riêng — dùng nút −/+ %.');
       const done = await setBudgets(targets, () => v, ctx.tk, STORE.cfg.maxBudget);
-      addLog({ who: ctx.who, camp: p.camp, ten: ctx.camp.name, viec: `Đặt ngân sách ${fmt(v)} đ`, ok: true });
-      return say(chatId, `💰 <b>${esc(ctx.camp.name)}</b>\n${done}\n(${esc(ctx.who)} lúc ${hhmm()})`);
+      addLog({ who: ctx.who, camp: id, ten: (k === 's' ? 'Nhóm ' : '') + ctx.obj.name, viec: `Đặt ngân sách ${fmt(v)} đ`, ok: true });
+      return say(chatId, `💰 <b>${esc(ctx.obj.name)}</b>\n${done}\n(${esc(ctx.who)} lúc ${hhmm()})`);
     } catch (e) {
-      addLog({ who: ctx ? ctx.who : String(msg.from.id), camp: p.camp, ten: ctx ? ctx.camp.name : '', viec: 'Đặt ngân sách', ok: false, loi: metaMsg(e) });
+      addLog({ who: ctx ? ctx.who : String(msg.from.id), camp: id, ten: ctx ? ctx.obj.name : '', viec: 'Đặt ngân sách', ok: false, loi: metaMsg(e) });
       return say(chatId, '❌ ' + esc(metaMsg(e)));
     }
   }
