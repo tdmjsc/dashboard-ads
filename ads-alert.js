@@ -1,6 +1,6 @@
 // ads-alert.js — BOT TELEGRAM CẢNH BÁO CHIẾN DỊCH ĐẮT + TẮT/BẬT/ĐỔI NGÂN SÁCH NGAY TRÊN TELEGRAM
 //
-//  • Token bot riêng trong .env:  TELEGRAM_ADS_BOT_TOKEN=<token BotFather cấp>. Không có token thì tắt.
+//  • Token bot riêng trong .env:  TELEGRAM_ADS_ALERT_BOT_TOKEN=<token BotFather cấp>. Không có token thì tắt.
 //  • Mỗi tài khoản đăng nhập tự kết nối Telegram ở trang /ads-alert.html (nút mở bot với mã 1 lần
 //    → bot nhận /start <mã> → ghi chat của người đó). NV nhận camp của mình (gồm team nếu là lead),
 //    admin nhận mọi camp (tắt được trong cài đặt).
@@ -45,7 +45,7 @@ export function mountAdsAlert(app, {
   employeesOfLogin,    // tên đăng nhập → { role, employees } (gồm team của lead)
   detectEmployee,      // tên camp → tên NV
   accountName = acc => acc, // id TK quảng cáo → tên BM
-  token = process.env.TELEGRAM_ADS_BOT_TOKEN || '',
+  token = process.env.TELEGRAM_ADS_ALERT_BOT_TOKEN || '',
 }) {
   const FILE = path.join(DATA_DIR, 'ads-alert.json');
   const db = jsonStore(FILE, () => ({ cfg: { ...CFG_DEFAULT }, links: {}, codes: {}, sent: {}, pending: {}, lastRun: null, log: [] }), { tag: 'ADSALERT' });
@@ -57,7 +57,7 @@ export function mountAdsAlert(app, {
   let me = null;
 
   async function tg(method, body) {
-    if (!token) return { ok: false, description: 'Chưa khai TELEGRAM_ADS_BOT_TOKEN trên máy chủ.' };
+    if (!token) return { ok: false, description: 'Chưa khai TELEGRAM_ADS_ALERT_BOT_TOKEN trên máy chủ.' };
     try {
       const r = await fetchWithTimeout(`https://api.telegram.org/bot${token}/${method}`, {
         method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body || {}),
@@ -420,7 +420,7 @@ export function mountAdsAlert(app, {
     return out;
   }
 
-  if (!token) { console.log('[ADSALERT] chưa khai TELEGRAM_ADS_BOT_TOKEN → tắt bot cảnh báo camp'); return; }
+  if (!token) { console.log('[ADSALERT] chưa khai TELEGRAM_ADS_ALERT_BOT_TOKEN → tắt bot cảnh báo camp'); return; }
   (async () => {
     const g = await tg('getMe');
     if (g.ok) me = g.result;

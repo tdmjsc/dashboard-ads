@@ -118,7 +118,7 @@ const post = (url, body) => api(url, { method: 'POST', headers: { 'Content-Type'
 async function loadMe() {
   const j = await api('/api/ads-alert/me');
   if (!j.ok) { $('me-desc').textContent = j.error || 'Không tải được.'; return; }
-  if (!j.bat) $('me-desc').innerHTML = '<span class="err">Bot cảnh báo chưa bật trên máy chủ (thiếu TELEGRAM_ADS_BOT_TOKEN).</span>';
+  if (!j.bat) $('me-desc').innerHTML = '<span class="err">Bot cảnh báo chưa bật trên máy chủ (thiếu TELEGRAM_ADS_ALERT_BOT_TOKEN).</span>';
   else if (j.daKetNoi) $('me-desc').innerHTML = `<span class="ok">Đã kết nối</span> với Telegram <b>${esc(j.tgName)}</b>. Bot sẽ nhắn khi camp của bạn có CP/kết quả hôm nay vượt <b>${fmt(j.cprMax)} đ</b>`
     + (j.tuDong ? '.' : ' <span class="mute">(admin chưa bật kiểm tra tự động)</span>.') + ' Bấm nút trên tin để tắt/bật camp hoặc đổi ngân sách.';
   else $('me-desc').innerHTML = 'Chưa kết nối. Bấm <b>Kết nối Telegram</b> → Telegram mở bot' + (j.bot ? ' <b>@' + esc(j.bot) + '</b>' : '') + ' → bấm <b>Start</b>.';
