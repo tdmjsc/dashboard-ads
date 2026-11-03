@@ -363,7 +363,75 @@ export function mountAdsAlert(app, {
     return null;
   }
 
+  /* ---------- Bàn phím số nhập ngân sách ngay trên tin ----------
+     pending[chatId] = { k, acc, id, cur, v, label, title, msgId, exp }: v bắt đầu = ngân sách hiện tại, bấm số / ⌫ / C để
+     sửa, ✅ Lưu ghi lên Meta. Vẫn gõ tin được (vd 500k). Nhập lỗi (vượt mức tối đa…) thì giữ bàn phím để sửa tiếp. */
+  const padText = p => `✏️ Ngân sách/ngày mới cho ${p.title}\n${p.label}, hiện ${fmt(p.cur)} đ\n\n`
+    + `Mới: <b>${p.v ? fmt(p.v) + ' đ' : '…'}</b>`
+    + (p.v && p.cur && p.v !== p.cur ? ` (${p.v > p.cur ? '+' : '−'}${Math.round(Math.abs(p.v / p.cur - 1) * 100)}%)` : '')
+    + '\n\nBấm số bên dưới (⌫ xoá 1 số, C xoá hết) hoặc gõ tin, vd <code>500k</code>. Hết hạn sau 10 phút.';
+  const padKb = p => ({ inline_keyboard: [
+    ...[['1', '2', '3'], ['4', '5', '6'], ['7', '8', '9'], ['C', '0', '000', 'bs']]
+      .map(r => r.map(x => ({ text: x === 'bs' ? '⌫' : x === 'C' ? 'C' : x, callback_data: 'n|' + x }))),
+    [{ text: '✖ Huỷ', callback_data: 'n|x' }, { text: p.v ? `✅ Lưu ${fmt(p.v)} đ` : '✅ Lưu', callback_data: 'n|ok' }],
+  ] });
+
+  // Đặt ngân sách v cho camp / nhóm đang nhập (p). Trả { ok, text }.
+  async function applyBudget(tgId, p, v) {
+    const k = p.k || 'c', id = p.id || p.camp;
+    let ctx;
+    try {
+      ctx = await loadObj(tgId, k, p.acc, id);
+      const targets = await budgetTargets(ctx);
+      if (targets.length > 1) throw new Error('Camp có nhiều nhóm với ngân sách riêng — dùng nút −/+ %.');
+      const done = await setBudgets(targets, () => v, ctx.tk, STORE.cfg.maxBudget);
+      addLog({ who: ctx.who, camp: id, ten: (k === 's' ? 'Nhóm ' : '') + ctx.obj.name, viec: `Đặt ngân sách ${fmt(v)} đ`, ok: true });
+      return { ok: true, text: `💰 <b>${esc(ctx.obj.name)}</b>\n${done}\n(${esc(ctx.who)} lúc ${hhmm()})` };
+    } catch (e) {
+      addLog({ who: ctx ? ctx.who : String(tgId), camp: id, ten: ctx ? ctx.obj.name : '', viec: 'Đặt ngân sách', ok: false, loi: metaMsg(e) });
+      return { ok: false, text: metaMsg(e) };
+    }
+  }
+  const closePad = (chatId, msgId, text) => msgId && tg('editMessageText', { chat_id: chatId, message_id: msgId, text, parse_mode: 'HTML', disable_web_page_preview: true });
+
+  async function onPad(cq) {
+    const key = String(cq.data).slice(2);
+    const chatId = String(cq.message.chat.id), msgId = cq.message.message_id;
+    const answer = (text = '') => tg('answerCallbackQuery', { callback_query_id: cq.id, text: text.slice(0, 190), show_alert: text.length > 60 });
+    reload();
+    const p0 = STORE.pending[chatId];
+    if (!p0 || p0.msgId !== msgId || p0.exp < Date.now()) {
+      await tg('editMessageReplyMarkup', { chat_id: chatId, message_id: msgId, reply_markup: { inline_keyboard: [] } });
+      return answer('Bàn phím này đã hết hạn — bấm ✏️ Nhập NS lại.');
+    }
+    const drop = () => commit(s => { const q = s.pending[chatId]; if (!q || q.msgId !== msgId) return false; delete s.pending[chatId]; });
+    if (key === 'x') { drop(); await closePad(chatId, msgId, '✖ Đã huỷ nhập ngân sách.'); return answer(); }
+    if (key === 'ok') {
+      if (!p0.v) return answer('Chưa nhập số.');
+      const r = await applyBudget(cq.from.id, p0, p0.v);
+      if (!r.ok) return answer('❌ ' + r.text);   // giữ bàn phím để sửa số
+      drop();
+      await closePad(chatId, msgId, r.text);
+      return answer('Đã lưu ngân sách');
+    }
+    const p = commit(s => {
+      const q = s.pending[chatId];
+      if (!q || q.msgId !== msgId) return false;
+      let d = q.v ? String(q.v) : '';
+      if (key === 'C') d = '';
+      else if (key === 'bs') d = d.slice(0, -1);
+      else if (/^\d{1,3}$/.test(key)) d = (d + key).replace(/^0+/, '');
+      else return false;
+      if (d.length > 11) return false;
+      q.v = Number(d) || 0; q.exp = Date.now() + 10 * 60e3;
+      return { ...q };
+    });
+    if (p !== false) await tg('editMessageText', { chat_id: chatId, message_id: msgId, text: padText(p), parse_mode: 'HTML', reply_markup: padKb(p) });
+    return answer();
+  }
+
   async function onCallback(cq) {
+    if (String(cq.data || '').startsWith('n|')) return onPad(cq);
     const parts = String(cq.data || '').split('|');
     if (parts.length === 4) parts.splice(2, 0, 'c');   // nút của tin cũ (trước khi báo theo nhóm): a|việc|acc|camp
     const [, act, k, acc, id, val] = parts;
@@ -406,10 +474,10 @@ export function mountAdsAlert(app, {
       } else if (act === 'set') {
         const targets = await budgetTargets(ctx);
         if (targets.length > 1) return answer(`Camp có ${targets.length} nhóm đang chạy với ngân sách riêng — dùng nút −/+ % hoặc đổi trên Ads Manager.`);
-        commit(s => { s.pending[String(chatId)] = { k, acc, id, exp: Date.now() + 10 * 60e3 }; });
-        await answer('Gõ ngân sách mới');
-        await reply(`✏️ Gõ ngân sách/ngày mới cho ${title}\n${targets[0].label}, hiện ${fmt(targets[0].budget)} đ. Vd <code>500000</code> hoặc <code>500k</code>. Hết hạn sau 10 phút.`,
-          { reply_markup: { force_reply: true, selective: true } });
+        const p = { k, acc, id, cur: targets[0].budget, v: targets[0].budget, label: targets[0].label, title, exp: Date.now() + 10 * 60e3 };
+        const j = await reply(padText(p), { reply_markup: padKb(p) });
+        if (j.ok) commit(s => { s.pending[String(chatId)] = { ...p, msgId: j.result.message_id }; });
+        await answer(j.ok ? 'Nhập ngân sách mới' : 'Không gửi được bàn phím');
       } else if (act === 'ref') {
         await answer('Đang lấy số mới…');
         const u = await unitStatus(k, acc, id);
@@ -466,20 +534,11 @@ export function mountAdsAlert(app, {
     if (p.exp < Date.now()) { commit(s => { delete s.pending[chatId]; }); return say(chatId, 'Đã quá 10 phút — bấm ✏️ Nhập NS lại nhé.'); }
     const v = parseMoney(text);
     if (!v) return say(chatId, 'Không đọc được số tiền. Gõ vd <code>500000</code> hoặc <code>500k</code>.');
-    commit(s => { delete s.pending[chatId]; });
-    const k = p.k || 'c', id = p.id || p.camp;
-    let ctx;
-    try {
-      ctx = await loadObj(msg.from.id, k, p.acc, id);
-      const targets = await budgetTargets(ctx);
-      if (targets.length > 1) throw new Error('Camp có nhiều nhóm với ngân sách riêng — dùng nút −/+ %.');
-      const done = await setBudgets(targets, () => v, ctx.tk, STORE.cfg.maxBudget);
-      addLog({ who: ctx.who, camp: id, ten: (k === 's' ? 'Nhóm ' : '') + ctx.obj.name, viec: `Đặt ngân sách ${fmt(v)} đ`, ok: true });
-      return say(chatId, `💰 <b>${esc(ctx.obj.name)}</b>\n${done}\n(${esc(ctx.who)} lúc ${hhmm()})`);
-    } catch (e) {
-      addLog({ who: ctx ? ctx.who : String(msg.from.id), camp: id, ten: ctx ? ctx.obj.name : '', viec: 'Đặt ngân sách', ok: false, loi: metaMsg(e) });
-      return say(chatId, '❌ ' + esc(metaMsg(e)));
-    }
+    const r = await applyBudget(msg.from.id, p, v);
+    if (!r.ok) return say(chatId, '❌ ' + esc(r.text) + '\nGõ lại số khác hoặc dùng bàn phím.');   // giữ trạng thái để nhập lại
+    commit(s => { const q = s.pending[chatId]; if (q && q.msgId === p.msgId) delete s.pending[chatId]; });
+    if (p.msgId) await closePad(chatId, p.msgId, '✏️ Đã nhập bằng tin nhắn bên dưới.');
+    return say(chatId, r.text);
   }
 
   // Webhook Telegram (đã loại trừ khỏi middleware đăng nhập trong server.js)
