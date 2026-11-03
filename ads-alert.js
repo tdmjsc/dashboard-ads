@@ -32,7 +32,9 @@ const CFG_DEFAULT = {
   lowCpa: 80000,      // CPA đơn mới phát sinh dưới mức này → nhắc tăng ngân sách (0 = tắt)
   lowEveryMin: 120,   // nhắc tăng ngân sách tối đa 1 lần / … phút / nhóm
   reAlert: [180000, 200000, 250000, 300000], // nút "báo lại khi CPA vượt …"
-  everyMin: 30,       // kiểm tra mỗi … phút
+  // Nhịp kiểm tra từng camp / nhóm theo ngân sách/ngày (nhóm CBO lấy ngân sách chiến dịch), người dùng đặt 3/11/2026:
+  // dưới 2tr mỗi 60 phút, từ 2tr mỗi 40 phút, từ 5tr mỗi 20 phút. Lượt chạy chung cách nhau ƯCLN các mức (≥ 10 phút).
+  tiers: [{ from: 0, every: 60 }, { from: 2000000, every: 40 }, { from: 5000000, every: 20 }],
   fromHour: 8,        // chỉ kiểm tra trong khung giờ VN [fromHour, toHour)
   toHour: 23,
   step: 20,           // nút −/+ đổi ngân sách …%
@@ -220,8 +222,15 @@ export function mountAdsAlert(app, {
   }
 
   /* ---------- Kiểm tra ---------- */
+  const tiersOf = cfg => (Array.isArray(cfg.tiers) && cfg.tiers.length ? cfg.tiers : CFG_DEFAULT.tiers).slice().sort((a, b) => a.from - b.from);
+  // Số phút giữa 2 lần kiểm tra 1 camp / nhóm theo ngân sách/ngày của nó
+  const everyOf = (u, cfg) => { const b = u.budget || u.cbo || 0; let m = 60; for (const t of tiersOf(cfg)) if (b >= t.from) m = t.every; return m; };
+  const gcd = (a, b) => b ? gcd(b, a % b) : a;
+  const runEveryMin = cfg => Math.max(10, tiersOf(cfg).map(t => Math.round(t.every)).reduce(gcd));
+
   // send=false: chỉ tính trên bản sao trạng thái (xem trước), không gửi, không lưu. Camp / nhóm đã tắt thì bỏ qua.
-  async function check({ send = true } = {}) {
+  // auto=true (lượt tự động): chỉ xét camp / nhóm đã tới nhịp kiểm tra của nó (checkedAt); bấm tay thì xét hết.
+  async function check({ send = true, auto = false } = {}) {
     reload();
     const cfg = STORE.cfg;
     const day = vnDay(), now = Date.now();
@@ -233,12 +242,20 @@ export function mountAdsAlert(app, {
     const run = s => {
       const today = (s.sent[day] ||= {});
       for (const d of Object.keys(s.sent)) if (d < day) delete s.sent[d];
-      return units.map(u => { const e = (today[u.id] ||= {}); return { u, R: decide(e, u, cfg, now) }; }).filter(x => x.R.length);
+      const out = [];
+      for (const u of units) {
+        const e = (today[u.id] ||= {});
+        if (auto && e.checkedAt && now - e.checkedAt < everyOf(u, cfg) * 60e3 - 2 * 60e3) continue; // chưa tới nhịp (chừa 2 phút lệch)
+        if (auto) e.checkedAt = now;
+        const R = decide(e, u, cfg, now);
+        if (R.length) out.push({ u, R });
+      }
+      return out;
     };
     if (!send) {
       const list = run(JSON.parse(JSON.stringify({ sent: STORE.sent || {} })));
       return { day, oms: !!oms, list: list.map(({ u, R }) => ({ id: u.id, loai: kindName(u.k), ten: u.name, camp: u.campName, nv: u.employee,
-        ...u.st, lyDo: R.map(r => r.text.replace(/<[^>]+>/g, '')), nguoiNhan: recipients(u, cfg).length })) };
+        ...u.st, nhip: everyOf(u, cfg), lyDo: R.map(r => r.text.replace(/<[^>]+>/g, '')), nguoiNhan: recipients(u, cfg).length })) };
     }
     const list = commit(run);
     let n = 0;
@@ -260,7 +277,7 @@ export function mountAdsAlert(app, {
     if (!token || !cfg.on) return;
     const h = vnNow().getUTCHours();
     if (h < cfg.fromHour || h >= cfg.toHour) return;
-    const every = Math.max(10, Number(cfg.everyMin) || 30) * 60e3;
+    const every = runEveryMin(cfg) * 60e3;
     // Giành lượt: chỉ 1 tiến trình chạy mỗi lượt
     const claimed = commit(s => {
       if (s.lastRun && Date.now() - Date.parse(s.lastRun.at) < every - 30e3) return false;
@@ -268,7 +285,7 @@ export function mountAdsAlert(app, {
     });
     if (claimed === false) return;
     let r;
-    try { r = await check(); } catch (e) { r = { loi: e.message }; }
+    try { r = await check({ auto: true }); } catch (e) { r = { loi: e.message }; }
     commit(s => { s.lastRun = { ...(s.lastRun || {}), xong: new Date().toISOString(), ...r }; });
   }
   setInterval(() => tick().catch(e => console.error('[ADSALERT] lỗi:', e.message)), 60e3).unref?.();
@@ -516,7 +533,12 @@ export function mountAdsAlert(app, {
     const patch = {
       on: typeof b.on === 'boolean' ? b.on : undefined,
       adminAll: typeof b.adminAll === 'boolean' ? b.adminAll : undefined,
-      cprMax: num(b.cprMax, 0, 1e9), everyMin: num(b.everyMin, 10, 720),
+      cprMax: num(b.cprMax, 0, 1e9),
+      tiers: Array.isArray(b.tiers) ? (() => {
+        const t = b.tiers.map(x => ({ from: num(x && x.from, 0, 1e10), every: num(x && x.every, 10, 720) })).filter(x => x.from !== undefined && x.every !== undefined);
+        if (!t.some(x => x.from === 0)) t.push({ from: 0, every: 60 });
+        return [...new Map(t.map(x => [x.from, x])).values()].sort((a, b) => a.from - b.from).slice(0, 6);
+      })() : undefined,
       fromHour: num(b.fromHour, 0, 23), toHour: num(b.toHour, 1, 24),
       step: num(b.step, 5, 100), maxBudget: num(b.maxBudget, 10000, 1e10),
       offAt: num(b.offAt, 0, 1e9), lowCpa: num(b.lowCpa, 0, 1e9), lowEveryMin: num(b.lowEveryMin, 10, 1440),

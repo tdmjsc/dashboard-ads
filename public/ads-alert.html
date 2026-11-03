@@ -25,6 +25,10 @@
   input{background:rgba(255,255,255,.06);border:1px solid rgba(255,255,255,.14);color:#E7EEF8;border-radius:8px;padding:8px 10px;font-size:13.5px;font-family:inherit;color-scheme:dark;min-width:0;width:100%;}
   input[type=checkbox]{width:auto;}
   input:focus{outline:none;border-color:#3D5AFE;}
+  .tiers{grid-column:1/-1;display:flex;flex-direction:column;gap:8px;border:1px solid rgba(255,255,255,.08);border-radius:10px;padding:12px;}
+  .tiers-h{font-size:11.5px;color:#9FB0C8;font-weight:600;}
+  .tier{display:flex;align-items:center;gap:8px;flex-wrap:wrap;font-size:13px;color:#C4D0E2;}
+  .tier input{width:130px;}
   .act{grid-column:1/-1;display:flex;gap:8px;align-items:center;flex-wrap:wrap;}
   .btn{background:#3D5AFE;color:#fff;border:none;border-radius:8px;padding:9px 18px;font-size:13px;font-weight:600;cursor:pointer;font-family:inherit;text-decoration:none;display:inline-block;}
   .btn:hover{opacity:.9;} .btn:disabled{opacity:.45;cursor:not-allowed;}
@@ -72,7 +76,13 @@
         <label>CPA đơn mới dưới … thì nhắc tăng NS (đ, 0 = tắt)<input id="c-lowCpa" inputmode="numeric"></label>
         <label>Nhắc tăng NS tối đa 1 lần / … phút<input id="c-lowEveryMin" inputmode="numeric"></label>
         <label>Các mức "báo lại khi CPA vượt" (đ, cách nhau dấu phẩy)<input id="c-reAlert" placeholder="180000, 200000, 250000, 300000"></label>
-        <label>Kiểm tra mỗi (phút)<input id="c-everyMin" inputmode="numeric"></label>
+        <div class="tiers">
+          <div class="tiers-h">Nhịp kiểm tra theo ngân sách/ngày của nhóm (nhóm CBO lấy ngân sách chiến dịch) — mỗi lần tới nhịp, nhóm thuộc diện cần báo thì báo 1 lần</div>
+          <div class="tier"><span>Ngân sách dưới mức 2</span><span class="sep">mỗi</span><input id="t0-every" inputmode="numeric"><span>phút</span></div>
+          <div class="tier"><span>Mức 2: từ</span><input id="t1-from" inputmode="numeric"><span class="sep">đ/ngày, mỗi</span><input id="t1-every" inputmode="numeric"><span>phút</span></div>
+          <div class="tier"><span>Mức 3: từ</span><input id="t2-from" inputmode="numeric"><span class="sep">đ/ngày, mỗi</span><input id="t2-every" inputmode="numeric"><span>phút</span></div>
+          <div class="mute" style="font-size:12px">Để trống mức 2 / 3 để bỏ mức đó. Tối thiểu 10 phút.</div>
+        </div>
         <label>Từ giờ<input id="c-fromHour" inputmode="numeric"></label>
         <label>Đến giờ<input id="c-toHour" inputmode="numeric"></label>
         <label>Nút −/+ ngân sách (%)<input id="c-step" inputmode="numeric"></label>
@@ -86,10 +96,10 @@
         </div>
       </div>
       <div class="body mute" style="padding-top:0">
-        Số hôm nay. Kết quả = đơn về OMS (camp tin nhắn chưa có đơn OMS thì dùng kết quả Meta). Camp có từ 2 nhóm thì xét từng nhóm; camp / nhóm đã tắt không báo.<br>
+        Số hôm nay, mỗi nhóm xét theo nhịp của mức ngân sách ở trên (nút "Kiểm tra + gửi ngay" xét hết ngay). Kết quả = đơn về OMS (camp tin nhắn chưa có đơn OMS thì dùng kết quả Meta). Camp có từ 2 nhóm thì xét từng nhóm; camp / nhóm đã tắt không báo.<br>
         • 0–1 đơn: tiêu ≥ ngưỡng đắt → "có dấu hiệu bị đắt"; tiêu ≥ mức đề nghị tắt → "đề nghị tắt" (mỗi mức 1 lần/ngày).<br>
         • Từ 2 đơn: CPA trung bình vượt ngưỡng đắt → báo, kèm nút chọn mức báo lại.<br>
-        • Trên 2 đơn: CPA của các đơn mới phát sinh từ lần kiểm tra trước vượt ngưỡng đắt (hoặc tiêu thêm quá ngưỡng mà chưa ra đơn mới) → báo; dưới mức nhắc → nhắc tăng ngân sách.
+        • Trên 2 đơn: CPA của các đơn mới phát sinh từ lần kiểm tra trước của nhóm đó vượt ngưỡng đắt (hoặc tiêu thêm quá ngưỡng mà chưa ra đơn mới) → báo; dưới mức nhắc → nhắc tăng ngân sách.
       </div>
     </div>
 
@@ -114,7 +124,7 @@ const $ = id => document.getElementById(id);
 const esc = s => String(s == null ? '' : s).replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
 const fmt = n => Math.round(Number(n) || 0).toLocaleString('vi-VN');
 const tm = s => s ? new Date(s).toLocaleString('vi-VN', { hour12: false }) : '';
-const CFG_KEYS = ['cprMax', 'offAt', 'lowCpa', 'lowEveryMin', 'everyMin', 'fromHour', 'toHour', 'step', 'maxBudget'];
+const CFG_KEYS = ['cprMax', 'offAt', 'lowCpa', 'lowEveryMin', 'fromHour', 'toHour', 'step', 'maxBudget'];
 async function api(url, opts) {
   const r = await fetch(url, opts);
   return r.json().catch(() => ({ ok: false, error: 'HTTP ' + r.status }));
@@ -153,6 +163,10 @@ async function loadAdmin() {
   $('c-adminAll').checked = !!j.cfg.adminAll;
   for (const k of CFG_KEYS) $('c-' + k).value = j.cfg[k];
   $('c-reAlert').value = (j.cfg.reAlert || []).join(', ');
+  const tiers = (j.cfg.tiers || []).slice().sort((a, b) => a.from - b.from);
+  $('t0-every').value = (tiers.find(t => t.from === 0) || { every: 60 }).every;
+  const up = tiers.filter(t => t.from > 0);
+  for (const i of [1, 2]) { const t = up[i - 1]; $('t' + i + '-from').value = t ? t.from : ''; $('t' + i + '-every').value = t ? t.every : ''; }
   const r = j.lastRun;
   $('run-info').innerHTML = r ? `Lượt gần nhất: ${tm(r.at)}` + (r.loi ? ` · <span class="err">${esc(r.loi)}</span>` : r.xong ? ` · ${r.dat || 0} camp / nhóm cần báo, gửi ${r.daGui || 0} tin` + (r.oms === false ? ' · <span class="err">không đọc được OMS (đang dùng kết quả Meta)</span>' : '') : ' · đang chạy') : '<span class="mute">Chưa chạy lượt nào</span>';
   $('links').innerHTML = j.links.length ? `<table><tr><th>Tài khoản</th><th>Telegram</th><th>Nhận camp của</th><th>Kết nối lúc</th></tr>`
@@ -165,6 +179,9 @@ async function loadAdmin() {
 async function saveCfg() {
   const body = { on: $('c-on').checked, adminAll: $('c-adminAll').checked };
   for (const k of CFG_KEYS) body[k] = Number(String($('c-' + k).value).replace(/[.,\s]/g, ''));
+  const n = id => Number(String($(id).value).replace(/[.,\s]/g, ''));
+  body.tiers = [{ from: 0, every: n('t0-every') || 60 }];
+  for (const i of [1, 2]) if (n('t' + i + '-from') > 0 && n('t' + i + '-every') > 0) body.tiers.push({ from: n('t' + i + '-from'), every: n('t' + i + '-every') });
   body.reAlert = $('c-reAlert').value.split(/[,;]/).map(v => Number(v.replace(/[.\s]/g, ''))).filter(v => v > 0);
   const j = await post('/api/ads-alert/cfg', body);
   $('cfg-msg').innerHTML = j.ok ? '<span class="ok">Đã lưu</span>' : `<span class="err">${esc(j.error || 'Lưu lỗi')}</span>`;
@@ -179,8 +196,8 @@ async function preview(send) {
   if (send) { showOut('Đã kiểm tra', `<div class="body">${j.dat} camp / nhóm cần báo · đã gửi ${j.daGui} tin. Cái đã báo ở cùng mức trong hôm nay thì không báo lại.</div>`); loadAdmin(); return; }
   const warn = j.oms ? '' : '<div class="body err">Không đọc được OMS — đang tính theo kết quả Meta.</div>';
   showOut(`Sẽ báo nếu gửi bây giờ (${j.list.length})`, warn + (j.list.length
-    ? `<table><tr><th>Loại</th><th>Camp / nhóm</th><th>NV</th><th>Chi</th><th>Kết quả</th><th>CPA</th><th>Lý do báo</th><th>Người nhận</th></tr>`
-      + j.list.map(c => `<tr><td>${c.loai === 'nhóm' ? 'Nhóm' : 'Camp'}</td><td>${esc(c.ten)}${c.loai === 'nhóm' ? `<br><span class="mute">${esc(c.camp)}</span>` : ''}</td><td>${esc(c.nv)}</td><td class="num">${fmt(c.spend)}</td><td class="num">${c.res} ${esc(c.label)}</td><td class="num">${c.cpr == null ? '—' : fmt(c.cpr)}</td><td>${(c.lyDo || []).map(esc).join('<br>')}</td><td class="num">${c.nguoiNhan || '<span class="err">0</span>'}</td></tr>`).join('') + '</table>'
+    ? `<table><tr><th>Loại</th><th>Camp / nhóm</th><th>NV</th><th>Chi</th><th>Kết quả</th><th>CPA</th><th>Nhịp</th><th>Lý do báo</th><th>Người nhận</th></tr>`
+      + j.list.map(c => `<tr><td>${c.loai === 'nhóm' ? 'Nhóm' : 'Camp'}</td><td>${esc(c.ten)}${c.loai === 'nhóm' ? `<br><span class="mute">${esc(c.camp)}</span>` : ''}</td><td>${esc(c.nv)}</td><td class="num">${fmt(c.spend)}</td><td class="num">${c.res} ${esc(c.label)}</td><td class="num">${c.cpr == null ? '—' : fmt(c.cpr)}</td><td class="num">${c.nhip}′</td><td>${(c.lyDo || []).map(esc).join('<br>')}</td><td class="num">${c.nguoiNhan || '<span class="err">0</span>'}</td></tr>`).join('') + '</table>'
     : '<div class="body mute">Không có camp / nhóm nào cần báo lúc này.</div>'));
 }
 async function perms() {
