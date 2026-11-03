@@ -196,6 +196,7 @@
     </div>
     <div class="ctrl"><label>Tháng</label><input type="month" id="month"></div>
     <button class="btn" id="refreshBtn">Xem</button>
+    <button class="link" id="pinBtn" type="button" style="display:none"></button>
     <a href="/" class="link">← Dashboard</a>
     <a href="/salary.html" class="link">Lương MKT</a>
     <a href="/salary-product.html" class="link">Lương SP</a>
@@ -302,11 +303,13 @@ const money=v=>parseInt(String(v==null?'':v).replace(/[^\d-]/g,''),10)||0;
 })();
 
 let RAW=null, S=null, curMonth='';
+let NO_UNPIN=false;   // kế toán (khongBoGhim): được ghim nhưng không được bỏ ghim
 
 async function load(){
   curMonth=$('month').value;
   $('refreshBtn').disabled=true;
-  $('status').innerHTML='<span class="warn">Đang tính kết quả kinh doanh (doanh thu, chi tiêu Meta, lương)… ~20–35 giây.</span>';
+  RAW=null; capNhatNutGhim();
+  $('status').innerHTML='<span class="warn">Đang tính kết quả kinh doanh (doanh thu, chi tiêu Meta, lương)… tháng chưa ghim mất ~20–35 giây.</span>';
   $('kpis').innerHTML=''; $('pnl').innerHTML='';
   try{
     const r=await fetch('/api/business-result?month='+curMonth);
@@ -319,10 +322,58 @@ async function load(){
     tinhLai();
     $('status').innerHTML = RAW.manualOnly
       ? 'Tháng <b>'+curMonth+'</b> · <span class="warn">số liệu nhập tay</span> (trước khi có hệ thống ads) · sửa ở mục “Nhập số liệu tháng cũ” bên dưới.'
-      : 'Tháng <b>'+curMonth+'</b> ('+RAW.since+' → '+RAW.until+') · cập nhật '+new Date(RAW.lastUpdated).toLocaleString('vi-VN');
+      : 'Tháng <b>'+curMonth+'</b> ('+RAW.since+' → '+RAW.until+') · '
+        +(RAW.ghim
+          ? '<span style="color:#7BE3B5">🔒 đã ghim</span> lúc '+new Date(RAW.ghim.at).toLocaleString('vi-VN')
+            +(RAW.ghim.by?' ('+esc(RAW.ghim.by)+')':'')+' · số liệu lấy lúc '+new Date(RAW.lastUpdated).toLocaleString('vi-VN')
+            +' · <span style="color:#8C9BB4">doanh thu, ngân sách, giá vốn, lương MKT/SP giữ nguyên; chi phí và lương nhập ở trang này vẫn sửa được</span>'
+          : 'cập nhật '+new Date(RAW.lastUpdated).toLocaleString('vi-VN'));
     render();
   }catch(e){ $('status').innerHTML='<span class="err">Lỗi kết nối: '+esc(e.message)+'</span>'; }
-  finally{ $('refreshBtn').disabled=false; }
+  finally{ $('refreshBtn').disabled=false; capNhatNutGhim(); }
+}
+
+/* ── GHIM THÁNG ── Ghim = lưu trên máy chủ phần số liệu tự động đang hiện (doanh thu, chi tiêu
+   Meta, giá vốn, lương MKT/SP) → lần sau xem tháng này hiện ngay, không tính lại. */
+function capNhatNutGhim(){
+  const b=$('pinBtn');
+  if(!RAW || !RAW.ok || RAW.manualOnly){ b.style.display='none'; return; }
+  b.style.display=''; b.disabled=false;
+  if(RAW.ghim){
+    b.textContent=NO_UNPIN?'🔒 Đã ghim':'🔓 Bỏ ghim';
+    b.title=NO_UNPIN?'Tháng này đã chốt số liệu. Bạn không có quyền bỏ ghim.'
+                    :'Tháng này đã ghim. Bấm để bỏ ghim và tính lại số liệu mới.';
+    b.style.opacity=NO_UNPIN?'.6':'';
+  }else{
+    b.textContent='📌 Ghim tháng';
+    b.title='Lưu số liệu đang hiện của tháng này — lần sau xem hiện ngay, không tải lại';
+    b.style.opacity='';
+  }
+}
+async function ghimThang(){
+  if(!RAW || !RAW.ok || RAW.month!==curMonth) return;
+  const daGhim=!!RAW.ghim;
+  if(daGhim){
+    if(NO_UNPIN){ alert('🔒 Bạn không có quyền bỏ ghim tháng đã chốt số liệu.'); return; }
+    if(!confirm('BỎ GHIM tháng '+curMonth+'?\n\nSau khi bỏ ghim, doanh thu / ngân sách / lương sẽ được tính lại từ Sandbox và Meta (~20–35 giây) và có thể thay đổi.')) return;
+  }else{
+    if(!confirm('GHIM tháng '+curMonth+'?\n\nBạn xác nhận số liệu đang hiện là ĐÚNG. Sau khi ghim:\n'
+      +'  • Xem tháng này hiện ngay, không tải lại doanh thu, ngân sách, giá vốn, lương MKT/SP\n'
+      +'  • Sửa ở trang Lương MKT / Lương SP sẽ KHÔNG đổi số ở đây\n'
+      +'  • Chi phí và lương sale / kế toán / kho nhập ở trang này vẫn sửa được\n'
+      +'  • Muốn cập nhật số mới phải Bỏ ghim')) return;
+  }
+  const b=$('pinBtn'); b.disabled=true; b.textContent=daGhim?'⏳ Đang bỏ ghim…':'⏳ Đang ghim…';
+  try{
+    const r=await fetch('/api/business-result/ghim',{method:'POST',headers:{'Content-Type':'application/json'},
+      body:JSON.stringify(daGhim?{month:curMonth,action:'bo'}:{month:curMonth,action:'ghim',raw:RAW})});
+    if(r.status===401){ location.href='/login'; return; }
+    const d=await r.json().catch(()=>({ok:false,message:'HTTP '+r.status}));
+    if(!d.ok){ alert('❌ '+(d.message||'Lỗi')); capNhatNutGhim(); return; }
+    try{ localStorage.removeItem(CK(curMonth)); }catch(e){}   // bỏ cache bảng so sánh của tháng này
+    if(daGhim) load();                                      // bỏ ghim → tính lại số mới
+    else { RAW.ghim=d.ghim; load(); }                       // ghim → nạp lại (hiện ngay từ bản ghim)
+  }catch(e){ alert('Lỗi kết nối: '+e.message); capNhatNutGhim(); }
 }
 
 /* Tính P&L từ dữ liệu thô 1 tháng — HÀM THUẦN, dùng ĐÚNG công thức trang Lương MKT / PTSP.
@@ -1066,6 +1117,7 @@ window.addEventListener('scroll',hideTip,true);
 window.addEventListener('resize',hideTip);
 
 $('refreshBtn').addEventListener('click',load);
+$('pinBtn').addEventListener('click',ghimThang);
 $('month').addEventListener('change',load);
 
 /* ── NHẬP SỐ LIỆU THÁNG CŨ (T1–T5/2026) ── */
@@ -1124,6 +1176,7 @@ oldLoad();
 
 fetch('/api/me').then(function(r){return r.ok?r.json():null;}).then(function(me){
   if(me&&me.displayName){ const b=$('userBadge'); if(b) b.textContent='👤 '+me.displayName; }
+  if(me){ NO_UNPIN=!!me.khongBoGhim; capNhatNutGhim(); }
 }).catch(function(){});
 
 load();
