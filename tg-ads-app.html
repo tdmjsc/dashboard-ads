@@ -1,0 +1,125 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1">
+<title>Sửa ngân sách</title>
+<!-- Mini App Telegram mở từ nút ✏️ trên tin bot cảnh báo (ads-alert.js). Màu theo giao diện Telegram (--tg-theme-*). -->
+<script src="https://telegram.org/js/telegram-web-app.js"></script>
+<style>
+  :root{
+    --bg:var(--tg-theme-bg-color,#fff); --text:var(--tg-theme-text-color,#1A2436); --hint:var(--tg-theme-hint-color,#8a94a3);
+    --btn:var(--tg-theme-button-color,#0E8C76); --btn-text:var(--tg-theme-button-text-color,#fff);
+    --sec:var(--tg-theme-secondary-bg-color,#f1f3f6); --red:#d9452f;
+  }
+  *{box-sizing:border-box;}
+  body{margin:0;background:var(--bg);color:var(--text);font-family:-apple-system,system-ui,'Segoe UI',Roboto,sans-serif;font-size:15px;}
+  main{padding:16px;max-width:480px;margin:0 auto;display:flex;flex-direction:column;gap:14px;}
+  h1{font-size:16px;margin:0;line-height:1.35;}
+  .sub{color:var(--hint);font-size:13.5px;line-height:1.4;}
+  .in{font-size:30px;font-weight:700;text-align:right;padding:12px 14px;border-radius:12px;border:2px solid var(--sec);background:var(--sec);color:var(--text);width:100%;font-variant-numeric:tabular-nums;}
+  .in:focus{outline:none;border-color:var(--btn);}
+  .pct{display:grid;grid-template-columns:repeat(3,1fr);gap:8px;}
+  .pct button{border:none;border-radius:10px;padding:11px 0;font-size:15px;font-weight:600;background:var(--sec);color:var(--text);}
+  .pct button.on{background:var(--btn);color:var(--btn-text);}
+  .diff{font-size:14px;min-height:20px;}
+  .list{display:flex;flex-direction:column;gap:6px;font-size:14px;}
+  .list div{display:flex;justify-content:space-between;gap:10px;background:var(--sec);border-radius:10px;padding:9px 12px;}
+  .err{color:var(--red);}
+  .ok{font-size:18px;font-weight:600;text-align:center;padding:30px 0;}
+  .save{border:none;border-radius:12px;padding:14px;font-size:16px;font-weight:600;background:var(--btn);color:var(--btn-text);}
+  .save:disabled{opacity:.45;}
+  .in-tg .save{display:none;}   /* trong Telegram dùng nút chính (MainButton) ở đáy khung */
+</style>
+</head>
+<body>
+<main id="app"><div class="sub">Đang đọc ngân sách hiện tại…</div></main>
+<script>
+const tg = window.Telegram && Telegram.WebApp;
+const $app = document.getElementById('app');
+const P = new URLSearchParams(location.search);
+const Q = { k: P.get('k'), acc: P.get('acc'), id: P.get('id') };
+const fmt = n => Math.round(Number(n) || 0).toLocaleString('vi-VN');
+const esc = s => String(s == null ? '' : s).replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
+const digits = v => Number(String(v).replace(/\D/g, '')) || 0;
+let INFO = null, PCT = 0, busy = false;
+
+async function api(method, body) {
+  const url = '/tg-ads/api/ctl' + (method === 'GET' ? '?' + new URLSearchParams(Q) : '');
+  const opt = { method, headers: { 'X-Tg-Init': (tg && tg.initData) || '' } };
+  if (method === 'POST') { opt.headers['Content-Type'] = 'application/json'; opt.body = JSON.stringify({ ...Q, ...body }); }
+  try { const r = await fetch(url, opt); return await r.json(); } catch (e) { return { ok: false, error: 'Không kết nối được máy chủ.' }; }
+}
+function fail(msg) { $app.innerHTML = `<div class="err">${esc(msg)}</div>`; if (tg) tg.MainButton.hide(); }
+
+// Giá trị muốn lưu: 1 ngân sách → số trong ô; nhiều nhóm → % đã chọn
+function want() {
+  if (INFO.targets.length === 1) return { value: digits(document.getElementById('in').value) };
+  return { pct: PCT };
+}
+function refresh() {
+  let ok = false, label = 'Lưu';
+  if (INFO.targets.length === 1) {
+    const cur = INFO.targets[0].budget, v = want().value;
+    const over = v > INFO.maxBudget;
+    document.getElementById('diff').innerHTML = v && v !== cur
+      ? `${v > cur ? '▲ Tăng' : '▼ Giảm'} ${Math.round(Math.abs(v / cur - 1) * 100)}% so với hiện tại` + (over ? `<br><span class="err">Vượt mức tối đa ${fmt(INFO.maxBudget)} đ/ngày</span>` : '')
+      : '';
+    ok = v > 0 && v !== cur && !over; if (v) label = `Lưu ${fmt(v)} đ`;
+  } else {
+    document.getElementById('list').innerHTML = INFO.targets.map(t => `<div><span>${esc(t.ten)}</span><span>${fmt(t.budget)}${PCT ? ` → <b>${fmt(Math.round(t.budget * (1 + PCT / 100) / 1000) * 1000)}</b>` : ''} đ</span></div>`).join('');
+    ok = !!PCT; if (PCT) label = `Lưu (${PCT > 0 ? '+' : '−'}${Math.abs(PCT)}% tất cả nhóm)`;
+  }
+  const b = document.getElementById('save'); b.disabled = !ok || busy; b.textContent = busy ? 'Đang lưu…' : label;
+  if (tg) { tg.MainButton.setText(busy ? 'Đang lưu…' : label); ok && !busy ? tg.MainButton.enable() : tg.MainButton.disable(); tg.MainButton.show(); }
+}
+function pct(p) {
+  if (INFO.targets.length === 1) {
+    const v = Math.round(INFO.targets[0].budget * (1 + p / 100) / 1000) * 1000;
+    document.getElementById('in').value = fmt(v);
+  } else PCT = PCT === p ? 0 : p;
+  document.querySelectorAll('.pct button').forEach(b => b.classList.toggle('on', INFO.targets.length > 1 && Number(b.dataset.p) === PCT));
+  if (tg && tg.HapticFeedback) tg.HapticFeedback.selectionChanged();
+  refresh();
+}
+async function save() {
+  if (busy || document.getElementById('save').disabled) return;
+  busy = true; refresh();
+  const r = await api('POST', { act: 'budget', ...want() });
+  busy = false;
+  if (!r.ok) { refresh(); document.getElementById('msg').innerHTML = `<span class="err">❌ ${esc(r.error)}</span>`; if (tg && tg.HapticFeedback) tg.HapticFeedback.notificationOccurred('error'); return; }
+  if (tg) { tg.MainButton.hide(); if (tg.HapticFeedback) tg.HapticFeedback.notificationOccurred('success'); }
+  $app.innerHTML = `<div class="ok">✅ Đã lưu</div><div class="sub" style="text-align:center">${r.budgets.map(b => `${esc(b.ten)}: ${fmt(b.cu)} → <b>${fmt(b.moi)} đ</b>`).join('<br>')}</div>`;
+  setTimeout(() => tg && tg.close(), 1200);
+}
+
+(async () => {
+  if (tg) { tg.ready(); tg.expand(); tg.MainButton.onClick(save); if (tg.initData) document.body.classList.add('in-tg'); }
+  if (!tg || !tg.initData) return fail('Mở trang này từ nút ✏️ Nhập NS trên tin của bot Telegram.');
+  const r = await api('GET');
+  if (!r.ok) return fail(r.error);
+  if (!r.targets.length) return fail(r.loiNS || 'Không có ngân sách ngày để sửa.');
+  INFO = r;
+  const pcts = [-30, -20, -10, 10, 20, 30];
+  const pctRow = `<div class="pct">${pcts.map(p => `<button type="button" data-p="${p}" onclick="pct(${p})">${p > 0 ? '+' : '−'}${Math.abs(p)}%</button>`).join('')}</div>`;
+  const head = `<h1>${esc(r.ten)}</h1>` + (r.k === 's' ? `<div class="sub">Nhóm quảng cáo · chiến dịch ${esc(r.camp)}</div>` : '');
+  if (r.targets.length === 1) {
+    const t = r.targets[0];
+    $app.innerHTML = head + `<div class="sub">${esc(t.ten)}${t.cbo ? ' — ngân sách chung của cả chiến dịch' : ''} · hiện <b>${fmt(t.budget)} đ</b>/ngày</div>
+      <input class="in" id="in" inputmode="numeric" autocomplete="off" value="${fmt(t.budget)}">
+      ${pctRow}<div class="diff" id="diff"></div><div id="msg"></div>
+      <button class="save" id="save" type="button" onclick="save()">Lưu</button>`;
+    const inp = document.getElementById('in');
+    inp.addEventListener('input', () => { const v = digits(inp.value); inp.value = v ? fmt(v) : ''; refresh(); });
+    inp.addEventListener('keydown', e => { if (e.key === 'Enter') { inp.blur(); save(); } });
+    inp.addEventListener('focus', () => setTimeout(() => inp.select(), 0));
+  } else {
+    $app.innerHTML = head + `<div class="sub">Chiến dịch có ${r.targets.length} nhóm đang chạy với ngân sách riêng — chọn % để đổi tất cả (sửa từng nhóm: dùng ✏️ trên tin của nhóm hoặc trang Ads).</div>
+      ${pctRow}<div class="list" id="list"></div><div id="msg"></div>
+      <button class="save" id="save" type="button" onclick="save()">Lưu</button>`;
+  }
+  refresh();
+})();
+</script>
+</body>
+</html>

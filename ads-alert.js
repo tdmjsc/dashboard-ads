@@ -21,6 +21,7 @@
 
 import path from 'node:path';
 import crypto from 'node:crypto';
+import { fileURLToPath } from 'node:url';
 import { jsonStore } from './json-store.js';
 
 const TG_MAX = 4000;
@@ -47,6 +48,7 @@ const esc = s => String(s == null ? '' : s).replace(/[&<>"]/g, c => ({ '&': '&am
 const vnNow = () => new Date(Date.now() + 7 * 3600e3);
 const vnDay = () => vnNow().toISOString().slice(0, 10);
 const hhmm = () => vnNow().toISOString().slice(11, 16);
+const PUBLIC_URL = (process.env.TG_ADS_PUBLIC_URL || 'https://ads.tdmjsc.com').replace(/\/+$/, '');
 
 export function mountAdsAlert(app, {
   express, DATA_DIR, fetchWithTimeout,
@@ -202,7 +204,8 @@ export function mountAdsAlert(app, {
       [on ? { text: `⏸ Tắt ${nm}`, callback_data: d('off') } : { text: `▶️ Bật ${nm}`, callback_data: d('on') },
         { text: '🔄 Số mới nhất', callback_data: d('ref') }],
       [{ text: `➖ ${step}% NS`, callback_data: d('dn') }, { text: `➕ ${step}% NS`, callback_data: d('up') },
-        { text: '✏️ Nhập NS', callback_data: d('set') }],
+        // Mở Mini App sửa ngân sách (ô điền sẵn ngân sách hiện tại). Tin cũ có nút d('set') vẫn mở bàn phím số.
+        { text: '✏️ Nhập NS', web_app: { url: `${PUBLIC_URL}/tg-ads/app?k=${k}&acc=${acc}&id=${id}` } }],
     ];
     if (levels && levels.length) rows.push(
       levels.slice(0, 3).map(v => ({ text: `🔔 CPA > ${Math.round(v / 1000)}k`, callback_data: d('rn', v) }))
@@ -579,32 +582,33 @@ export function mountAdsAlert(app, {
     return ['c', 's'].includes(k) && /^\d+$/.test(acc) && /^\d+$/.test(id) ? { k, acc, id } : null;
   };
   // Ngân sách hiện tại đọc mới từ Meta → điền sẵn vào ô sửa
-  app.get('/api/ads-alert/ctl', async (req, res) => {
-    const a = ctlArgs(req.query);
-    if (!a) return res.json({ ok: false, error: 'Sai tham số' });
+  async function ctlInfo(login, q) {
+    const a = ctlArgs(q);
+    if (!a) return { ok: false, error: 'Sai tham số' };
     try {
-      const ctx = await loadObjAs(user(req).user, a.k, a.acc, a.id);
+      const ctx = await loadObjAs(login, a.k, a.acc, a.id);
       let targets = [], loiNS = '';
       try { targets = await budgetTargets(ctx); } catch (e) { loiNS = metaMsg(e); }
-      res.json({ ok: true, ten: ctx.obj.name, on: ctx.obj.effective_status === 'ACTIVE', step: STORE.cfg.step, maxBudget: STORE.cfg.maxBudget,
-        targets: targets.map(t => ({ id: String(t.id), ten: t.ten, budget: t.budget, cbo: !!t.cbo })), loiNS });
-    } catch (e) { res.json({ ok: false, error: metaMsg(e) }); }
-  });
-  // { k, acc, id, act: 'off' | 'on' | 'budget', value?: đ/ngày, pct?: ±% }
-  app.post('/api/ads-alert/ctl', express.json(), async (req, res) => {
-    const b = req.body || {}, a = ctlArgs(b);
-    if (!a) return res.json({ ok: false, error: 'Sai tham số' });
+      return { ok: true, ten: ctx.obj.name, camp: ctx.campName, k: a.k, on: ctx.obj.effective_status === 'ACTIVE', step: STORE.cfg.step, maxBudget: STORE.cfg.maxBudget,
+        targets: targets.map(t => ({ id: String(t.id), ten: t.ten, budget: t.budget, cbo: !!t.cbo })), loiNS };
+    } catch (e) { return { ok: false, error: metaMsg(e) }; }
+  }
+  // b = { k, acc, id, act: 'off' | 'on' | 'budget', value?: đ/ngày, pct?: ±% }; src: nơi bấm, ghi vào nhật ký
+  async function ctlDo(login, b, src) {
+    const a = ctlArgs(b);
+    if (!a) return { ok: false, error: 'Sai tham số' };
     let ctx, viec = b.act;
+    const ten = () => (a.k === 's' ? 'Nhóm ' : '') + ctx.obj.name;
     try {
       reload();
-      ctx = await loadObjAs(user(req).user, a.k, a.acc, a.id);
+      ctx = await loadObjAs(login, a.k, a.acc, a.id);
       if (b.act === 'off' || b.act === 'on') {
         await fbPost(a.id, { status: b.act === 'off' ? 'PAUSED' : 'ACTIVE' }, ctx.tk);
         viec = (b.act === 'off' ? 'Đã TẮT ' : 'Đã BẬT ') + kindName(a.k);
-        addLog({ who: ctx.who + ' (web)', camp: a.id, ten: (a.k === 's' ? 'Nhóm ' : '') + ctx.obj.name, viec, ok: true });
-        return res.json({ ok: true, on: b.act === 'on' });
+        addLog({ who: `${ctx.who} (${src})`, camp: a.id, ten: ten(), viec, ok: true });
+        return { ok: true, on: b.act === 'on', ten: ctx.obj.name, who: ctx.who };
       }
-      if (b.act !== 'budget') return res.json({ ok: false, error: 'Sai thao tác' });
+      if (b.act !== 'budget') return { ok: false, error: 'Sai thao tác' };
       const targets = await budgetTargets(ctx);
       const pct = Number(b.pct), value = Math.round(Number(b.value));
       let newOf;
@@ -616,13 +620,54 @@ export function mountAdsAlert(app, {
         newOf = () => value; viec = `Đặt ngân sách ${fmt(value)} đ`;
       } else throw new Error('Nhập số ngân sách.');
       const out = [];
-      await setBudgets(targets, newOf, ctx.tk, STORE.cfg.maxBudget, out);
-      addLog({ who: ctx.who + ' (web)', camp: a.id, ten: (a.k === 's' ? 'Nhóm ' : '') + ctx.obj.name, viec, ok: true });
-      res.json({ ok: true, budgets: out });
+      const html = await setBudgets(targets, newOf, ctx.tk, STORE.cfg.maxBudget, out);
+      addLog({ who: `${ctx.who} (${src})`, camp: a.id, ten: ten(), viec, ok: true });
+      return { ok: true, budgets: out, html, ten: ctx.obj.name, who: ctx.who };
     } catch (e) {
-      if (ctx) addLog({ who: ctx.who + ' (web)', camp: a.id, ten: ctx.obj.name, viec, ok: false, loi: metaMsg(e) });
-      res.json({ ok: false, error: metaMsg(e) });
+      if (ctx) addLog({ who: `${ctx.who} (${src})`, camp: a.id, ten: ten(), viec, ok: false, loi: metaMsg(e) });
+      return { ok: false, error: metaMsg(e) };
     }
+  }
+  app.get('/api/ads-alert/ctl', async (req, res) => res.json(await ctlInfo(user(req).user, req.query)));
+  app.post('/api/ads-alert/ctl', express.json(), async (req, res) => res.json(await ctlDo(user(req).user, req.body || {}, 'web')));
+
+  /* ---------- Mini App Telegram: sửa ngân sách trong khung mở từ nút ✏️ (không cần đăng nhập dashboard) ----------
+     Trang /tg-ads/app (tg-ads-app.html) gửi initData Telegram ở header X-Tg-Init; máy chủ kiểm chữ ký bằng token bot
+     (HMAC "WebAppData") → user.id → tài khoản đã kết nối → cùng quyền như nút trên tin. /tg-ads/* loại trừ khỏi đăng nhập. */
+  function tgUserFromInit(initData) {
+    if (!token || !initData) return null;
+    const q = new URLSearchParams(initData);
+    const hash = q.get('hash');
+    if (!hash) return null;
+    q.delete('hash');
+    const dcs = [...q.entries()].map(([k, v]) => `${k}=${v}`).sort().join('\n');
+    const secret = crypto.createHmac('sha256', 'WebAppData').update(token).digest();
+    const calc = crypto.createHmac('sha256', secret).update(dcs).digest('hex');
+    if (calc.length !== hash.length || !crypto.timingSafeEqual(Buffer.from(calc), Buffer.from(hash))) return null;
+    if (Date.now() / 1000 - Number(q.get('auth_date') || 0) > 24 * 3600) return null;   // initData quá 24 giờ
+    try { return JSON.parse(q.get('user') || 'null'); } catch { return null; }
+  }
+  function tgLogin(req) {
+    const u = tgUserFromInit(req.get('x-tg-init'));
+    if (!u) return { error: 'Không xác thực được Telegram — mở lại từ nút ✏️ trên tin của bot.' };
+    reload();
+    const link = userOfTg(u.id);
+    if (!link) return { error: 'Telegram này chưa kết nối tài khoản dashboard (trang Cảnh báo Telegram).' };
+    return { login: link[0], chatId: link[1].chatId };
+  }
+  const APP_FILE = fileURLToPath(new URL('./tg-ads-app.html', import.meta.url));
+  app.get('/tg-ads/app', (req, res) => { res.set('Cache-Control', 'no-store'); res.sendFile(APP_FILE); });
+  app.get('/tg-ads/api/ctl', async (req, res) => {
+    const t = tgLogin(req);
+    res.json(t.error ? { ok: false, error: t.error } : await ctlInfo(t.login, req.query));
+  });
+  app.post('/tg-ads/api/ctl', express.json(), async (req, res) => {
+    const t = tgLogin(req);
+    if (t.error) return res.json({ ok: false, error: t.error });
+    const r = await ctlDo(t.login, req.body || {}, 'tele');
+    // Ghi lại trong khung chat để còn dấu vết (khung Mini App đóng là mất)
+    if (r.ok && r.html) say(t.chatId, `💰 <b>${esc(r.ten)}</b>\n${r.html}\n(${esc(r.who)} lúc ${hhmm()})`).catch(() => {});
+    res.json(r);
   });
 
   app.post('/api/ads-alert/unlink', (req, res) => {
@@ -695,7 +740,7 @@ export function mountAdsAlert(app, {
   (async () => {
     const g = await tg('getMe');
     if (g.ok) me = g.result;
-    const url = (process.env.TG_ADS_PUBLIC_URL || 'https://ads.tdmjsc.com').replace(/\/+$/, '') + '/tg-ads/webhook';
+    const url = PUBLIC_URL + '/tg-ads/webhook';
     const w = await tg('setWebhook', { url, secret_token: SECRET, allowed_updates: ['message', 'callback_query'] });
     console.log('[ADSALERT] bot', me ? '@' + me.username : '?', '— webhook', w.ok ? 'OK' : 'lỗi: ' + w.description);
   })().catch(e => console.error('[ADSALERT] khởi động lỗi:', e.message));

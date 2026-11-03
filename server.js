@@ -782,8 +782,9 @@ app.use((req, res, next) => {
   if (req.path === '/thailand' || req.path.startsWith('/thailand/')) return next();
   // Webhook bot "chat all" Telegram — tự kiểm tra secret_token (xem telegram-all.js)
   if (req.path === '/tg-all/webhook') return next();
-  // Webhook bot cảnh báo camp đắt — tự kiểm tra secret_token (xem ads-alert.js)
-  if (req.path === '/tg-ads/webhook') return next();
+  // Bot cảnh báo camp đắt (xem ads-alert.js): webhook tự kiểm tra secret_token, Mini App /tg-ads/app + /tg-ads/api/*
+  // tự kiểm tra chữ ký initData của Telegram
+  if (req.path.startsWith('/tg-ads/')) return next();
   // BỎ QUA mọi đường dẫn /oms — module OMS TỰ LO auth riêng
   if (req.path === '/oms' || req.path.startsWith('/oms/') || req.path === '/go-oms'
     || req.path === '/oms-admin.html' || req.path === '/oms-adid.html' || req.path === '/sw-push.js'
