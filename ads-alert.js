@@ -125,7 +125,10 @@ export function mountAdsAlert(app, {
       return by;
     } catch (e) { console.error('[ADSALERT] đọc OMS lỗi:', e.message); return null; }
   }
-  function statOf(spend, meta, don, obj, hasOms) {
+  // Chi tiêu tính sau thuế (+QC_TAX, mặc định 11%) như cột "CP/kết quả sau thuế" trang Ads — mọi ngưỡng so với số này
+  const TAX = 1 + Number(process.env.QC_TAX || 0.11);
+  function statOf(spendRaw, meta, don, obj, hasOms) {
+    const spend = Math.round(spendRaw * TAX);
     const useOms = hasOms && (don > 0 || obj !== 'tin nhắn');
     const res = useOms ? don : meta;
     const label = useOms ? 'đơn OMS' : (obj || 'kết quả') + ' (Meta)';
@@ -182,7 +185,7 @@ export function mountAdsAlert(app, {
     // CPA của đơn mới phát sinh so với mốc lần kiểm tra trước (nhóm đã có trên 2 đơn)
     const b = e.base;
     const since = b && `từ ${b.at}`;
-    if (!b || res < b.res || spend < b.spend) e.base = { spend, res, at: hhmm() };
+    if (!b || !b.vat || res < b.res || spend < b.spend) e.base = { spend, res, at: hhmm(), vat: 1 };   // mốc cũ chưa thuế → đặt lại
     else {
       const dS = spend - b.spend, dR = res - b.res;
       if (dR > 0) {
@@ -192,10 +195,10 @@ export function mountAdsAlert(app, {
           e.lowAt = now;
           R.push({ lv: 1, kind: 'low', text: `Đơn mới ${since}: tiêu thêm ${fmt(dS)} đ ra ${dR} đơn → <b>${per(dS, dR)}</b> (dưới ${fmt(cfg.lowCpa)} đ) → nên tăng ngân sách` });
         }
-        e.base = { spend, res, at: hhmm() };
+        e.base = { spend, res, at: hhmm(), vat: 1 };
       } else if (T > 0 && dS > T) {
         if (b.res > 2) R.push({ lv: 2, kind: 'new', text: `${since[0].toUpperCase() + since.slice(1)}: tiêu thêm ${fmt(dS)} đ chưa ra đơn mới` });
-        e.base = { spend, res, at: hhmm() };
+        e.base = { spend, res, at: hhmm(), vat: 1 };
       }
     }
     return R;
@@ -215,7 +218,7 @@ export function mountAdsAlert(app, {
       + (u.k === 's' ? `Chiến dịch: ${esc(u.campName)}\n` : '')
       + `NV: ${esc(u.employee)} · ${esc(u.accName || u.acc)}\n`
       + R.map(r => '• ' + r.text + '\n').join('')
-      + `Hôm nay (đến ${hhmm()}): chi <b>${fmt(st.spend)} đ</b> · <b>${st.res}</b> ${esc(st.label)}`
+      + `Hôm nay (đến ${hhmm()}): chi <b>${fmt(st.spend)} đ</b> (sau thuế) · <b>${st.res}</b> ${esc(st.label)}`
       + ` · CPA <b>${st.cpr == null ? '—' : fmt(st.cpr) + ' đ'}</b>\n`
       + `Ngân sách: ${budget} · ${u.on ? '🟢 đang chạy' : '⚪️ đang tắt'}`;
   }
