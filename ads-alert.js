@@ -302,9 +302,14 @@ export function mountAdsAlert(app, {
     reload();
     const link = userOfTg(tgId);
     if (!link) throw new Error('Telegram này chưa kết nối tài khoản dashboard (trang Cảnh báo Telegram).');
-    const who = employeesOfLogin(link[0]);
+    return loadObjAs(link[0], k, acc, id);
+  }
+  // Như trên, theo tên đăng nhập dashboard (nút trên Telegram và trang Ads dùng chung)
+  async function loadObjAs(login, k, acc, id) {
+    const who = employeesOfLogin(login);
     if (!who) throw new Error('Tài khoản dashboard không còn tồn tại.');
-    if (who.khongBoGhim) throw new Error('Kế toán không dùng mục Cảnh báo Telegram.');
+    if (who.khongBoGhim) throw new Error('Kế toán không được tắt/bật hay đổi ngân sách quảng cáo.');
+    if (!['admin', 'viewer'].includes(who.role)) throw new Error('Tài khoản này không được sửa quảng cáo.');
     const tk = tokenForAcc(acc);
     if (!tk) throw new Error('Không có token cho tài khoản quảng cáo này.');
     const fields = 'id,name,account_id,effective_status,daily_budget,lifetime_budget'
@@ -314,7 +319,7 @@ export function mountAdsAlert(app, {
     const campName = k === 's' ? ((obj.campaign || {}).name || '') : obj.name;
     const nv = detectEmployee(campName || '');
     if (who.role !== 'admin' && !(who.employees || []).includes(nv)) throw new Error(`Bạn không có quyền với ${kindName(k)} này.`);
-    return { obj, k, campName, tk, who: link[0] };
+    return { obj, k, campName, tk, who: login };
   }
 
   // Ngân sách cần sửa:
@@ -325,27 +330,28 @@ export function mountAdsAlert(app, {
     const daily = o => o && Number(o.daily_budget) > 0;
     if (k === 's') {
       if (lifetime(obj)) throw new Error('Nhóm dùng ngân sách trọn đời — đổi trên Ads Manager.');
-      if (daily(obj)) return [{ id: obj.id, label: 'Nhóm ' + esc(obj.name), budget: Number(obj.daily_budget) }];
+      if (daily(obj)) return [{ id: obj.id, ten: 'Nhóm ' + obj.name, label: 'Nhóm ' + esc(obj.name), budget: Number(obj.daily_budget) }];
       const c = obj.campaign;
       if (lifetime(c)) throw new Error('Chiến dịch dùng ngân sách trọn đời — đổi trên Ads Manager.');
-      if (daily(c)) return [{ id: c.id, label: 'Chiến dịch (CBO, chung mọi nhóm)', budget: Number(c.daily_budget) }];
+      if (daily(c)) return [{ id: c.id, ten: 'Chiến dịch (CBO, chung mọi nhóm)', label: 'Chiến dịch (CBO, chung mọi nhóm)', budget: Number(c.daily_budget), cbo: true }];
       throw new Error('Không tìm thấy ngân sách ngày của nhóm / chiến dịch.');
     }
     if (lifetime(obj)) throw new Error('Camp dùng ngân sách trọn đời — đổi trên Ads Manager.');
-    if (daily(obj)) return [{ id: obj.id, label: 'Camp', budget: Number(obj.daily_budget) }];
+    if (daily(obj)) return [{ id: obj.id, ten: 'Camp', label: 'Camp', budget: Number(obj.daily_budget) }];
     const r = await fbGet(`${obj.id}/adsets`, { fields: 'id,name,daily_budget,lifetime_budget,effective_status', limit: 200 }, tk);
     const sets = (r.data || []).filter(a => a.effective_status === 'ACTIVE' && daily(a));
     if (!sets.length) throw new Error('Không tìm thấy nhóm đang chạy có ngân sách ngày.');
-    return sets.map(a => ({ id: a.id, label: 'Nhóm ' + esc(a.name), budget: Number(a.daily_budget) }));
+    return sets.map(a => ({ id: a.id, ten: 'Nhóm ' + a.name, label: 'Nhóm ' + esc(a.name), budget: Number(a.daily_budget) }));
   }
-  async function setBudgets(targets, newOf, tk, maxBudget) {
+  async function setBudgets(targets, newOf, tk, maxBudget, out = []) {
     const plan = targets.map(t => ({ ...t, moi: Math.max(1000, Math.round(newOf(t.budget) / 1000) * 1000) }));
     const over = plan.find(p => p.moi > maxBudget);
-    if (over) throw new Error(`Ngân sách mới ${fmt(over.moi)} đ vượt mức tối đa ${fmt(maxBudget)} đ cho phép qua bot.`);
+    if (over) throw new Error(`Ngân sách mới ${fmt(over.moi)} đ vượt mức tối đa ${fmt(maxBudget)} đ/ngày (admin chỉnh ở trang Cảnh báo Telegram).`);
     const done = [];
     for (const p of plan) {
       await fbPost(p.id, { daily_budget: String(p.moi) }, tk);
       done.push(`${p.label}: ${fmt(p.budget)} → <b>${fmt(p.moi)} đ</b>`);
+      out.push({ id: String(p.id), ten: p.ten, cu: p.budget, moi: p.moi });
     }
     return done.join('\n');
   }
@@ -566,6 +572,59 @@ export function mountAdsAlert(app, {
     commit(s => { s.codes[code] = { user: login, exp: Date.now() + 15 * 60e3 }; });
     res.json({ ok: true, url: `https://t.me/${me.username}?start=${code}` });
   });
+  /* ---------- Tắt/bật + đổi ngân sách từ trang Ads (người đăng nhập; cùng kiểm tra quyền với nút Telegram) ----------
+     Kế toán bị chặn ở middleware server.js (/api/ads-alert*) và trong loadObjAs. */
+  const ctlArgs = b => {
+    const k = String(b.k || ''), acc = String(b.acc || ''), id = String(b.id || '');
+    return ['c', 's'].includes(k) && /^\d+$/.test(acc) && /^\d+$/.test(id) ? { k, acc, id } : null;
+  };
+  // Ngân sách hiện tại đọc mới từ Meta → điền sẵn vào ô sửa
+  app.get('/api/ads-alert/ctl', async (req, res) => {
+    const a = ctlArgs(req.query);
+    if (!a) return res.json({ ok: false, error: 'Sai tham số' });
+    try {
+      const ctx = await loadObjAs(user(req).user, a.k, a.acc, a.id);
+      let targets = [], loiNS = '';
+      try { targets = await budgetTargets(ctx); } catch (e) { loiNS = metaMsg(e); }
+      res.json({ ok: true, ten: ctx.obj.name, on: ctx.obj.effective_status === 'ACTIVE', step: STORE.cfg.step, maxBudget: STORE.cfg.maxBudget,
+        targets: targets.map(t => ({ id: String(t.id), ten: t.ten, budget: t.budget, cbo: !!t.cbo })), loiNS });
+    } catch (e) { res.json({ ok: false, error: metaMsg(e) }); }
+  });
+  // { k, acc, id, act: 'off' | 'on' | 'budget', value?: đ/ngày, pct?: ±% }
+  app.post('/api/ads-alert/ctl', express.json(), async (req, res) => {
+    const b = req.body || {}, a = ctlArgs(b);
+    if (!a) return res.json({ ok: false, error: 'Sai tham số' });
+    let ctx, viec = b.act;
+    try {
+      reload();
+      ctx = await loadObjAs(user(req).user, a.k, a.acc, a.id);
+      if (b.act === 'off' || b.act === 'on') {
+        await fbPost(a.id, { status: b.act === 'off' ? 'PAUSED' : 'ACTIVE' }, ctx.tk);
+        viec = (b.act === 'off' ? 'Đã TẮT ' : 'Đã BẬT ') + kindName(a.k);
+        addLog({ who: ctx.who + ' (web)', camp: a.id, ten: (a.k === 's' ? 'Nhóm ' : '') + ctx.obj.name, viec, ok: true });
+        return res.json({ ok: true, on: b.act === 'on' });
+      }
+      if (b.act !== 'budget') return res.json({ ok: false, error: 'Sai thao tác' });
+      const targets = await budgetTargets(ctx);
+      const pct = Number(b.pct), value = Math.round(Number(b.value));
+      let newOf;
+      if (pct) {
+        if (!(pct >= -90 && pct <= 300)) throw new Error('Mức % không hợp lệ.');
+        newOf = x => x * (1 + pct / 100); viec = `Ngân sách ${pct > 0 ? '+' : '−'}${Math.abs(pct)}%`;
+      } else if (value > 0) {
+        if (targets.length > 1) throw new Error(`Camp có ${targets.length} nhóm với ngân sách riêng — đổi theo % hoặc sửa từng nhóm.`);
+        newOf = () => value; viec = `Đặt ngân sách ${fmt(value)} đ`;
+      } else throw new Error('Nhập số ngân sách.');
+      const out = [];
+      await setBudgets(targets, newOf, ctx.tk, STORE.cfg.maxBudget, out);
+      addLog({ who: ctx.who + ' (web)', camp: a.id, ten: (a.k === 's' ? 'Nhóm ' : '') + ctx.obj.name, viec, ok: true });
+      res.json({ ok: true, budgets: out });
+    } catch (e) {
+      if (ctx) addLog({ who: ctx.who + ' (web)', camp: a.id, ten: ctx.obj.name, viec, ok: false, loi: metaMsg(e) });
+      res.json({ ok: false, error: metaMsg(e) });
+    }
+  });
+
   app.post('/api/ads-alert/unlink', (req, res) => {
     const login = user(req).user;
     commit(s => { if (!s.links[login]) return false; delete s.links[login]; });

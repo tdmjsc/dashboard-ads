@@ -241,6 +241,28 @@
   @media (prefers-reduced-motion:reduce){*{transition:none!important;}}
   :focus-visible{outline:2px solid var(--accent);outline-offset:2px;border-radius:6px;}
   .user-badge{display:inline-flex;align-items:center;gap:6px;font-size:13px;color:#9DB2FF;background:rgba(157,178,255,.1);border:1px solid rgba(157,178,255,.2);padding:7px 12px;border-radius:9px;font-weight:600;white-space:nowrap;margin-right:6px;}
+  /* Tắt/bật + sửa ngân sách ngay trên trang (ctlToggle / openBudget) */
+  .sw-btn{border:none;padding:0;cursor:pointer;} .sw-btn:hover{filter:brightness(.92);} .sw-btn:disabled{opacity:.5;cursor:wait;}
+  .bud-btn{border:none;background:none;cursor:pointer;font-size:12.5px;padding:2px 4px;border-radius:6px;opacity:.55;vertical-align:middle;}
+  .bud-btn:hover{opacity:1;background:var(--line-soft);}
+  .adset-name .switch{transform:scale(.8);vertical-align:middle;margin:-3px 4px 0 -4px;}
+  .bm-wrap{position:fixed;inset:0;background:rgba(16,25,43,.45);display:flex;align-items:center;justify-content:center;z-index:200;padding:16px;}
+  .bm-wrap.hidden{display:none;}
+  .bm{background:var(--card);border-radius:14px;width:100%;max-width:440px;box-shadow:0 12px 40px rgba(0,0,0,.25);overflow:hidden;}
+  .bm-h{padding:14px 18px;border-bottom:1px solid var(--line);font-weight:600;font-size:14px;font-family:'Space Grotesk';}
+  .bm-b{padding:16px 18px;font-size:13px;color:var(--text);display:flex;flex-direction:column;gap:12px;}
+  .bm-b .sub{color:var(--muted);font-size:12.5px;}
+  .bm-in{font-family:'Space Grotesk';font-size:22px;font-weight:600;text-align:right;padding:10px 12px;border:1px solid var(--line);border-radius:10px;width:100%;box-sizing:border-box;}
+  .bm-in:focus{outline:none;border-color:var(--teal);box-shadow:0 0 0 3px var(--teal-bg);}
+  .bm-pct{display:flex;gap:6px;flex-wrap:wrap;}
+  .bm-pct button{flex:1;min-width:52px;border:1px solid var(--line);background:var(--card);border-radius:8px;padding:7px 0;font-size:12.5px;font-weight:600;cursor:pointer;color:var(--text);}
+  .bm-pct button.on{background:var(--ink);color:#fff;border-color:var(--ink);}
+  .bm-list{display:flex;flex-direction:column;gap:4px;font-size:12.5px;} .bm-list div{display:flex;justify-content:space-between;gap:10px;}
+  .bm-f{padding:12px 18px;border-top:1px solid var(--line);display:flex;gap:8px;justify-content:flex-end;align-items:center;}
+  .bm-f .msg{margin-right:auto;font-size:12.5px;color:var(--red);}
+  .bm-f button{border:none;border-radius:8px;padding:9px 16px;font-weight:600;font-size:13px;cursor:pointer;}
+  .bm-ok{background:var(--teal);color:#fff;} .bm-ok:disabled{opacity:.5;cursor:wait;} .bm-no{background:var(--line-soft);color:var(--text);}
+  .ctl-toast{position:fixed;left:50%;bottom:24px;transform:translateX(-50%);background:var(--ink);color:#fff;padding:10px 16px;border-radius:10px;font-size:13px;z-index:210;box-shadow:0 6px 20px rgba(0,0,0,.25);max-width:90vw;}
 </style>
 <style>
 /* Ẩn sẵn menu admin để tránh hiện nhấp nháy với nhân viên; JS sẽ hiện lại nếu là admin */
@@ -509,6 +531,7 @@ async function loadData(opts){
       const a=document.getElementById('avatar'); a.textContent=data.me.user.slice(0,2).toUpperCase(); a.title=data.me.user+(data.me.role==='admin'?' (admin)':'');
       const ub=document.getElementById('userBadge'); if(ub&&data.me.displayName) ub.textContent='👤 '+data.me.displayName;
       const isAdmin=data.me.role==='admin';
+      CAN_CTL=['admin','viewer'].includes(data.me.role)&&!data.me.khongBoGhim;   // kế toán chỉ xem
       // Menu admin: chỉ hiện khi là admin (mặc định CSS đã ẩn)
       ['navProducts','navSalary','navSalaryProduct','navKQKD','navEmployees','navTonKho'].forEach(id=>{
         const el=document.getElementById(id); if(el) el.style.display = isAdmin ? 'inline-block' : 'none';
@@ -716,6 +739,92 @@ function buildCprBenchmark(list){
 function cprClass(cpr,obj,bench){const a=bench[obj]||0;if(!a||!cpr)return 'mid';const ratio=cpr/a;return ratio<=0.9?'good':ratio<=1.15?'mid':'bad';}
 
 /* mở/đóng chi tiết nhóm quảng cáo của 1 chiến dịch */
+/* ===== Tắt/bật + đổi ngân sách ngay trên trang (API /api/ads-alert/ctl, cùng kiểm tra quyền với nút Telegram:
+   NV chỉ camp của mình / team, admin mọi camp, kế toán không) ===== */
+let CAN_CTL=false, BM=null;
+const findCamp=id=>CAMPAIGNS.find(c=>String(c.id)===String(id));
+const findSet=(c,id)=>(c.adsets||[]).find(a=>String(a.id)===String(id));
+function ctlToast(t){let el=document.getElementById('ctlToast');if(!el){el=document.createElement('div');el.id='ctlToast';el.className='ctl-toast';document.body.appendChild(el);}
+  el.textContent=t;el.style.display='block';clearTimeout(el._t);el._t=setTimeout(()=>el.style.display='none',3500);}
+async function ctlCall(method,body){
+  try{const r=await fetch('/api/ads-alert/ctl'+(method==='GET'?'?'+new URLSearchParams(body):''),method==='GET'?{}:{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});
+    return await r.json().catch(()=>({ok:false,error:'HTTP '+r.status}));}catch(e){return{ok:false,error:'Không kết nối được máy chủ'};}
+}
+function swHtml(c,a){const o=a||c;
+  if(!CAN_CTL) return `<span class="switch ${o.on?'':'off'}"></span>`;
+  return `<button type="button" class="switch sw-btn ${o.on?'':'off'}" title="${o.on?'Bấm để tắt':'Bấm để bật'}" onclick="event.stopPropagation();ctlToggle(this,'${c.id}','${a?a.id:''}')"></button>`;}
+const budBtn=(c,a)=>CAN_CTL?`<button type="button" class="bud-btn" title="Sửa ngân sách" onclick="event.stopPropagation();openBudget('${c.id}','${a?a.id:''}')">✏️</button>`:'';
+async function ctlToggle(btn,campId,asId){
+  const c=findCamp(campId); if(!c) return; const a=asId?findSet(c,asId):null, o=a||c, nm=a?'nhóm':'chiến dịch';
+  if(!confirm(`${o.on?'TẮT':'BẬT'} ${nm} "${o.name}"?`)) return;
+  btn.disabled=true;
+  const r=await ctlCall('POST',{k:a?'s':'c',acc:c.acc,id:o.id,act:o.on?'off':'on'});
+  btn.disabled=false;
+  if(!r.ok) return alert('Không thực hiện được: '+r.error);
+  o.on=r.on;
+  if(a&&(c.adsets||[]).some(x=>x.budget>0)) c.budget=c.adsets.filter(x=>x.on).reduce((t,x)=>t+(x.budget||0),0);   // ABO: NS camp = tổng nhóm đang chạy
+  render(); ctlToast(`${r.on?'Đã BẬT':'Đã TẮT'} ${nm} ${o.name}`);
+}
+const onlyDigits=v=>Number(String(v).replace(/\D/g,''))||0;
+async function openBudget(campId,asId){
+  const c=findCamp(campId); if(!c) return; const a=asId?findSet(c,asId):null;
+  BM={c,a,k:a?'s':'c',id:(a||c).id,targets:[],pct:0};
+  document.getElementById('bmTitle').textContent='Ngân sách/ngày — '+(a?'nhóm ':'')+(a||c).name;
+  document.getElementById('bmBody').innerHTML='<div class="sub">Đang đọc ngân sách hiện tại từ Meta…</div>';
+  document.getElementById('bmMsg').textContent=''; document.getElementById('bmOk').disabled=true;
+  document.getElementById('bmWrap').classList.remove('hidden');
+  const r=await ctlCall('GET',{k:BM.k,acc:c.acc,id:BM.id});
+  if(!BM) return;
+  if(!r.ok||!r.targets.length){document.getElementById('bmBody').innerHTML=`<div class="sub" style="color:var(--red)">${esc(r.error||r.loiNS||'Không có ngân sách ngày để sửa.')}</div>`;return;}
+  BM.targets=r.targets; BM.max=r.maxBudget;
+  const pcts=[-30,-20,-10,10,20,30];
+  const pctRow=`<div class="bm-pct">${pcts.map(p=>`<button type="button" data-p="${p}" onclick="bmPct(${p})">${p>0?'+':'−'}${Math.abs(p)}%</button>`).join('')}</div>`;
+  if(r.targets.length===1){
+    const t=r.targets[0];
+    document.getElementById('bmBody').innerHTML=`<div class="sub">${esc(t.ten)}${t.cbo?' — đổi ngân sách chung của cả chiến dịch':''} · hiện <b>${fmtVND(t.budget)} ₫</b></div>
+      <input class="bm-in" id="bmIn" inputmode="numeric" autocomplete="off" value="${fmtVND(t.budget)}" oninput="bmInput()" onkeydown="if(event.key==='Enter')saveBudget()">
+      ${pctRow}<div class="sub" id="bmDiff"></div>`;
+    const inp=document.getElementById('bmIn'); inp.focus(); inp.select();
+  }else{
+    document.getElementById('bmBody').innerHTML=`<div class="sub">Chiến dịch có ${r.targets.length} nhóm đang chạy với ngân sách riêng: chọn % để đổi tất cả (hoặc sửa từng nhóm ở bảng chi tiết).</div>
+      ${pctRow}<div class="bm-list" id="bmList"></div>`;
+  }
+  bmRefresh();
+}
+function bmInput(){const inp=document.getElementById('bmIn');const v=onlyDigits(inp.value);inp.value=v?fmtVND(v):'';BM.pct=0;bmRefresh();}
+function bmPct(p){
+  if(BM.targets.length===1){const inp=document.getElementById('bmIn');const v=Math.round(BM.targets[0].budget*(1+p/100)/1000)*1000;inp.value=fmtVND(v);BM.pct=0;}
+  else BM.pct=BM.pct===p?0:p;
+  document.querySelectorAll('.bm-pct button').forEach(b=>b.classList.toggle('on',BM.targets.length>1&&Number(b.dataset.p)===BM.pct));
+  bmRefresh();
+}
+function bmRefresh(){
+  const ok=document.getElementById('bmOk');
+  if(BM.targets.length===1){
+    const cur=BM.targets[0].budget,v=onlyDigits(document.getElementById('bmIn').value);
+    const d=document.getElementById('bmDiff');
+    d.innerHTML=v&&v!==cur?`${v>cur?'Tăng':'Giảm'} ${Math.round(Math.abs(v/cur-1)*100)}%`+(v>BM.max?` · <span style="color:var(--red)">vượt mức tối đa ${fmtVND(BM.max)} ₫</span>`:''):'';
+    ok.disabled=!v||v===cur||v>BM.max;
+  }else{
+    document.getElementById('bmList').innerHTML=BM.targets.map(t=>`<div><span>${esc(t.ten)}</span><span>${fmtVND(t.budget)} ₫${BM.pct?` → <b>${fmtVND(Math.round(t.budget*(1+BM.pct/100)/1000)*1000)} ₫</b>`:''}</span></div>`).join('');
+    ok.disabled=!BM.pct;
+  }
+}
+function closeBudget(){BM=null;document.getElementById('bmWrap').classList.add('hidden');}
+async function saveBudget(){
+  if(!BM||document.getElementById('bmOk').disabled) return;
+  const body={k:BM.k,acc:BM.c.acc,id:BM.id,act:'budget'};
+  if(BM.targets.length===1) body.value=onlyDigits(document.getElementById('bmIn').value); else body.pct=BM.pct;
+  const ok=document.getElementById('bmOk'); ok.disabled=true; document.getElementById('bmMsg').textContent='Đang lưu…';
+  const r=await ctlCall('POST',body);
+  if(!r.ok){document.getElementById('bmMsg').textContent=r.error;ok.disabled=false;return;}
+  // Cập nhật số trên trang (không cần tải lại)
+  const c=BM.c;
+  for(const b of r.budgets){ if(String(b.id)===String(c.id)) c.budget=b.moi; else {const a=findSet(c,b.id); if(a) a.budget=b.moi;} }
+  if((c.adsets||[]).some(a=>a.budget>0)) c.budget=c.adsets.filter(a=>a.on).reduce((t,a)=>t+(a.budget||0),0)||c.budget;
+  closeBudget(); render(); ctlToast('Đã đổi ngân sách: '+r.budgets.map(b=>`${b.ten} ${fmtVND(b.cu)} → ${fmtVND(b.moi)} ₫`).join('; '));
+}
+
 function toggleCamp(id){ if(state.expanded.has(id)) state.expanded.delete(id); else state.expanded.add(id); renderCamp(); }
 
 /* khối chi tiết: các nhóm quảng cáo có chi tiêu > 0 */
@@ -730,7 +839,7 @@ function adsetBlock(c){
     const res=om?(m?m.v.don:0):a.results, resLbl=om?'đơn OMS':c.obj;
     const cprVal=res?Math.round(a.spent/res):0, cprTax=res?Math.round(sTax/res):0;
     return `<div class="adset">
-      <div class="adset-head"><span class="adset-name">${a.on?'':'⏸ '}${a.name}</span><span class="adset-budget">NS: ${a.budget?fmtVND(a.budget)+' ₫/ngày':'theo chiến dịch'}</span></div>
+      <div class="adset-head"><span class="adset-name">${CAN_CTL?swHtml(c,a):(a.on?'':'⏸ ')}${a.name}</span><span class="adset-budget">NS: ${a.budget?fmtVND(a.budget)+' ₫/ngày'+budBtn(c,a):'theo chiến dịch'}</span></div>
       <div class="adset-metrics">
         <span><b>${fmtVND(a.spent)} ₫</b><small>đã chi</small></span>
         <span><b style="color:#9A7B2E">${fmtVND(sTax)} ₫</b><small>sau thuế</small></span>
@@ -822,9 +931,9 @@ function renderCamp(){
     const exp=state.expanded.has(c.id);
     const nAdsets=(c.adsets||[]).filter(a=>a.spent>0).length;
     return `<tr>
-      <td data-label="Trạng thái"><div class="status-cell"><span class="switch ${c.on?'':'off'}"></span><span>${c.on?'Đang chạy':'Tạm dừng'}</span></div></td>
+      <td data-label="Trạng thái"><div class="status-cell">${swHtml(c)}<span>${c.on?'Đang chạy':'Tạm dừng'}</span></div></td>
       <td class="cell-name" onclick="toggleCamp('${c.id}')" style="cursor:pointer"><div class="camp-name"><span class="tgl">${exp?'▾':'▸'}</span> ${c.name}</div><div class="camp-meta"><span class="nv-chip">${nv}</span><span class="dot" style="display:inline-block;width:7px;height:7px;border-radius:50%;background:${acc.color}"></span>${acc.name} · <span class="objtag">${c.obj}</span>${nAdsets?` · <span class="objtag">${nAdsets} nhóm có chi tiêu</span>`:''}</div></td>
-      <td class="r" data-label="Ngân sách"><span class="money">${fmtVND(c.budget||0)}<span class="cur">₫</span></span><div style="font-size:11px;color:var(--faint);margin-top:2px">/ ngày</div></td>
+      <td class="r" data-label="Ngân sách"><span class="money">${fmtVND(c.budget||0)}<span class="cur">₫</span></span>${budBtn(c)}<div style="font-size:11px;color:var(--faint);margin-top:2px">/ ngày</div></td>
       <td class="r" data-label="Đã chi tiêu"><div class="spendcell"><span class="money">${fmtVND(s)}<span class="cur">₫</span></span><div class="spendbar"><i class="${barCls}" style="width:${pct}%"></i></div><div class="pct">${pct}% NS kỳ này</div></div></td>
       <td class="r" data-label="Sau thuế"><span class="money" style="color:#9A7B2E">${fmtVND(sTax)}<span class="cur">₫</span></span></td>
       <td class="r" data-label="Kết quả"><span class="res">${fmtVND(r)}<small>${obj}</small></span>${metaLine(metaSum(c))}</td>
@@ -905,5 +1014,9 @@ msg.style.color='';
 msg.textContent='Chọn khoảng ngày rồi bấm "Tìm kiếm" để tải dữ liệu.';
 </script>
 <script src="/api/oms-button"></script>
+<div class="bm-wrap hidden" id="bmWrap" onclick="if(event.target===this)closeBudget()">
+  <div class="bm"><div class="bm-h" id="bmTitle">Ngân sách</div><div class="bm-b" id="bmBody"></div>
+    <div class="bm-f"><span class="msg" id="bmMsg"></span><button class="bm-no" onclick="closeBudget()">Huỷ</button><button class="bm-ok" id="bmOk" onclick="saveBudget()">Lưu</button></div></div>
+</div>
 </body>
 </html>
