@@ -4,10 +4,14 @@
 //  • Mỗi tài khoản đăng nhập tự kết nối Telegram ở trang /ads-alert.html (nút mở bot với mã 1 lần
 //    → bot nhận /start <mã> → ghi chat của người đó). NV nhận camp của mình (gồm team nếu là lead),
 //    admin nhận mọi camp (tắt được trong cài đặt).
-//  • "Đắt" = chi tiêu hôm nay > ngưỡng CP/kết quả × max(kết quả, 1). Kết quả = đơn về OMS (như cột Kết quả
-//    trang Ads); camp tin nhắn chưa có đơn OMS thì dùng kết quả Meta. Camp có từ 2 nhóm quảng cáo thì xét và báo
-//    riêng từng nhóm (người dùng chọn 3/11/2026); camp / nhóm đã tắt thì không báo. Mỗi camp / nhóm báo 1 lần / ngày,
-//    báo lại khi tiêu thêm ≥ 1 lần ngưỡng mà vẫn đắt.
+//  • Kết quả = đơn về OMS (như cột Kết quả trang Ads); camp tin nhắn chưa có đơn OMS thì dùng kết quả Meta.
+//    Camp có từ 2 nhóm quảng cáo thì xét và báo riêng từng nhóm (người dùng chọn 3/11/2026); camp / nhóm đã tắt
+//    thì không báo. Luật báo (người dùng đặt 3/11/2026, số liệu hôm nay, `decide`):
+//      - 0–1 đơn: tiêu ≥ cprMax (150k) → "có dấu hiệu bị đắt"; tiêu ≥ offAt (200k) → "đề nghị tắt". Mỗi mức 1 lần/ngày.
+//      - ≥ 2 đơn: CPA trung bình > cprMax → báo, tin có nút chọn mức báo lại (cpaNext); chưa chọn thì mức kế tiếp.
+//      - > 2 đơn: so với lần kiểm tra trước (mốc `base`, chỉ dời khi có đơn mới / đã báo), CPA của đơn mới phát sinh
+//        > cprMax → báo; < lowCpa (80k) → nhắc tăng ngân sách (tối đa 1 lần / lowEveryMin phút). Tiêu thêm > cprMax
+//        mà chưa ra đơn mới cũng báo.
 //  • Nút trên tin: Tắt / Bật camp (hoặc nhóm), −/+ x% ngân sách (nhóm dùng ngân sách chiến dịch CBO thì đổi
 //    ngân sách chiến dịch), nhập ngân sách mới, xem số mới nhất. Trước mỗi thao tác máy chủ đọc lại từ Meta và kiểm tra người bấm có quyền với camp đó (theo tên NV trong tên camp).
 //    Ghi lên Meta cần token có quyền ads_management (xem /api/ads-alert?perm=1).
@@ -23,7 +27,11 @@ const TG_MAX = 4000;
 const LOG_MAX = 200;
 const CFG_DEFAULT = {
   on: false,          // bật kiểm tra tự động
-  cprMax: 150000,     // ngưỡng CP / kết quả (đ)
+  cprMax: 150000,     // ngưỡng đắt: CP / đơn (đ)
+  offAt: 200000,      // 0–1 đơn mà tiêu tới mức này → đề nghị tắt
+  lowCpa: 80000,      // CPA đơn mới phát sinh dưới mức này → nhắc tăng ngân sách (0 = tắt)
+  lowEveryMin: 120,   // nhắc tăng ngân sách tối đa 1 lần / … phút / nhóm
+  reAlert: [180000, 200000, 250000, 300000], // nút "báo lại khi CPA vượt …"
   everyMin: 30,       // kiểm tra mỗi … phút
   fromHour: 8,        // chỉ kiểm tra trong khung giờ VN [fromHour, toHour)
   toHour: 23,
@@ -96,8 +104,6 @@ export function mountAdsAlert(app, {
     const label = useOms ? 'đơn OMS' : (obj || 'kết quả') + ' (Meta)';
     return { spend, res, label, cpr: res ? spend / res : null };
   }
-  const isExpensive = (st, cfg) => cfg.cprMax > 0 && st.spend > cfg.cprMax * Math.max(st.res, 1);
-
   // "Đơn vị" được xét + báo: cả camp (k='c') hoặc 1 nhóm quảng cáo (k='s')
   const baseOf = c => ({ acc: String(c.acc), accName: c.accName, employee: c.employee, campName: c.name });
   function campUnit(c, oms) {
@@ -115,26 +121,91 @@ export function mountAdsAlert(app, {
   const unitsOf = (c, oms) => (c.adsets || []).length >= 2 ? c.adsets.map(a => setUnit(c, a, oms)) : [campUnit(c, oms)];
   const kindName = k => k === 's' ? 'nhóm' : 'camp';
 
-  function alertText(u, cfg, head) {
+  /* ---------- Luật báo ----------
+     e = trạng thái hôm nay của 1 camp / nhóm (s.sent[day][id]), sửa trực tiếp:
+       lv1/lv2: đã báo mức "dấu hiệu đắt" / "đề nghị tắt" (0–1 đơn); cpaNext: mức CPA trung bình sẽ báo
+       (chưa có = cprMax, 0 = không báo lại hôm nay); base: mốc { spend, res, at } để tính CPA đơn mới;
+       lowAt: lần nhắc tăng ngân sách gần nhất.
+     Trả các lý do cần báo: { lv: 3 đề nghị tắt | 2 đắt | 1 rẻ, kind, text }. */
+  // Mức báo lại kế tiếp: mức đầu tiên trong cfg.reAlert lớn hơn CPA hiện tại; không có thì CPA × 1,2
+  const nextLevels = (cpa, cfg) => {
+    const opts = (cfg.reAlert || []).map(Number).filter(v => v > cpa).sort((a, b) => a - b);
+    return opts.length ? opts : [Math.ceil(cpa * 1.2 / 10000) * 10000];
+  };
+  function decide(e, u, cfg, now) {
+    const { spend, res } = u.st;
+    const T = Number(cfg.cprMax) || 0, nm = kindName(u.k), R = [];
+    const per = (s, r) => `${fmt(s / r)} đ/đơn`;
+    if (res <= 1) {
+      const noi = res ? 'mới ra 1 đơn' : 'chưa ra đơn';
+      if (cfg.offAt > 0 && spend >= cfg.offAt && !e.lv2) {
+        e.lv2 = e.lv1 = true;
+        R.push({ lv: 3, kind: 'off', text: `Đã tiêu ${fmt(spend)} đ mà ${noi} → <b>đề nghị tắt ${nm}</b>` });
+      } else if (T > 0 && spend >= T && !e.lv1) {
+        e.lv1 = true;
+        R.push({ lv: 2, kind: 'warn', text: `Đã tiêu ${fmt(spend)} đ mà ${noi} → ${nm} có dấu hiệu bị đắt` });
+      }
+    } else {
+      const cpa = spend / res, thr = e.cpaNext == null ? T : e.cpaNext;
+      if (thr > 0 && cpa > thr) {
+        e.cpaNext = nextLevels(cpa, cfg)[0];
+        R.push({ lv: 2, kind: 'cpa', cpa, text: `CPA trung bình ${per(spend, res)} vượt ${fmt(thr)} đ` });
+      }
+    }
+    // CPA của đơn mới phát sinh so với mốc lần kiểm tra trước (nhóm đã có trên 2 đơn)
+    const b = e.base;
+    const since = b && `từ ${b.at}`;
+    if (!b || res < b.res || spend < b.spend) e.base = { spend, res, at: hhmm() };
+    else {
+      const dS = spend - b.spend, dR = res - b.res;
+      if (dR > 0) {
+        if (b.res > 2 && T > 0 && dS / dR > T)
+          R.push({ lv: 2, kind: 'new', text: `Đơn mới ${since}: tiêu thêm ${fmt(dS)} đ ra ${dR} đơn → <b>${per(dS, dR)}</b> (vượt ${fmt(T)} đ)` });
+        else if (b.res > 2 && cfg.lowCpa > 0 && dS / dR < cfg.lowCpa && (!e.lowAt || now - e.lowAt >= cfg.lowEveryMin * 60e3)) {
+          e.lowAt = now;
+          R.push({ lv: 1, kind: 'low', text: `Đơn mới ${since}: tiêu thêm ${fmt(dS)} đ ra ${dR} đơn → <b>${per(dS, dR)}</b> (dưới ${fmt(cfg.lowCpa)} đ) → nên tăng ngân sách` });
+        }
+        e.base = { spend, res, at: hhmm() };
+      } else if (T > 0 && dS > T) {
+        if (b.res > 2) R.push({ lv: 2, kind: 'new', text: `${since[0].toUpperCase() + since.slice(1)}: tiêu thêm ${fmt(dS)} đ chưa ra đơn mới` });
+        e.base = { spend, res, at: hhmm() };
+      }
+    }
+    return R;
+  }
+  function headOf(R, k) {
+    const nm = kindName(k), Nm = nm[0].toUpperCase() + nm.slice(1);
+    const lv = Math.max(...R.map(r => r.lv));
+    if (lv >= 3) return `🛑 <b>Đề nghị TẮT ${nm}</b>`;
+    if (lv === 2) return R.every(r => r.kind === 'warn') ? `⚠️ <b>${Nm} có dấu hiệu bị đắt</b>` : `⚠️ <b>${Nm} đang đắt</b>`;
+    return `💡 <b>${Nm} đang rẻ — nên tăng ngân sách</b>`;
+  }
+
+  function alertText(u, cfg, head, R = []) {
     const st = u.st;
     const budget = u.budget ? `${fmt(u.budget)} đ/ngày` : u.cbo ? `theo chiến dịch (CBO) ${fmt(u.cbo)} đ/ngày` : 'chưa rõ';
-    return `${head || (u.k === 's' ? '⚠️ <b>Nhóm quảng cáo đang đắt</b>' : '⚠️ <b>Camp đang đắt</b>')}\n<b>${esc(u.name)}</b>\n`
+    return `${head}\n<b>${esc(u.name)}</b>\n`
       + (u.k === 's' ? `Chiến dịch: ${esc(u.campName)}\n` : '')
       + `NV: ${esc(u.employee)} · ${esc(u.accName || u.acc)}\n`
-      + `Hôm nay (đến ${hhmm()}): chi <b>${fmt(st.spend)} đ</b> · <b>${st.res}</b> ${esc(st.label)}\n`
-      + `CP/kết quả: <b>${st.cpr == null ? 'chưa có kết quả' : fmt(st.cpr) + ' đ'}</b> (ngưỡng ${fmt(cfg.cprMax)} đ)\n`
+      + R.map(r => '• ' + r.text + '\n').join('')
+      + `Hôm nay (đến ${hhmm()}): chi <b>${fmt(st.spend)} đ</b> · <b>${st.res}</b> ${esc(st.label)}`
+      + ` · CPA <b>${st.cpr == null ? '—' : fmt(st.cpr) + ' đ'}</b>\n`
       + `Ngân sách: ${budget} · ${u.on ? '🟢 đang chạy' : '⚪️ đang tắt'}`;
   }
-  // callback_data: a|<việc>|<c|s>|<acc>|<id>
-  function keyboard(k, acc, id, on, step) {
-    const d = a => `a|${a}|${k}|${acc}|${id}`;
+  // callback_data: a|<việc>|<c|s>|<acc>|<id>[|<giá trị>]. levels: các mức cho nút "báo lại khi CPA vượt …"
+  function keyboard(k, acc, id, on, step, levels) {
+    const d = (a, v) => `a|${a}|${k}|${acc}|${id}` + (v == null ? '' : '|' + v);
     const nm = kindName(k);
-    return { inline_keyboard: [
+    const rows = [
       [on ? { text: `⏸ Tắt ${nm}`, callback_data: d('off') } : { text: `▶️ Bật ${nm}`, callback_data: d('on') },
         { text: '🔄 Số mới nhất', callback_data: d('ref') }],
       [{ text: `➖ ${step}% NS`, callback_data: d('dn') }, { text: `➕ ${step}% NS`, callback_data: d('up') },
         { text: '✏️ Nhập NS', callback_data: d('set') }],
-    ] };
+    ];
+    if (levels && levels.length) rows.push(
+      levels.slice(0, 3).map(v => ({ text: `🔔 CPA > ${Math.round(v / 1000)}k`, callback_data: d('rn', v) }))
+        .concat({ text: '🔕 Không báo lại', callback_data: d('rn', 0) }));
+    return { inline_keyboard: rows };
   }
 
   // Ai nhận cảnh báo: NV có camp (gồm lead của team), admin nếu adminAll
@@ -149,32 +220,33 @@ export function mountAdsAlert(app, {
   }
 
   /* ---------- Kiểm tra ---------- */
-  // send=false: chỉ tính (xem trước), không gửi, không đánh dấu. Camp / nhóm đã tắt thì bỏ qua.
+  // send=false: chỉ tính trên bản sao trạng thái (xem trước), không gửi, không lưu. Camp / nhóm đã tắt thì bỏ qua.
   async function check({ send = true } = {}) {
     reload();
     const cfg = STORE.cfg;
-    const day = vnDay();
+    const day = vnDay(), now = Date.now();
     const [camps, oms] = await Promise.all([getCampaigns(day, day), omsToday(day)]);
-    const list = [];
-    for (const c of camps || []) {
-      if (!c.on) continue;
-      for (const u of unitsOf(c, oms)) if (u.on && isExpensive(u.st, cfg)) list.push(u);
+    const units = [];
+    for (const c of camps || []) if (c.on) for (const u of unitsOf(c, oms)) if (u.on) units.push(u);
+    // Quyết định cho mọi camp / nhóm trong 1 lần commit (đọc trạng thái mới nhất → đánh dấu → ghi) để nhiều
+    // tiến trình không báo trùng; gửi Telegram sau.
+    const run = s => {
+      const today = (s.sent[day] ||= {});
+      for (const d of Object.keys(s.sent)) if (d < day) delete s.sent[d];
+      return units.map(u => { const e = (today[u.id] ||= {}); return { u, R: decide(e, u, cfg, now) }; }).filter(x => x.R.length);
+    };
+    if (!send) {
+      const list = run(JSON.parse(JSON.stringify({ sent: STORE.sent || {} })));
+      return { day, oms: !!oms, list: list.map(({ u, R }) => ({ id: u.id, loai: kindName(u.k), ten: u.name, camp: u.campName, nv: u.employee,
+        ...u.st, lyDo: R.map(r => r.text.replace(/<[^>]+>/g, '')), nguoiNhan: recipients(u, cfg).length })) };
     }
-    if (!send) return { day, oms: !!oms, list: list.map(u => ({ id: u.id, loai: kindName(u.k), ten: u.name, camp: u.campName, nv: u.employee, ...u.st, nguoiNhan: recipients(u, cfg).length })) };
-
+    const list = commit(run);
     let n = 0;
-    for (const u of list) {
-      // Đánh dấu trước khi gửi (nhiều tiến trình không báo trùng). Báo lại khi tiêu thêm ≥ 1 ngưỡng mà vẫn đắt.
-      const go = commit(s => {
-        const today = (s.sent[day] ||= {});
-        const prev = today[u.id];
-        if (prev && u.st.spend < prev.spend + cfg.cprMax) return false;
-        today[u.id] = { at: new Date().toISOString(), spend: u.st.spend, res: u.st.res };
-        for (const d of Object.keys(s.sent)) if (d < day) delete s.sent[d];
-      });
-      if (go === false) continue;
+    for (const { u, R } of list) {
+      const cpaR = R.find(r => r.kind === 'cpa');
+      const kb = keyboard(u.k, u.acc, u.id, u.on, cfg.step, cpaR && nextLevels(cpaR.cpa, cfg));
       for (const chatId of recipients(u, cfg)) {
-        const j = await say(chatId, alertText(u, cfg), { reply_markup: keyboard(u.k, u.acc, u.id, u.on, cfg.step) });
+        const j = await say(chatId, alertText(u, cfg, headOf(R, u.k), R), { reply_markup: kb });
         if (!j.ok) addLog({ who: 'bot', camp: u.id, ten: u.name, viec: 'gửi cảnh báo', ok: false, loi: j.description || 'Telegram từ chối' });
         else n++;
       }
@@ -276,7 +348,7 @@ export function mountAdsAlert(app, {
   async function onCallback(cq) {
     const parts = String(cq.data || '').split('|');
     if (parts.length === 4) parts.splice(2, 0, 'c');   // nút của tin cũ (trước khi báo theo nhóm): a|việc|acc|camp
-    const [, act, k, acc, id] = parts;
+    const [, act, k, acc, id, val] = parts;
     const chatId = cq.message && cq.message.chat.id;
     const answer = text => tg('answerCallbackQuery', { callback_query_id: cq.id, text: String(text).slice(0, 190), show_alert: text.length > 60 });
     if (!['c', 's'].includes(k) || !/^\d+$/.test(acc || '') || !/^\d+$/.test(id || '')) return answer('Nút không hợp lệ.');
@@ -290,7 +362,17 @@ export function mountAdsAlert(app, {
     const reply = (text, extra) => say(chatId, text, { reply_to_message_id: cq.message.message_id, allow_sending_without_reply: true, ...extra });
     const log = (viec, ok, loi) => addLog({ who, camp: id, ten: (k === 's' ? 'Nhóm ' : '') + obj.name, viec, ok, loi });
     try {
-      if (act === 'off' || act === 'on') {
+      if (act === 'rn') {
+        // Chọn mức CPA trung bình để báo lại (áp cho mọi người nhận camp / nhóm này, hôm nay)
+        const v = Number(val);
+        if (!Number.isFinite(v) || v < 0) return answer('Nút không hợp lệ.');
+        commit(s => { ((s.sent[vnDay()] ||= {})[id] ||= {}).cpaNext = v; });
+        const txt = v ? `🔔 Sẽ báo lại khi CPA trung bình vượt ${fmt(v)} đ` : '🔕 Hôm nay không báo lại CPA trung bình';
+        log(txt.slice(2), true);
+        await tg('editMessageReplyMarkup', { chat_id: chatId, message_id: cq.message.message_id, reply_markup: keyboard(k, acc, id, obj.effective_status === 'ACTIVE', cfg.step) });
+        await answer(txt);
+        await reply(`${txt} — ${title}\n(${esc(who)} lúc ${hhmm()})`);
+      } else if (act === 'off' || act === 'on') {
         await fbPost(id, { status: act === 'off' ? 'PAUSED' : 'ACTIVE' }, tk);
         const txt = act === 'off' ? `⏸ Đã TẮT ${nm}` : `▶️ Đã BẬT ${nm}`;
         log(txt.slice(2), true);
@@ -437,6 +519,8 @@ export function mountAdsAlert(app, {
       cprMax: num(b.cprMax, 0, 1e9), everyMin: num(b.everyMin, 10, 720),
       fromHour: num(b.fromHour, 0, 23), toHour: num(b.toHour, 1, 24),
       step: num(b.step, 5, 100), maxBudget: num(b.maxBudget, 10000, 1e10),
+      offAt: num(b.offAt, 0, 1e9), lowCpa: num(b.lowCpa, 0, 1e9), lowEveryMin: num(b.lowEveryMin, 10, 1440),
+      reAlert: Array.isArray(b.reAlert) ? [...new Set(b.reAlert.map(Number).filter(v => Number.isFinite(v) && v > 0).map(Math.round))].sort((x, y) => x - y).slice(0, 6) : undefined,
     };
     commit(s => { s.cfg = { ...CFG_DEFAULT, ...s.cfg }; for (const [k, v] of Object.entries(patch)) if (v !== undefined) s.cfg[k] = v; });
     res.json({ ok: true, cfg: STORE.cfg });

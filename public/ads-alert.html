@@ -67,7 +67,11 @@
       <div class="form">
         <label class="chk"><input type="checkbox" id="c-on"> Bật kiểm tra tự động</label>
         <label class="chk"><input type="checkbox" id="c-adminAll"> Admin nhận cảnh báo mọi camp</label>
-        <label>Ngưỡng CP / kết quả (đ)<input id="c-cprMax" inputmode="numeric"></label>
+        <label>Ngưỡng đắt: CPA (đ/đơn)<input id="c-cprMax" inputmode="numeric"></label>
+        <label>0–1 đơn mà tiêu tới … thì đề nghị tắt (đ)<input id="c-offAt" inputmode="numeric"></label>
+        <label>CPA đơn mới dưới … thì nhắc tăng NS (đ, 0 = tắt)<input id="c-lowCpa" inputmode="numeric"></label>
+        <label>Nhắc tăng NS tối đa 1 lần / … phút<input id="c-lowEveryMin" inputmode="numeric"></label>
+        <label>Các mức "báo lại khi CPA vượt" (đ, cách nhau dấu phẩy)<input id="c-reAlert" placeholder="180000, 200000, 250000, 300000"></label>
         <label>Kiểm tra mỗi (phút)<input id="c-everyMin" inputmode="numeric"></label>
         <label>Từ giờ<input id="c-fromHour" inputmode="numeric"></label>
         <label>Đến giờ<input id="c-toHour" inputmode="numeric"></label>
@@ -82,9 +86,10 @@
         </div>
       </div>
       <div class="body mute" style="padding-top:0">
-        Báo khi chi tiêu hôm nay &gt; ngưỡng × max(số kết quả, 1). Kết quả = đơn về OMS; camp tin nhắn chưa có đơn OMS thì dùng kết quả Meta.
-        Camp có từ 2 nhóm quảng cáo thì báo riêng từng nhóm; camp / nhóm đã tắt thì không báo.
-        Mỗi camp / nhóm báo 1 lần/ngày, báo lại khi tiêu thêm ≥ 1 ngưỡng mà vẫn đắt.
+        Số hôm nay. Kết quả = đơn về OMS (camp tin nhắn chưa có đơn OMS thì dùng kết quả Meta). Camp có từ 2 nhóm thì xét từng nhóm; camp / nhóm đã tắt không báo.<br>
+        • 0–1 đơn: tiêu ≥ ngưỡng đắt → "có dấu hiệu bị đắt"; tiêu ≥ mức đề nghị tắt → "đề nghị tắt" (mỗi mức 1 lần/ngày).<br>
+        • Từ 2 đơn: CPA trung bình vượt ngưỡng đắt → báo, kèm nút chọn mức báo lại.<br>
+        • Trên 2 đơn: CPA của các đơn mới phát sinh từ lần kiểm tra trước vượt ngưỡng đắt (hoặc tiêu thêm quá ngưỡng mà chưa ra đơn mới) → báo; dưới mức nhắc → nhắc tăng ngân sách.
       </div>
     </div>
 
@@ -109,7 +114,7 @@ const $ = id => document.getElementById(id);
 const esc = s => String(s == null ? '' : s).replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
 const fmt = n => Math.round(Number(n) || 0).toLocaleString('vi-VN');
 const tm = s => s ? new Date(s).toLocaleString('vi-VN', { hour12: false }) : '';
-const CFG_KEYS = ['cprMax', 'everyMin', 'fromHour', 'toHour', 'step', 'maxBudget'];
+const CFG_KEYS = ['cprMax', 'offAt', 'lowCpa', 'lowEveryMin', 'everyMin', 'fromHour', 'toHour', 'step', 'maxBudget'];
 async function api(url, opts) {
   const r = await fetch(url, opts);
   return r.json().catch(() => ({ ok: false, error: 'HTTP ' + r.status }));
@@ -147,8 +152,9 @@ async function loadAdmin() {
   $('c-on').checked = !!j.cfg.on;
   $('c-adminAll').checked = !!j.cfg.adminAll;
   for (const k of CFG_KEYS) $('c-' + k).value = j.cfg[k];
+  $('c-reAlert').value = (j.cfg.reAlert || []).join(', ');
   const r = j.lastRun;
-  $('run-info').innerHTML = r ? `Lượt gần nhất: ${tm(r.at)}` + (r.loi ? ` · <span class="err">${esc(r.loi)}</span>` : r.xong ? ` · ${r.dat || 0} camp đắt, gửi ${r.daGui || 0} tin` + (r.oms === false ? ' · <span class="err">không đọc được OMS (đang dùng kết quả Meta)</span>' : '') : ' · đang chạy') : '<span class="mute">Chưa chạy lượt nào</span>';
+  $('run-info').innerHTML = r ? `Lượt gần nhất: ${tm(r.at)}` + (r.loi ? ` · <span class="err">${esc(r.loi)}</span>` : r.xong ? ` · ${r.dat || 0} camp / nhóm cần báo, gửi ${r.daGui || 0} tin` + (r.oms === false ? ' · <span class="err">không đọc được OMS (đang dùng kết quả Meta)</span>' : '') : ' · đang chạy') : '<span class="mute">Chưa chạy lượt nào</span>';
   $('links').innerHTML = j.links.length ? `<table><tr><th>Tài khoản</th><th>Telegram</th><th>Nhận camp của</th><th>Kết nối lúc</th></tr>`
     + j.links.map(l => `<tr><td>${esc(l.login)}</td><td>${esc(l.tgName)}</td><td>${l.role === 'admin' ? (j.cfg.adminAll ? 'Mọi camp (admin)' : '<span class="mute">Admin — đang tắt nhận mọi camp</span>') : esc((l.nv || []).join(', ')) || '<span class="mute">—</span>'}</td><td>${tm(l.at)}</td></tr>`).join('') + '</table>'
     : '<div class="body mute">Chưa ai kết nối.</div>';
@@ -159,6 +165,7 @@ async function loadAdmin() {
 async function saveCfg() {
   const body = { on: $('c-on').checked, adminAll: $('c-adminAll').checked };
   for (const k of CFG_KEYS) body[k] = Number(String($('c-' + k).value).replace(/[.,\s]/g, ''));
+  body.reAlert = $('c-reAlert').value.split(/[,;]/).map(v => Number(v.replace(/[.\s]/g, ''))).filter(v => v > 0);
   const j = await post('/api/ads-alert/cfg', body);
   $('cfg-msg').innerHTML = j.ok ? '<span class="ok">Đã lưu</span>' : `<span class="err">${esc(j.error || 'Lưu lỗi')}</span>`;
   loadAdmin(); loadMe();
@@ -169,12 +176,12 @@ async function preview(send) {
   showOut('Đang kiểm tra…', '<div class="body mute">Đang đọc số liệu hôm nay từ Meta + OMS…</div>');
   const j = await api('/api/ads-alert/check' + (send ? '?send=1' : ''));
   if (!j.ok) return showOut('Lỗi', `<div class="body err">${esc(j.error)}</div>`);
-  if (send) { showOut('Đã kiểm tra', `<div class="body">${j.dat} camp đắt · đã gửi ${j.daGui} tin (camp đã báo hôm nay mà chưa tiêu thêm 1 ngưỡng thì không báo lại).</div>`); loadAdmin(); return; }
+  if (send) { showOut('Đã kiểm tra', `<div class="body">${j.dat} camp / nhóm cần báo · đã gửi ${j.daGui} tin. Cái đã báo ở cùng mức trong hôm nay thì không báo lại.</div>`); loadAdmin(); return; }
   const warn = j.oms ? '' : '<div class="body err">Không đọc được OMS — đang tính theo kết quả Meta.</div>';
-  showOut(`Camp đang đắt hôm nay (${j.list.length})`, warn + (j.list.length
-    ? `<table><tr><th>Loại</th><th>Camp / nhóm</th><th>NV</th><th>Chi</th><th>Kết quả</th><th>CP/KQ</th><th>Người nhận</th></tr>`
-      + j.list.map(c => `<tr><td>${c.loai === 'nhóm' ? 'Nhóm' : 'Camp'}</td><td>${esc(c.ten)}${c.loai === 'nhóm' ? `<br><span class="mute">${esc(c.camp)}</span>` : ''}</td><td>${esc(c.nv)}</td><td class="num">${fmt(c.spend)}</td><td class="num">${c.res} ${esc(c.label)}</td><td class="num">${c.cpr == null ? '—' : fmt(c.cpr)}</td><td class="num">${c.nguoiNhan || '<span class="err">0</span>'}</td></tr>`).join('') + '</table>'
-    : '<div class="body mute">Không có camp nào vượt ngưỡng.</div>'));
+  showOut(`Sẽ báo nếu gửi bây giờ (${j.list.length})`, warn + (j.list.length
+    ? `<table><tr><th>Loại</th><th>Camp / nhóm</th><th>NV</th><th>Chi</th><th>Kết quả</th><th>CPA</th><th>Lý do báo</th><th>Người nhận</th></tr>`
+      + j.list.map(c => `<tr><td>${c.loai === 'nhóm' ? 'Nhóm' : 'Camp'}</td><td>${esc(c.ten)}${c.loai === 'nhóm' ? `<br><span class="mute">${esc(c.camp)}</span>` : ''}</td><td>${esc(c.nv)}</td><td class="num">${fmt(c.spend)}</td><td class="num">${c.res} ${esc(c.label)}</td><td class="num">${c.cpr == null ? '—' : fmt(c.cpr)}</td><td>${(c.lyDo || []).map(esc).join('<br>')}</td><td class="num">${c.nguoiNhan || '<span class="err">0</span>'}</td></tr>`).join('') + '</table>'
+    : '<div class="body mute">Không có camp / nhóm nào cần báo lúc này.</div>'));
 }
 async function perms() {
   showOut('Quyền token Meta', '<div class="body mute">Đang kiểm tra…</div>');
