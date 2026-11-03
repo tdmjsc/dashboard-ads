@@ -381,6 +381,12 @@ export function mountOMS(app, { mysql, express, getTeamLead = () => ({}) }) {
     if (typeof global.__fbAdRef !== 'function') throw new Error('Chưa nạp hàm tra ID Meta');
     return adRefFromUtm(u, { byId: global.__fbAdRef, adidRef, learn: (adid, ref) => learnAdid(adid, ref, 'utm') });
   }
+  // Đơn Thái (thailand.js) tra cùng cách, dùng chung thư viện adid
+  global.__omsLookupAdRef = async u => {
+    if (!getPool()) throw new Error('OMS DB chưa cấu hình');
+    await ensureTables(getPool());
+    return lookupAdRef(u);
+  };
   const fbAdidOf = fbclid => adIdFromFbclid(fbclid) || (String(fbclid || '').trim() ? '-' : '');
   const NO_UTM_ID = ['utm_campaign', 'utm_medium', 'utm_term', 'utm_content'].map(k => `${k} NOT REGEXP '^[0-9]{10,}$'`).join(' AND ');
 
@@ -425,8 +431,11 @@ export function mountOMS(app, { mysql, express, getTeamLead = () => ({}) }) {
     return 'doi';
   }
   // Đơn mang adid chưa ra chiến dịch; oldAd: đơn trước đó ghép theo cặp cũ (không có ID số trong UTM)
-  function regroupAdid(adid, ref, oldAd) {
+  async function regroupAdid(adid, ref, oldAd) {
     if (!ref.campaign_id) return null;
+    if (typeof global.__thaiRegroupAdid === 'function') {
+      await Promise.resolve(global.__thaiRegroupAdid(adid, ref, oldAd)).catch(e => console.error('[OMS] ghép adid đơn Thái:', e.message));
+    }
     return saveAdRef(`ngay_ve >= ? AND fb_adid=? AND (fb_campaign_id=''${oldAd ? ` OR (fb_ad_id=? AND ${NO_UTM_ID})` : ''})`,
       [omsDateBoundary(AD_REF_FROM), adid, ...(oldAd ? [oldAd] : [])], ref);
   }
@@ -668,6 +677,28 @@ export function mountOMS(app, { mysql, express, getTeamLead = () => ({}) }) {
       FROM oms_orders o LEFT JOIN oms_adid_map m ON m.adid=o.fb_adid
       WHERE o.ngay_ve >= ? AND o.fb_adid NOT IN ('', '-') AND o.fb_campaign_id=''
       GROUP BY o.fb_adid ORDER BY den DESC LIMIT 300`, [omsDateBoundary(AD_REF_FROM)]);
+    // Đơn Thái (thailand.js) mang adid chưa ghép: gộp vào cùng dòng adid
+    const thai = typeof global.__thaiAdidPending === 'function'
+      ? await global.__thaiAdidPending().catch(e => { console.error('[OMS] adid đơn Thái:', e.message); return []; }) : [];
+    if (thai.length) {
+      const byAdid = new Map(chuaGhep.map(c => [c.adid, c]));
+      const map2 = await db('SELECT adid, ad_id, xung_dot FROM oms_adid_map WHERE adid IN (?)', [thai.map(t => t.adid)]);
+      const m2 = new Map(map2.map(m => [m.adid, m]));
+      for (const t of thai) {
+        const nv = t.nv ? `${t.nv} (Thái)` : '(Thái)';
+        const c = byAdid.get(t.adid);
+        if (c) {
+          c.don += t.don;
+          c.nv = [c.nv, nv].filter(Boolean).join(', ');
+          if (new Date(t.tu) < new Date(c.tu)) c.tu = t.tu;
+          if (new Date(t.den) > new Date(c.den)) c.den = t.den;
+        } else {
+          const m = m2.get(t.adid);
+          chuaGhep.push({ ...t, nv, ad_id: m?.ad_id || null, xung_dot: m?.xung_dot || '' });
+        }
+      }
+      chuaGhep.sort((a, b) => new Date(b.den) - new Date(a.den));
+    }
     res.json({ map, chuaGhep });
   }));
   // Thêm / sửa tay: { ad_id, adid } hoặc { ad_id, link } (link bấm từ quảng cáo, có ?fbclid=…). ad_id phải là

@@ -90,9 +90,9 @@ export function mountAdsAlert(app, {
   // Kết quả = đơn OMS (như cột Kết quả trang Ads); camp tin nhắn chưa có đơn OMS → kết quả Meta.
   // Trả { c: {campaign_id: đơn}, s: {adset_id: đơn} } hoặc null khi không đọc được OMS.
   async function omsToday(day) {
-    if (typeof global.__omsAdStats !== 'function') return null;
+    if (typeof global.__adOrderStats !== 'function') return null;
     try {
-      const st = await global.__omsAdStats(day, day);
+      const st = await global.__adOrderStats(day, day); // đơn OMS + đơn Thái
       if (!st) return null;
       const by = { c: {}, s: {} };
       for (const r of st.rows) {

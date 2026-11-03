@@ -1391,6 +1391,19 @@ app.get('/api/data', async (req, res) => {
   }
 });
 
+// Đơn theo chiến dịch / nhóm: đơn OMS + đơn Thái (th_orders, thailand.js; Ladipage Thái không đẩy về OMS).
+// Cùng dạng global.__omsAdStats; null khi không đọc được nguồn nào. Dùng ở trang Ads và bot cảnh báo.
+async function adOrderStats(since, until) {
+  const read = async (name, fn) => {
+    if (typeof fn !== 'function') return null;
+    try { return await fn(since, until); } catch (e) { console.error(`[ads] đơn ${name}:`, e.message); return null; }
+  };
+  const [oms, thai] = await Promise.all([read('OMS', global.__omsAdStats), read('Thái', global.__thaiAdStats)]);
+  if (!oms && !thai) return null;
+  return { tu: (oms || thai).tu, rows: [...(oms?.rows || []), ...(thai?.rows || [])] };
+}
+global.__adOrderStats = adOrderStats;
+
 // Đơn OMS theo chiến dịch + nhóm quảng cáo cho trang Ads (đọc mới mỗi lần, không cache).
 // Trả { camps: { [campaign_id]: { name, don, chot, khongMua, doanhThu, adsets: { [adset_id]: {...} } } },
 //       none: đơn chưa ra chiến dịch, dangTra: đơn đang chờ tra ID, tu: ngày bắt đầu tính thật sự }.
@@ -1400,9 +1413,8 @@ app.get('/api/ads/oms-orders', async (req, res) => {
     const { since, until } = req.query;
     const isDay = v => /^\d{4}-\d{2}-\d{2}$/.test(v || '');
     if (!isDay(since) || !isDay(until)) return res.status(400).json({ ok: false, error: 'Sai ngày' });
-    if (typeof global.__omsAdStats !== 'function') return res.json({ ok: false, error: 'OMS chưa bật' });
-    const stats = await global.__omsAdStats(since, until);
-    if (!stats) return res.json({ ok: false, error: 'OMS chưa cấu hình DB' });
+    const stats = await adOrderStats(since, until);
+    if (!stats) return res.json({ ok: false, error: 'OMS chưa bật / chưa cấu hình DB' });
     let rows = stats.rows;
     const me = req.session.user;
     if (me.role !== 'admin') {

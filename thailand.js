@@ -1,6 +1,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { adRefFromUtm, hasUtm, findFbclid, adIdFromFbclid, utmFromUrl, AD_REF_FROM } from './oms-ad-ref.js';
 // =====================================================================
 //  MODULE QUẢN LÝ ĐƠN HÀNG THÁI LAN  —  thailand.js
 //  Thiết kế AN TOÀN TUYỆT ĐỐI: nếu phần này lỗi, KHÔNG làm sập app chính.
@@ -80,9 +81,24 @@ async function ensureTable(pool) {
     "ma_sp VARCHAR(100) DEFAULT ''",
     "nguon_url TEXT",
     "quoc_gia VARCHAR(10) DEFAULT 'thai'",
+    // Đơn → chiến dịch / nhóm quảng cáo Meta (như oms_orders, xem oms-ad-ref.js): UTM + fbclid của link đặt
+    // hàng, adid giải từ fbclid ('-' = có fbclid không có adid), kết quả tra
+    "utm_campaign VARCHAR(255) DEFAULT ''",
+    "utm_medium VARCHAR(255) DEFAULT ''",
+    "utm_term VARCHAR(255) DEFAULT ''",
+    "utm_content VARCHAR(255) DEFAULT ''",
+    "fbclid VARCHAR(512) DEFAULT ''",
+    "fb_adid VARCHAR(32) DEFAULT ''",
+    "fb_campaign_id VARCHAR(32) DEFAULT ''",
+    "fb_campaign_name VARCHAR(255) DEFAULT ''",
+    "fb_adset_id VARCHAR(32) DEFAULT ''",
+    "fb_adset_name VARCHAR(255) DEFAULT ''",
+    "fb_ad_id VARCHAR(32) DEFAULT ''",
+    "fb_ref_at DATETIME NULL",
   ]) {
     try { await pool.query(`ALTER TABLE th_orders ADD COLUMN ${col}`); } catch (e) {}
   }
+  try { await pool.query('ALTER TABLE th_orders ADD INDEX idx_fb_adid (fb_adid)'); } catch (e) {}
   // Đơn cũ (trống quốc gia) → mặc định Thái
   try { await pool.query(`UPDATE th_orders SET quoc_gia = 'thai' WHERE quoc_gia IS NULL OR quoc_gia = ''`); } catch {}
 
@@ -352,12 +368,145 @@ export function mountThailand(app, { mysql, requireLogin, express, getCampaigns,
     }
 
     const today = todayVN();
-    await p.query(
-      `INSERT INTO th_orders (ngay_ve, ho_ten, sdt, dia_chi, combo, so_luong, gia_thb, nhan_vien, trang_thai, ghi_chu, ma_mau, nguon_url, quoc_gia)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'Mới về', '', ?, ?, ?)`,
-      [today, name, phone, address, message, soLuong, gia, nhanVien, maMau, nguonUrl, quocGia]
+    const ad = adFieldsOf(b, nguonUrl);
+    const [ins] = await p.query(
+      `INSERT INTO th_orders (ngay_ve, ho_ten, sdt, dia_chi, combo, so_luong, gia_thb, nhan_vien, trang_thai, ghi_chu, ma_mau, nguon_url, quoc_gia,
+         utm_campaign, utm_medium, utm_term, utm_content, fbclid, fb_adid)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'Mới về', '', ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      [today, name, phone, address, message, soLuong, gia, nhanVien, maMau, nguonUrl, quocGia,
+       ad.utm_campaign, ad.utm_medium, ad.utm_term, ad.utm_content, ad.fbclid, ad.fb_adid]
     );
+    // Tra chiến dịch / nhóm ngay (không chặn Ladipage); lỗi thì fixThaiAdRefs tra lại
+    thaiAdRefOne(ins.insertId, ad).catch(e => console.error('[thailand] tra quảng cáo:', e.message));
     res.json({ ok: true, message: 'Đã nhận đơn', parsed: { soLuong, gia, ma_mau: maMau, nhan_vien: nhanVien, quoc_gia: quocGia, matched: !!matched } });
+  }));
+
+  // ====================== ĐƠN THÁI → CHIẾN DỊCH / NHÓM QUẢNG CÁO (trang Ads) ======================
+  // Như đơn OMS (oms-ad-ref.js, oms.js fixAdRefs): ID số trong UTM tra qua Graph API, đơn từ link trong bài /
+  // bình luận (chỉ có fbclid) tra qua thư viện adid của OMS (global.__omsLookupAdRef; OMS chưa bật thì chỉ
+  // tra UTM). Chỉ đơn từ AD_REF_FROM. Trang Ads cộng đơn Thái với đơn OMS (adOrderStats trong server.js).
+  const UTM_ID_KEYS = ['utm_campaign', 'utm_medium', 'utm_term', 'utm_content'];
+  const HAS_AD_SQL = "(utm_campaign!='' OR utm_medium!='' OR utm_term!='' OR utm_content!='' OR fbclid!='')";
+  // UTM / fbclid từ dữ liệu Ladipage gửi, thiếu thì lấy trong URL trang (url_page)
+  function adFieldsOf(b, url) {
+    const fromUrl = utmFromUrl(url) || {};
+    const out = {};
+    for (const k of UTM_ID_KEYS) out[k] = String(b[k] || fromUrl[k] || '').trim().slice(0, 255);
+    out.fbclid = String(findFbclid(b) || fromUrl.fbclid || '').slice(0, 512);
+    out.fb_adid = adIdFromFbclid(out.fbclid) || (out.fbclid ? '-' : '');
+    return out;
+  }
+  function thaiLookup(u) {
+    if (typeof global.__omsLookupAdRef === 'function') return global.__omsLookupAdRef(u);
+    if (typeof global.__fbAdRef !== 'function') throw new Error('Chưa nạp hàm tra ID Meta');
+    return adRefFromUtm(u, { byId: global.__fbAdRef });
+  }
+  // Ghi kết quả tra cho các đơn khớp where; tra không ra vẫn ghi fb_ref_at để không tra lại mãi
+  async function saveThaiAdRef(where, params, ref) {
+    const p = await db();
+    const [r] = await p.query(`UPDATE th_orders SET fb_campaign_id=?, fb_campaign_name=?, fb_adset_id=?, fb_adset_name=?,
+      fb_ad_id=?, fb_ref_at=UTC_TIMESTAMP() WHERE ${where}`,
+      [ref.campaign_id || '', (ref.campaign_name || '').slice(0, 255), ref.adset_id || '',
+       (ref.adset_name || '').slice(0, 255), ref.ad_id || '', ...params]);
+    return r.affectedRows || 0;
+  }
+  async function thaiAdRefOne(id, u) {
+    if (!id || todayVN() < AD_REF_FROM) return;
+    if (!hasUtm(u)) return saveThaiAdRef('id=?', [id], {});
+    await saveThaiAdRef('id=?', [id], await thaiLookup(u));
+  }
+  // OMS vừa học / thêm tay cặp adid → quảng cáo: ghép ngay đơn Thái mang adid đó (gọi từ regroupAdid ở oms.js)
+  global.__thaiRegroupAdid = (adid, ref, oldAd) => {
+    if (!ref?.campaign_id) return null;
+    const noUtmId = UTM_ID_KEYS.map(k => `${k} NOT REGEXP '^[0-9]{10,}$'`).join(' AND ');
+    return saveThaiAdRef(`ngay_ve >= ? AND fb_adid=? AND (fb_campaign_id=''${oldAd ? ` OR (fb_ad_id=? AND ${noUtmId})` : ''})`,
+      [AD_REF_FROM, adid, ...(oldAd ? [oldAd] : [])], ref);
+  };
+  // Đơn về trước khi có cột: lấy UTM / fbclid từ nguon_url; không có gì để tra thì đánh dấu đã tra
+  async function fillThaiAdFields() {
+    const p = await db();
+    const [rows] = await p.query(`SELECT id, nguon_url FROM th_orders WHERE ngay_ve >= ? AND fb_ref_at IS NULL
+      AND NOT ${HAS_AD_SQL} LIMIT 5000`, [AD_REF_FROM]);
+    for (const r of rows) {
+      const ad = adFieldsOf({}, r.nguon_url);
+      if (hasUtm(ad)) {
+        await p.query('UPDATE th_orders SET utm_campaign=?, utm_medium=?, utm_term=?, utm_content=?, fbclid=?, fb_adid=? WHERE id=?',
+          [ad.utm_campaign, ad.utm_medium, ad.utm_term, ad.utm_content, ad.fbclid, ad.fb_adid, r.id]);
+      } else await p.query('UPDATE th_orders SET fb_ref_at=UTC_TIMESTAMP() WHERE id=?', [r.id]);
+    }
+    return rows.length;
+  }
+  // Tra cho đơn chưa tra (lúc về tra lỗi) + đơn 14 ngày gần đây chưa ra chiến dịch (tra lại mỗi 6 giờ).
+  // Gom theo bộ UTM → mỗi bộ tra 1 lần. all: tra lại mọi đơn từ AD_REF_FROM.
+  let fixingThai = false;
+  async function fixThaiAdRefs(all = false) {
+    if (fixingThai) return { busy: true };
+    fixingThai = true;
+    try {
+      const dien = await fillThaiAdFields();
+      const p = await db();
+      const cond = all ? '1=1' : `(fb_ref_at IS NULL OR (fb_campaign_id='' AND fb_ref_at < UTC_TIMESTAMP() - INTERVAL 6 HOUR
+        AND ngay_ve > CURDATE() - INTERVAL 14 DAY))`;
+      const [rows] = await p.query(`SELECT utm_campaign, utm_medium, utm_term, utm_content, fbclid, COUNT(*) AS don
+        FROM th_orders WHERE ngay_ve >= ? AND ${HAS_AD_SQL} AND ${cond}
+        GROUP BY utm_campaign, utm_medium, utm_term, utm_content, fbclid ORDER BY MAX(ngay_ve) DESC LIMIT 300`, [AD_REF_FROM]);
+      const out = { dien, bo: rows.length, ra: 0, khongRa: 0, don: 0 };
+      for (const r of rows) {
+        let ref;
+        try { ref = await thaiLookup(r); }
+        catch (e) { out.dung = e.message; break; } // rate limit / mạng: dừng, lần chạy sau tra tiếp
+        await saveThaiAdRef('ngay_ve >= ? AND utm_campaign<=>? AND utm_medium<=>? AND utm_term<=>? AND utm_content<=>? AND fbclid<=>?',
+          [AD_REF_FROM, r.utm_campaign, r.utm_medium, r.utm_term, r.utm_content, r.fbclid], ref);
+        if (ref.campaign_id) out.ra++; else out.khongRa++;
+        out.don += Number(r.don) || 0;
+      }
+      return out;
+    } finally { fixingThai = false; }
+  }
+  setTimeout(function loop() {
+    fixThaiAdRefs().catch(e => console.error('[thailand] fixThaiAdRefs:', e.message));
+    setTimeout(loop, 30 * 60 * 1000);
+  }, 90 * 1000);
+
+  // Thống kê như global.__omsAdStats (cùng dạng dòng). Đơn Huỷ không tính (như báo cáo MKT Thái). Không có
+  // chốt / doanh thu (tiền THB, trang Ads không hiện). nv_marketing = nhân viên của đơn Thái.
+  global.__thaiAdStats = async (since, until) => {
+    const tu = since < AD_REF_FROM ? AD_REF_FROM : since;
+    if (tu > until) return { tu, rows: [] };
+    const p = await db();
+    const [rows] = await p.query(`SELECT fb_campaign_id, MAX(fb_campaign_name) AS campaign_name,
+      fb_adset_id, MAX(fb_adset_name) AS adset_name, nhan_vien AS nv_marketing, COUNT(*) AS don,
+      SUM(CASE WHEN fb_ref_at IS NULL AND ${HAS_AD_SQL} THEN 1 ELSE 0 END) AS dangTra
+      FROM th_orders WHERE ngay_ve >= ? AND ngay_ve <= ? AND trang_thai NOT IN ('Huỷ','CANCEL')
+      GROUP BY fb_campaign_id, fb_adset_id, nhan_vien`, [tu, until]);
+    return { tu, rows: rows.map(r => ({ ...r, don: +r.don || 0, chot: 0, khongMua: 0, doanhThu: 0, dangTra: +r.dangTra || 0 })) };
+  };
+  // adid của đơn Thái chưa ra chiến dịch → danh sách "chưa ghép" ở /oms-adid.html
+  global.__thaiAdidPending = async () => {
+    const p = await db();
+    const [rows] = await p.query(`SELECT fb_adid AS adid, COUNT(*) AS don,
+      CONCAT(DATE_FORMAT(MIN(ngay_ve), '%Y-%m-%d'), 'T00:00:00+07:00') AS tu,
+      CONCAT(DATE_FORMAT(MAX(ngay_ve), '%Y-%m-%d'), 'T00:00:00+07:00') AS den,
+      MAX(nguon_url) AS url_page, GROUP_CONCAT(DISTINCT nhan_vien SEPARATOR ', ') AS nv
+      FROM th_orders WHERE ngay_ve >= ? AND fb_adid NOT IN ('', '-') AND fb_campaign_id=''
+      GROUP BY fb_adid ORDER BY den DESC LIMIT 300`, [AD_REF_FROM]);
+    return rows.map(r => ({ ...r, don: +r.don || 0 }));
+  };
+  // Admin: chẩn đoán đơn Thái theo SĐT / chạy tra tay (?all=1 tra lại hết từ AD_REF_FROM)
+  app.get('/thailand/api/ad-ref-debug', thaiAuth, wrap(async (req, res) => {
+    if (!thaiWho(req).isAdmin) return res.status(403).json({ ok: false, message: 'Chỉ admin' });
+    const p = await db();
+    const [rows] = await p.query(`SELECT id, ngay_ve, nhan_vien, nguon_url, utm_campaign, utm_medium, utm_term, utm_content, fbclid,
+      fb_adid, fb_campaign_id, fb_campaign_name, fb_adset_id, fb_adset_name, fb_ad_id, fb_ref_at
+      FROM th_orders WHERE sdt=? ORDER BY id DESC LIMIT 3`, [String(req.query.sdt || '').trim()]);
+    const out = [];
+    for (const r of rows) out.push({ ...r, adidTuFbclid: adIdFromFbclid(r.fbclid) || null,
+      traLai: await thaiLookup(r).catch(e => ({ loi: e.message })) });
+    res.json(out);
+  }));
+  app.get('/thailand/api/fix-ad-refs', thaiAuth, wrap(async (req, res) => {
+    if (!thaiWho(req).isAdmin) return res.status(403).json({ ok: false, message: 'Chỉ admin' });
+    res.json({ ok: true, ketqua: await fixThaiAdRefs(req.query.all === '1') });
   }));
 
   // Xem log webhook (admin) — để chẩn đoán Ladipage gửi gì
