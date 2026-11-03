@@ -196,7 +196,7 @@
     </div>
     <div class="ctrl"><label>Tháng</label><input type="month" id="month"></div>
     <button class="btn" id="refreshBtn">Xem</button>
-    <button class="link" id="pinBtn" type="button" style="display:none"></button>
+    <button class="link" id="pinBtn" type="button" disabled style="opacity:.45">📌 Ghim tháng</button>
     <a href="/" class="link">← Dashboard</a>
     <a href="/salary.html" class="link">Lương MKT</a>
     <a href="/salary-product.html" class="link">Lương SP</a>
@@ -337,7 +337,12 @@ async function load(){
    Meta, giá vốn, lương MKT/SP) → lần sau xem tháng này hiện ngay, không tính lại. */
 function capNhatNutGhim(){
   const b=$('pinBtn');
-  if(!RAW || !RAW.ok || RAW.manualOnly){ b.style.display='none'; return; }
+  // Nút luôn hiện cạnh "Xem"; chưa có số liệu (đang tải / lỗi) thì mờ, chưa bấm được
+  if(!RAW || !RAW.ok){
+    b.style.display=''; b.disabled=true; b.style.opacity='.45'; b.textContent='📌 Ghim tháng';
+    b.title='Đợi tải xong số liệu tháng rồi mới ghim được'; return;
+  }
+  if(RAW.manualOnly){ b.style.display='none'; return; }   // tháng cũ nhập tay: không cần ghim
   b.style.display=''; b.disabled=false;
   if(RAW.ghim){
     b.textContent=NO_UNPIN?'🔒 Đã ghim':'🔓 Bỏ ghim';
