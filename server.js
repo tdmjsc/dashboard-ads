@@ -598,10 +598,7 @@ app.use(session({
   cookie: { httpOnly: true, sameSite: 'lax', maxAge: 30 * 24 * 60 * 60 * 1000 }, // 30 ngày
 }));
 app.use(express.urlencoded({ extended: false }));
-// Route nhận body lớn tự đọc JSON với giới hạn riêng (mặc định chung 100 KB sẽ trả 413)
-const JSON_LON = new Set(['/api/business-result/ghim']);
-const jsonChung = express.json();
-app.use((req, res, next) => JSON_LON.has(req.path) ? next() : jsonChung(req, res, next));
+app.use(express.json());
 
 function loginPage(error, next) {
   return `<!DOCTYPE html><html lang="vi"><head><meta charset="UTF-8">
@@ -4305,11 +4302,12 @@ app.get('/api/business-result', async (req, res) => {
     let ghim = null;
     try { ghim = kqkdGhimRead().months[month] || null; }
     catch (e) { console.error('[KQKD-GHIM]', e.message); }
-    if (ghim && ghim.raw) {
+    if (ghim && ghim.so) {
       return res.json({
-        ...ghim.raw, ok: true, month, since, until, thueSuat: ghim.raw.thueSuat ?? THUE_SUAT,
+        ok: true, month, since, until, thueSuat: THUE_SUAT,
         tay: kqkdOf(month),
-        ghim: { at: ghim.at, by: ghim.by || '' },
+        ghim: { at: ghim.at, by: ghim.by || '', so: ghim.so },
+        lastUpdated: ghim.lastUpdated || ghim.at,
       });
     }
   }
@@ -4513,13 +4511,13 @@ app.post('/api/business-result/manual-pnl', express.json(), (req, res) => {
 });
 
 /* ── GHIM THÁNG (Kết quả kinh doanh) ────────────────────────────────
-   Admin bấm "Ghim tháng" → lưu bản chụp phần TỰ ĐỘNG của tháng đang xem (báo cáo lương MKT/PTSP:
-   doanh thu, chi tiêu Meta, giá vốn, phí sàn, lương + số nhập tay của 2 trang lương) đúng như
-   trình duyệt đang hiện. Lần sau /api/business-result trả luôn bản chụp này (không gọi Sandbox/
-   Meta, hiện ngay). Bỏ ghim mới tính lại. Kế toán (khongBoGhim) ghim được nhưng không bỏ ghim được.
-   Lưu DATA_DIR/kqkd-ghim.json theo cách nhiều tiến trình (đọc file mới nhất → sửa theo tháng →
-   ghi file tạm rồi đổi tên; bản trước sang .bak; file chính hỏng thì đọc .bak, cả hai hỏng thì
-   từ chối ghi để không xoá mất các tháng đã ghim).                                              */
+   Admin bấm "Ghim tháng" → lưu CÁC SỐ CUỐI phần tự động đang hiện (doanh thu tổng + phần đơn chưa
+   ship, ngân sách Meta, giá vốn, phí sàn, lương MKT / Admin / PTSP; ~1 KB/tháng). Lần sau
+   /api/business-result trả luôn các số này (không gọi Sandbox/Meta, hiện ngay; sửa công thức
+   lương sau này cũng không đổi số đã ghim). Bỏ ghim mới tính lại. Kế toán (khongBoGhim) ghim
+   được nhưng không bỏ ghim được. Lưu DATA_DIR/kqkd-ghim.json theo cách nhiều tiến trình (đọc file
+   mới nhất → sửa theo tháng → ghi file tạm rồi đổi tên; bản trước sang .bak; file chính hỏng thì
+   đọc .bak, cả hai hỏng thì từ chối ghi để không xoá mất các tháng đã ghim).                    */
 const KQKD_GHIM_FILE = path.join(DATA_DIR, 'kqkd-ghim.json');
 const KQKD_GHIM_BAK = KQKD_GHIM_FILE + '.bak';
 const kqkdGhimParse = f => { const o = JSON.parse(fs.readFileSync(f, 'utf8')); if (!o || typeof o.months !== 'object') throw new Error('sai cấu trúc'); return o; };
@@ -4545,12 +4543,13 @@ try { kqkdGhimParse(KQKD_GHIM_FILE); } catch (e) {        // khởi động: fil
   }
 }
 
-/* POST /api/business-result/ghim {month, action:'ghim'|'bo', raw}
-   raw = dữ liệu thô trình duyệt đang hiện (để ghim đúng số người dùng đã xem và xác nhận). */
-app.post('/api/business-result/ghim', express.json({ limit: '20mb' }), (req, res) => {
+/* POST /api/business-result/ghim {month, action:'ghim'|'bo', so, lastUpdated}
+   so = các số cuối trình duyệt đang hiện (soTuDong trong ket-qua-kinh-doanh.html). */
+const KQKD_SO = ['doanhThuTong', 'doanhThuChuaShip', 'nganSach', 'giaVon', 'phiSan', 'luongMkt', 'luongMktAdmin', 'luongPtsp'];
+app.post('/api/business-result/ghim', (req, res) => {
   const me = req.session.user || {};
   if (me.role !== 'admin') return res.status(403).json({ ok: false, message: 'Chỉ admin' });
-  const { month, action, raw } = req.body || {};
+  const { month, action, so, lastUpdated } = req.body || {};
   if (!/^\d{4}-\d{2}$/.test(String(month || ''))) return res.json({ ok: false, message: 'Tháng không hợp lệ' });
   try {
     if (action === 'bo') {
@@ -4560,18 +4559,17 @@ app.post('/api/business-result/ghim', express.json({ limit: '20mb' }), (req, res
     }
     if (action !== 'ghim') return res.json({ ok: false, message: 'action phải là ghim / bo' });
     if (month < ADS_START) return res.json({ ok: false, message: `Tháng trước ${ADS_START} là số nhập tay, không cần ghim.` });
-    const r = raw || {};
-    if (!r.mkt || !Array.isArray(r.mkt.rows) || !r.ptsp || !Array.isArray(r.ptsp.managers))
-      return res.json({ ok: false, message: 'Thiếu dữ liệu tháng để ghim — bấm Xem rồi ghim lại.' });
-    if (r.month && r.month !== month) return res.json({ ok: false, message: 'Dữ liệu không đúng tháng' });
-    // Chỉ giữ phần tự động; phần nhập tay của trang này (tay) luôn đọc mới
-    const snap = {
-      thueSuat: r.thueSuat, mkt: r.mkt, mktManual: r.mktManual || {}, mktTtsp: r.mktTtsp,
-      ptsp: r.ptsp, ptspManual: r.ptspManual || {}, lastUpdated: r.lastUpdated || new Date().toISOString(),
-    };
+    if (!so || typeof so !== 'object') return res.json({ ok: false, message: 'Thiếu số liệu để ghim — bấm Xem rồi ghim lại.' });
+    const sach = {};
+    for (const k of KQKD_SO) {
+      const v = Number(so[k]);
+      if (!Number.isFinite(v)) return res.json({ ok: false, message: 'Số liệu không hợp lệ (' + k + ') — bấm Xem rồi ghim lại.' });
+      sach[k] = Math.round(v);
+    }
     const at = new Date().toISOString();
-    kqkdGhimCommit(s => { s.months[month] = { raw: snap, at, by: me.user || '' }; });
-    res.json({ ok: true, month, daGhim: true, ghim: { at, by: me.user || '' } });
+    const rec = { so: sach, at, by: me.user || '', lastUpdated: String(lastUpdated || at).slice(0, 40) };
+    kqkdGhimCommit(s => { s.months[month] = rec; });
+    res.json({ ok: true, month, daGhim: true, ghim: { at, by: rec.by, so: sach } });
   } catch (e) {
     res.json({ ok: false, message: e.message });
   }

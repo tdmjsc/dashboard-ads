@@ -366,13 +366,13 @@ async function ghimThang(){
   const b=$('pinBtn'); b.disabled=true; b.textContent=daGhim?'⏳ Đang bỏ ghim…':'⏳ Đang ghim…';
   try{
     const r=await fetch('/api/business-result/ghim',{method:'POST',headers:{'Content-Type':'application/json'},
-      body:JSON.stringify(daGhim?{month:curMonth,action:'bo'}:{month:curMonth,action:'ghim',raw:RAW})});
+      body:JSON.stringify(daGhim?{month:curMonth,action:'bo'}:{month:curMonth,action:'ghim',so:soTuDong(RAW),lastUpdated:RAW.lastUpdated})});
     if(r.status===401){ location.href='/login'; return; }
     const d=await r.json().catch(()=>({ok:false,message:'HTTP '+r.status}));
     if(!d.ok){ alert('❌ '+(d.message||'Lỗi')); capNhatNutGhim(); return; }
     try{ localStorage.removeItem(CK(curMonth)); }catch(e){}   // bỏ cache bảng so sánh của tháng này
     if(daGhim) load();                                      // bỏ ghim → tính lại số mới
-    else { RAW.ghim=d.ghim; load(); }                       // ghim → nạp lại (hiện ngay từ bản ghim)
+    else load();                                            // ghim → nạp lại (hiện ngay từ bản ghim)
   }catch(e){ alert('Lỗi kết nối: '+e.message); capNhatNutGhim(); }
 }
 
@@ -394,36 +394,29 @@ function computeKQKD(raw){
       lnTruocThue,thue, lnSauThue:lnTruocThue-thue, thueSuat, mktList:[],ptspList:[], manual:true };
   }
 
-  const mkt=SalaryCalc.tinhLuongMKT(raw.mkt.rows, raw.mktManual, {
-    tyLe: raw.mkt.tyLe, teamLead: raw.mkt.teamLead, roster: raw.mkt.roster,
-    ttsp: { auto: raw.mkt.ttsp, cfg: raw.mktTtsp },
-  });
-  const ptsp=SalaryCalc.tinhLuongPTSP(raw.ptsp.managers, raw.ptspManual);
+  // Tháng ĐÃ GHIM → dùng thẳng các số cuối lưu lúc ghim (không tính lại);
+  // chưa ghim → tính từ báo cáo lương MKT/PTSP.
+  const so=(raw.ghim&&raw.ghim.so)||soTuDong(raw);
   const chiPhiList=Array.isArray(tay.chiPhiList)?tay.chiPhiList:[];
   const chiPhi=chiPhiList.reduce((s,x)=>s+(+x.soTien||0),0);
 
-  const nganSach=Math.round(mkt.tong.QC);
-  const giaVon=Math.round(mkt.tong.GV);
+  const nganSach=+so.nganSach||0;
+  const giaVon=+so.giaVon||0;
   // Bỏ tổng phí ship TỰ ĐỘNG khỏi trang Kết quả kinh doanh: không lấy từ ads nữa,
   // không trừ vào lợi nhuận và không hiển thị dòng. (Phí ship nhập tay tháng cũ vẫn giữ.)
   const phiShip=0;
-  // Phí sàn TMĐT (nhập ở Lương MKT, kênh Sàn TMĐT) — chi phí thật, trừ vào lợi nhuận
-  const phiSan=Math.round(mkt.tong.PS||0);
+  const phiSan=+so.phiSan||0;
 
-  // ── Doanh thu đơn CHƯA SHIP = tổng kênh 'donchuaship' (nhập ở Lương MKT) ──
-  // Kênh này ĐÃ nằm trong mkt.tong.DT (nên đã tính vào lương 2%). Ở kết quả kinh
-  // doanh, chỉ GIỮ phần này khi ĐƯỢC TICK; bỏ tick thì trừ ra khỏi doanh thu để
-  // tránh cộng trùng khi các tháng sau đơn đã ship và được ghi nhận tự động.
-  const doanhThuChuaShip=Math.round(mkt.list.reduce((s,x)=>
-    s+(+(((x.m.channels||{}).donchuaship||{}).dt)||0),0));
+  // Doanh thu đơn CHƯA SHIP: chỉ cộng khi ĐƯỢC TICK (xem soTuDong)
+  const doanhThuChuaShip=+so.doanhThuChuaShip||0;
   const tinhDonChuaShip=!!(+tay.tinhDonChuaShip);
-  const doanhThuShip=Math.round(mkt.tong.DT)-doanhThuChuaShip;   // doanh thu KHÔNG gồm đơn chưa ship
-  const doanhThu=tinhDonChuaShip?Math.round(mkt.tong.DT):doanhThuShip;
+  const doanhThuShip=(+so.doanhThuTong||0)-doanhThuChuaShip;   // doanh thu KHÔNG gồm đơn chưa ship
+  const doanhThu=tinhDonChuaShip?(+so.doanhThuTong||0):doanhThuShip;
 
   const luong={
-    mkt: mkt.tong.luongKhongAdmin,      // ĐÃ trừ Admin
-    mktAdmin: mkt.tong.luongAdmin,      // tách riêng, không tính vào chi phí
-    ptsp: ptsp.tong,
+    mkt: +so.luongMkt||0,               // ĐÃ trừ Admin
+    mktAdmin: +so.luongMktAdmin||0,     // tách riêng, không tính vào chi phí
+    ptsp: +so.luongPtsp||0,
     sale:+tay.luongSale||0, keToan:+tay.luongKeToan||0, kho:+tay.luongKho||0,
   };
   luong.tong=luong.mkt+luong.ptsp+luong.sale+luong.keToan+luong.kho;
@@ -433,7 +426,31 @@ function computeKQKD(raw){
   const thue=lnTruocThue>0?Math.round(lnTruocThue*thueSuat):0;
   return {doanhThu,doanhThuShip,doanhThuChuaShip,tinhDonChuaShip,
      nganSach,giaVon,phiShip,phiSan,luong,chiPhiList,chiPhi,lnTruocThue,thue,
-     lnSauThue:lnTruocThue-thue, thueSuat, mktList:mkt.list, ptspList:ptsp.list};
+     lnSauThue:lnTruocThue-thue, thueSuat};
+}
+
+/* Các SỐ CUỐI phần tự động của 1 tháng (từ báo cáo lương MKT/PTSP). Ghim tháng = lưu đúng
+   object này lên máy chủ, nên mọi số trang dùng từ báo cáo phải nằm ở đây. */
+function soTuDong(raw){
+  const mkt=SalaryCalc.tinhLuongMKT(raw.mkt.rows, raw.mktManual, {
+    tyLe: raw.mkt.tyLe, teamLead: raw.mkt.teamLead, roster: raw.mkt.roster,
+    ttsp: { auto: raw.mkt.ttsp, cfg: raw.mktTtsp },
+  });
+  const ptsp=SalaryCalc.tinhLuongPTSP(raw.ptsp.managers, raw.ptspManual);
+  return {
+    doanhThuTong: Math.round(mkt.tong.DT),          // gồm cả doanh thu đơn chưa ship
+    // Doanh thu đơn CHƯA SHIP = tổng kênh 'donchuaship' (nhập ở Lương MKT). Kênh này ĐÃ nằm
+    // trong mkt.tong.DT (nên đã tính vào lương 2%). Ở kết quả kinh doanh chỉ GIỮ khi ĐƯỢC TICK;
+    // bỏ tick thì trừ ra để tránh cộng trùng khi các tháng sau đơn đã ship và được ghi nhận.
+    doanhThuChuaShip: Math.round(mkt.list.reduce((s,x)=>
+      s+(+(((x.m.channels||{}).donchuaship||{}).dt)||0),0)),
+    nganSach: Math.round(mkt.tong.QC),
+    giaVon: Math.round(mkt.tong.GV),
+    phiSan: Math.round(mkt.tong.PS||0),              // phí sàn TMĐT (nhập ở Lương MKT)
+    luongMkt: Math.round(mkt.tong.luongKhongAdmin||0),
+    luongMktAdmin: Math.round(mkt.tong.luongAdmin||0),
+    luongPtsp: Math.round(ptsp.tong||0),
+  };
 }
 
 /* Tính lại tháng đang xem → gán vào S cho giao diện chi tiết */
