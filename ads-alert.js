@@ -53,13 +53,36 @@ const PUBLIC_URL = (process.env.TG_ADS_PUBLIC_URL || 'https://ads.tdmjsc.com').r
 export function mountAdsAlert(app, {
   express, DATA_DIR, fetchWithTimeout,
   getCampaigns,        // (since, until) → campaigns của trang Ads (cache RAM 3 phút)
-  fbGet, fbPost,       // Graph API: đọc / ghi
+  fbGet, fbPost: fbPostRaw, // Graph API: đọc / ghi
   tokenForAcc,         // acc → token Meta quản lý tài khoản đó
   employeesOfLogin,    // tên đăng nhập → { role, employees } (gồm team của lead)
   detectEmployee,      // tên camp → tên NV
   accountName = acc => acc, // id TK quảng cáo → tên BM
   token = process.env.TELEGRAM_ADS_ALERT_BOT_TOKEN || '',
 }) {
+  // Ghi Meta: token của TK báo không đủ quyền (#200 / #10 / permission) thì thử lần lượt token khác (TK có thể được
+  // chia sẻ sang BM khác, token đó có quyền sửa). Mọi token đều lỗi → ném lỗi của token chính, kèm tên token.
+  const isPermErr = e => /\(#(200|10|3|294)\)|permission|ads_management|not authorized/i.test(e.message || '');
+  const tokenLabel = tk => {
+    const s = (tokenForAcc.sources ? tokenForAcc.sources() : []).find(x => x.token === tk);
+    return s ? (s.label ? `${s.label} (${s.key})` : s.key) : 'token';
+  };
+  async function fbPost(id, params, tk) {
+    try { return await fbPostRaw(id, params, tk); }
+    catch (e) {
+      if (!isPermErr(e)) throw e;
+      e.tokenLabel = tokenLabel(tk);
+      const others = [...new Set((tokenForAcc.sources ? tokenForAcc.sources() : []).map(x => x.token))].filter(t => t && t !== tk);
+      for (const t of others) {
+        try {
+          const r = await fbPostRaw(id, params, t);
+          console.log(`[ADSALERT] ${id}: ${e.tokenLabel} không có quyền, đã ghi bằng ${tokenLabel(t)}`);
+          return r;
+        } catch {}
+      }
+      throw e;
+    }
+  }
   const FILE = path.join(DATA_DIR, 'ads-alert.json');
   const db = jsonStore(FILE, () => ({ cfg: { ...CFG_DEFAULT }, links: {}, codes: {}, sent: {}, pending: {}, lastRun: null, log: [] }), { tag: 'ADSALERT' });
   let STORE = db.read();
@@ -295,8 +318,11 @@ export function mountAdsAlert(app, {
 
   /* ---------- Thao tác trên Meta từ nút bấm ---------- */
   const userOfTg = tgId => Object.entries(STORE.links || {}).find(([, l]) => String(l.tgId) === String(tgId));
-  const metaMsg = e => /ads_management|\(#200\)|permission/i.test(e.message || '')
-    ? 'Token Meta chưa có quyền ads_management (sửa chiến dịch). Báo admin tạo lại token.'
+  // Lỗi quyền: hiện cả lỗi gốc của Meta + token đã dùng (token có ads_management vẫn có thể bị chặn nếu người/
+  // system user của token chỉ có quyền xem TK quảng cáo đó trong BM).
+  const metaMsg = e => isPermErr(e)
+    ? `Meta không cho sửa (${e.tokenLabel || 'token'}): ${String(e.message || '').replace(/^Meta API:\s*/, '')}\n`
+      + 'Token cần quyền ads_management và người/system user của token phải được giao quyền "Quản lý chiến dịch" trên TK quảng cáo này trong BM. Báo admin.'
     : (e.message || 'Lỗi Meta');
 
   // Đọc camp / nhóm từ Meta + kiểm tra quyền người bấm (theo tên NV trong tên camp).
