@@ -215,7 +215,7 @@ export function mountAdsAlert(app, {
     const out = [];
     for (const [login, l] of Object.entries(STORE.links || {})) {
       const who = employeesOfLogin(login);
-      if (!who || !l.chatId) continue;
+      if (!who || !l.chatId || who.khongBoGhim) continue;   // kế toán không nhận
       if (who.role === 'admin' ? cfg.adminAll : (who.employees || []).includes(u.employee)) out.push(l.chatId);
     }
     return out;
@@ -304,6 +304,7 @@ export function mountAdsAlert(app, {
     if (!link) throw new Error('Telegram này chưa kết nối tài khoản dashboard (trang Cảnh báo Telegram).');
     const who = employeesOfLogin(link[0]);
     if (!who) throw new Error('Tài khoản dashboard không còn tồn tại.');
+    if (who.khongBoGhim) throw new Error('Kế toán không dùng mục Cảnh báo Telegram.');
     const tk = tokenForAcc(acc);
     if (!tk) throw new Error('Không có token cho tài khoản quảng cáo này.');
     const fields = 'id,name,account_id,effective_status,daily_budget,lifetime_budget'

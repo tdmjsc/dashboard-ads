@@ -305,7 +305,7 @@
           <button id="v-emp" onclick="setView('emp')">Theo nhân viên</button>
         </div>
         <a class="guide-btn" href="https://docs.google.com/document/d/1AWfzEFTFkRtjKGkYbeQ33X27mAKHGT5wWI2SQ4PkRqA/edit?hl=vi&amp;tab=t.0" target="_blank" rel="noopener" title="Cách điền adid cho quảng cáo (Google Docs)">📘 Hướng dẫn thêm adid</a>
-        <a class="guide-btn" href="/ads-alert.html" title="Nhận tin Telegram khi camp đắt, tắt/bật/đổi ngân sách ngay trên Telegram">🔔 Cảnh báo Telegram</a>
+        <a class="guide-btn" id="navAdsAlert" href="/ads-alert.html" title="Nhận tin Telegram khi camp đắt, tắt/bật/đổi ngân sách ngay trên Telegram">🔔 Cảnh báo Telegram</a>
       </div>
       <div class="toolbar">
         <select class="pick" id="empfilter" aria-label="Lọc theo nhân viên"></select>
@@ -515,6 +515,7 @@ async function loadData(opts){
       });
       // Dòng tiền: CHỈ admin thật (ẩn với kế toán khongBoGhim)
       const ndt=document.getElementById('navDongTien'); if(ndt) ndt.style.display = (isAdmin && !data.me.khongBoGhim) ? 'inline-block' : 'none';
+      const naa=document.getElementById('navAdsAlert'); if(naa) naa.style.display = data.me.khongBoGhim ? 'none' : '';  // kế toán không dùng Cảnh báo Telegram
       // "Lương của tôi": chỉ nhân viên cần (admin đã có bảng đầy đủ)
       const nms=document.getElementById('navMySalary'); if(nms) nms.style.display = isAdmin ? 'none' : 'inline-block';
       // Chat TMĐT (tmdt.tdmjsc.com): admin + marketing
@@ -887,6 +888,7 @@ async function setupMenu(){
     });
     // Dòng tiền: CHỈ admin thật (ẩn với kế toán khongBoGhim)
     const ndt=document.getElementById('navDongTien'); if(ndt) ndt.style.display = (isAdmin && !me.khongBoGhim) ? 'inline-block' : 'none';
+    const naa=document.getElementById('navAdsAlert'); if(naa) naa.style.display = me.khongBoGhim ? 'none' : '';  // kế toán không dùng Cảnh báo Telegram
     const nms=document.getElementById('navMySalary'); if(nms) nms.style.display = isAdmin ? 'none' : 'inline-block';
     // Chat TMĐT (tmdt.tdmjsc.com): admin + marketing
     const nt=document.getElementById('navTmdt'); if(nt) nt.style.display = ['admin','viewer'].includes(me.role) ? 'inline-block' : 'none';

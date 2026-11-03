@@ -811,7 +811,8 @@ function employeesOfLogin(login) {
   const u = USERS.find(x => x.user === login);
   if (!u) return null;
   const base = u.employees || [];
-  return { role: u.role, employees: u.role === 'viewer' && u.salaryName ? teamEmployees(base, u.salaryName) : base };
+  return { role: u.role, khongBoGhim: !!u.khongBoGhim,
+    employees: u.role === 'viewer' && u.salaryName ? teamEmployees(base, u.salaryName) : base };
 }
 app.use((req, res, next) => {
   refreshEmployees();
@@ -982,6 +983,11 @@ app.use((req, res, next) => {
         return res.status(403).json({ ok: false, message: 'Chỉ quản trị viên (không gồm kế toán) xem được mục này.' });
       return res.redirect('/');
     }
+  }
+  // Cảnh báo camp qua Telegram (ads-alert.js): kế toán không dùng (người dùng chọn 3/11/2026)
+  if ((p === '/ads-alert.html' || p.startsWith('/api/ads-alert')) && me.role === 'admin' && me.khongBoGhim) {
+    if (p.startsWith('/api/')) return res.status(403).json({ ok: false, error: 'Kế toán không dùng mục Cảnh báo Telegram.' });
+    return res.redirect('/');
   }
   next();
 });
