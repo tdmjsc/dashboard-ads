@@ -1,4 +1,4 @@
-# App iOS "TDM Ads" (TestFlight nội bộ)
+# App iOS "TDM Ads" (TestFlight nội bộ + App Store không công khai)
 
 App chỉ là khung mở `https://ads.tdmjsc.com` (WKWebView). Mọi chức năng nằm trên web: đẩy lên `main` là app có bản mới, **không phải tải lại qua TestFlight**.
 
@@ -32,6 +32,20 @@ Build chạy trên máy Mac của Codemagic (Xcode mới nhất), cấu hình �
 - Push lên `main` có sửa `ios/` hoặc `codemagic.yaml` → Codemagic tự build và tải lên.
 - Sửa web thì **không** build (app tự lấy web mới).
 - Bản build TestFlight hết hạn sau 90 ngày → khoảng 80 ngày một lần vào Codemagic bấm **Start new build**. Số build tự tăng.
+
+## Phát hành App Store không công khai (Unlisted)
+
+Người dùng chọn 4/11/2026: phát hành qua Apple Review dạng **Unlisted** (không hiện khi tìm trên App Store, ai có link mới cài được, không hết hạn 90 ngày như TestFlight). App chỉ chạy iPhone (`TARGETED_DEVICE_FAMILY = 1`) để khỏi phải có ảnh iPad. `ios/TDMAds/PrivacyInfo.xcprivacy` khai báo dùng `UserDefaults` (PushManager), Apple bắt buộc.
+
+1. Gửi đơn xin Unlisted: developer.apple.com/contact/request/unlisted-app/ (App Apple ID `6824187178`). Gửi trước hoặc sau khi app được duyệt đều được.
+2. App Store Connect → app → bản **1.0** (iOS App):
+   - Ảnh chụp màn hình iPhone 6.9" (1320 × 2868 hoặc 1290 × 2796), 3–5 ảnh: đăng nhập, trang Ads, OMS…
+   - Mô tả, từ khoá, **Support URL** và **Privacy Policy URL** = `https://ads.tdmjsc.com/privacy` (trang công khai, `privacy.html`).
+   - Build: chọn bản Codemagic vừa tải lên.
+   - **App Review Information → Sign-in required**: tài khoản demo cho Apple (nên tạo riêng trong `users.js`, chỉ xem, xoá sau khi duyệt), ghi chú: app nội bộ cho nhân viên, tài khoản do công ty cấp.
+3. App Privacy (nhãn dinh dưỡng): Contact info/User ID (tên đăng nhập, liên kết người dùng, không tracking), Photos (chỉ khi người dùng tải lên), Device ID không — device token push không tính là Device ID.
+4. Pricing and Availability: Free, chọn Việt Nam. Bấm **Add for Review** → **Submit**.
+5. Duyệt xong (1–3 ngày) và Apple đã duyệt đơn Unlisted thì lấy link ở App Store Connect gửi nhân viên. Bản cập nhật sau: push sửa `ios/` → Codemagic tải build → tạo phiên bản mới (tăng `MARKETING_VERSION`) → nộp duyệt lại.
 
 ## Mời nhân viên
 

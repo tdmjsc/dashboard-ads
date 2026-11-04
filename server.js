@@ -623,6 +623,8 @@ function loginPage(error, next) {
 </form></body></html>`;
 }
 
+// Chính sách quyền riêng tư cho App Store (Privacy Policy URL + Support URL): công khai, không cần đăng nhập
+app.get('/privacy', (req, res) => res.sendFile(path.join(__dirname, 'privacy.html')));
 app.get('/login', (req, res) => res.send(loginPage(req.query.error, req.query.next)));
 app.post('/login', (req, res) => {
   const { user, pass } = req.body;
