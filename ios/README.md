@@ -42,7 +42,7 @@ Người dùng chọn 4/11/2026: phát hành qua Apple Review dạng **Unlisted*
    - Ảnh chụp màn hình iPhone 6.9" (1320 × 2868 hoặc 1290 × 2796), 3–5 ảnh: đăng nhập, trang Ads, OMS…
    - Mô tả, từ khoá, **Support URL** và **Privacy Policy URL** = `https://ads.tdmjsc.com/privacy` (trang công khai, `privacy.html`).
    - Build: chọn bản Codemagic vừa tải lên.
-   - **App Review Information → Sign-in required**: tài khoản demo cho Apple (nên tạo riêng trong `users.js`, chỉ xem, xoá sau khi duyệt), ghi chú: app nội bộ cho nhân viên, tài khoản do công ty cấp.
+   - **App Review Information → Sign-in required**: tài khoản demo `apple.review` (mật khẩu ở `users.js`; `chiXem: true` → máy chủ chặn mọi lệnh ghi + Chat TMĐT, xem KQ marketing của 1 NV, không xem lương; duyệt xong có thể xoá), ghi chú: app nội bộ cho nhân viên, tài khoản do công ty cấp.
 3. App Privacy (nhãn dinh dưỡng): Contact info/User ID (tên đăng nhập, liên kết người dùng, không tracking), Photos (chỉ khi người dùng tải lên), Device ID không — device token push không tính là Device ID.
 4. Pricing and Availability: Free, chọn Việt Nam. Bấm **Add for Review** → **Submit**.
 5. Duyệt xong (1–3 ngày) và Apple đã duyệt đơn Unlisted thì lấy link ở App Store Connect gửi nhân viên. Bản cập nhật sau: push sửa `ios/` → Codemagic tải build → tạo phiên bản mới (tăng `MARKETING_VERSION`) → nộp duyệt lại.
