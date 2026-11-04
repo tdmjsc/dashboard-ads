@@ -323,7 +323,7 @@ $('rows').addEventListener('click', function(e){
 fetch('/api/me').then(r=>r.ok?r.json():null).then(me=>{
   if(me && me.role!=='admin'){ const np=document.getElementById('navProducts'); if(np) np.style.display='none'; }
   // Chat TMĐT (tmdt.tdmjsc.com): admin + marketing
-  const nt=document.getElementById('navTmdt'); if(nt && me && ['admin','viewer'].includes(me.role)) nt.style.display='';
+  const nt=document.getElementById('navTmdt'); if(nt && me && ['admin','viewer'].includes(me.role) && !me.chiXem) nt.style.display='';
 }).catch(()=>{});
 // Tải cơ cấu team trước, rồi tải dữ liệu
 loadTeams().finally(load);

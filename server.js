@@ -630,7 +630,7 @@ app.post('/login', (req, res) => {
   const { user, pass } = req.body;
   const u = USERS.find(x => x.user === user && x.pass === pass);
   if (!u) return res.redirect('/login?error=1');
-  req.session.user = { user: u.user, role: u.role, employees: u.employees || [], manager: u.manager || '', salaryName: u.salaryName || '', khongBoGhim: !!u.khongBoGhim };
+  req.session.user = { user: u.user, role: u.role, employees: u.employees || [], manager: u.manager || '', salaryName: u.salaryName || '', khongBoGhim: !!u.khongBoGhim, chiXem: !!u.chiXem };
   // Đăng nhập từ nút "Chat TMĐT" → quay lại đó (chỉ nhận đường dẫn trong danh sách cho phép)
   if (SSO_NEXT.includes(req.body.next)) return res.redirect(req.body.next);
   res.redirect(u.role === 'product' ? '/products.html' : (u.role === 'staff' ? '/my-salary.html' : '/'));
@@ -648,7 +648,7 @@ const TMDT_URL = (process.env.TMDT_URL || 'https://tmdt.tdmjsc.com').replace(/\/
 app.get('/go-tmdt', (req, res) => {
   const me = req.session && req.session.user;
   if (!me) return res.redirect('/login?next=/go-tmdt');
-  if (!['admin', 'viewer'].includes(me.role)) return res.status(403).send('Tài khoản của bạn không được vào mục Chat TMĐT.');
+  if (!['admin', 'viewer'].includes(me.role) || me.chiXem) return res.status(403).send('Tài khoản của bạn không được vào mục Chat TMĐT.');
   const secret = process.env.TMDT_SSO_SECRET;
   if (!secret) return res.status(500).send('Chưa cấu hình TMDT_SSO_SECRET trong .env.');
   const payload = Buffer.from(JSON.stringify({
@@ -796,6 +796,13 @@ app.use((req, res, next) => {
   res.redirect('/login');
 });
 
+// Tài khoản chỉ xem (chiXem trong users.js, vd tài khoản demo Apple duyệt app): chặn mọi lệnh ghi
+app.use((req, res, next) => {
+  if (!(req.session && req.session.user && req.session.user.chiXem)) return next();
+  if (req.method === 'GET' || req.method === 'HEAD' || req.path === '/login') return next();
+  res.status(403).json({ ok: false, error: 'Tài khoản chỉ xem', message: 'Tài khoản demo chỉ xem, không thay đổi được dữ liệu.' });
+});
+
 // Leader xem được cả team: employees của phiên = danh sách trong users.js + NV đang làm có team = tên leader
 // (menu Nhân viên). Tính lại mỗi request → thêm NV vào team là leader thấy ngay, không cần sửa users.js / đăng nhập lại.
 function teamEmployees(base, salaryName) {
@@ -832,7 +839,7 @@ app.use((req, res, next) => {
 app.get('/api/me', (req, res) => {
   const u = req.session.user || {};
   const displayName = u.salaryName || u.manager || (u.employees && u.employees[0]) || u.user || '';
-  res.json({ user: u.user, role: u.role, manager: u.manager || '', employees: u.employees || [], salaryName: u.salaryName || '', khongBoGhim: !!u.khongBoGhim, displayName });
+  res.json({ user: u.user, role: u.role, manager: u.manager || '', employees: u.employees || [], salaryName: u.salaryName || '', khongBoGhim: !!u.khongBoGhim, chiXem: !!u.chiXem, displayName });
 });
 
 // ====================== QUẢN LÝ NHÂN VIÊN (admin only) ======================
@@ -1369,7 +1376,7 @@ app.get('/api/data', async (req, res) => {
         return res.json({
           warming: true, since, until,
           message: 'Đang nạp dữ liệu từ Facebook (khoảng ngày lớn có thể mất ~1 phút). Sẽ tự thử lại…',
-          me: { user: me.user, role: me.role, khongBoGhim: !!me.khongBoGhim, displayName: me.salaryName || me.manager || (me.employees && me.employees[0]) || me.user || '' },
+          me: { user: me.user, role: me.role, khongBoGhim: !!me.khongBoGhim, chiXem: !!me.chiXem, displayName: me.salaryName || me.manager || (me.employees && me.employees[0]) || me.user || '' },
         });
       }
       campaigns = winner;
@@ -1387,7 +1394,7 @@ app.get('/api/data', async (req, res) => {
     if (me.role === 'admin' && lf && lf.key === (since + '|' + until) && Array.isArray(lf.issues)) {
       warnings = lf.issues.map(it => ({ acc: it.acc, accName: it.accName, rateLimit: !!it.rateLimit, message: it.message }));
     }
-    res.json({ days, campaigns: visible, warnings, me: { user: me.user, role: me.role, khongBoGhim: !!me.khongBoGhim, displayName: me.salaryName || me.manager || (me.employees && me.employees[0]) || me.user || '' } });
+    res.json({ days, campaigns: visible, warnings, me: { user: me.user, role: me.role, khongBoGhim: !!me.khongBoGhim, chiXem: !!me.chiXem, displayName: me.salaryName || me.manager || (me.employees && me.employees[0]) || me.user || '' } });
   } catch (e) {
     res.status(500).json({ error: e.message });
   }

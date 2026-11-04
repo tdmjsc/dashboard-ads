@@ -46,6 +46,11 @@ export const USERS = [
   { user: 'mkt.phanphuong',    pass: 'Td@121212',    role: 'viewer', employees: ['Phan Thị Phương'],       salaryName: 'Phan Thị Phương' },
 
 
+  // ----- TÀI KHOẢN DEMO CHO APPLE DUYỆT APP (ios/README.md) -----
+  //  chiXem: chỉ xem — máy chủ chặn mọi lệnh ghi (POST/PUT/…: tắt camp, sửa ngân sách, kết nối Telegram…) + Chat TMĐT.
+  //  Không có salaryName → không xem lương. Duyệt xong có thể xoá dòng này.
+  { user: 'apple.review', pass: 'Review3d464b!', role: 'viewer', employees: ['Tạ Quang Trường'], chiXem: true },
+
   // ----- NHÂN VIÊN PHÁT TRIỂN SẢN PHẨM (xem trang SP của mình + lương của mình) -----
   //  manager = tên ở cột "Quản Lý" trong Google Sheet (để lọc SP + xem lương)
   { user: 'kien',  pass: 'Kien@1122', role: 'product', manager: 'Đào Trung Kiên',     salaryName: 'Đào Trung Kiên' },

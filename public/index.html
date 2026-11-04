@@ -531,18 +531,18 @@ async function loadData(opts){
       const a=document.getElementById('avatar'); a.textContent=data.me.user.slice(0,2).toUpperCase(); a.title=data.me.user+(data.me.role==='admin'?' (admin)':'');
       const ub=document.getElementById('userBadge'); if(ub&&data.me.displayName) ub.textContent='👤 '+data.me.displayName;
       const isAdmin=data.me.role==='admin';
-      CAN_CTL=['admin','viewer'].includes(data.me.role)&&!data.me.khongBoGhim;   // kế toán chỉ xem
+      CAN_CTL=['admin','viewer'].includes(data.me.role)&&!data.me.khongBoGhim&&!data.me.chiXem;   // kế toán / tài khoản demo chỉ xem
       // Menu admin: chỉ hiện khi là admin (mặc định CSS đã ẩn)
       ['navProducts','navSalary','navSalaryProduct','navKQKD','navEmployees','navTonKho'].forEach(id=>{
         const el=document.getElementById(id); if(el) el.style.display = isAdmin ? 'inline-block' : 'none';
       });
       // Dòng tiền: CHỈ admin thật (ẩn với kế toán khongBoGhim)
       const ndt=document.getElementById('navDongTien'); if(ndt) ndt.style.display = (isAdmin && !data.me.khongBoGhim) ? 'inline-block' : 'none';
-      const naa=document.getElementById('navAdsAlert'); if(naa) naa.style.display = data.me.khongBoGhim ? 'none' : '';  // kế toán không dùng Cảnh báo Telegram
+      const naa=document.getElementById('navAdsAlert'); if(naa) naa.style.display = (data.me.khongBoGhim || data.me.chiXem) ? 'none' : '';  // kế toán không dùng Cảnh báo Telegram
       // "Lương của tôi": chỉ nhân viên cần (admin đã có bảng đầy đủ)
       const nms=document.getElementById('navMySalary'); if(nms) nms.style.display = isAdmin ? 'none' : 'inline-block';
       // Chat TMĐT (tmdt.tdmjsc.com): admin + marketing
-      const nt=document.getElementById('navTmdt'); if(nt) nt.style.display = ['admin','viewer'].includes(data.me.role) ? 'inline-block' : 'none';
+      const nt=document.getElementById('navTmdt'); if(nt) nt.style.display = ['admin','viewer'].includes(data.me.role) && !data.me.chiXem ? 'inline-block' : 'none';
     }
     DAYS=data.days; CAMPAIGNS=data.campaigns;
     /* dựng danh sách tài khoản từ dữ liệu */
@@ -997,10 +997,10 @@ async function setupMenu(){
     });
     // Dòng tiền: CHỈ admin thật (ẩn với kế toán khongBoGhim)
     const ndt=document.getElementById('navDongTien'); if(ndt) ndt.style.display = (isAdmin && !me.khongBoGhim) ? 'inline-block' : 'none';
-    const naa=document.getElementById('navAdsAlert'); if(naa) naa.style.display = me.khongBoGhim ? 'none' : '';  // kế toán không dùng Cảnh báo Telegram
+    const naa=document.getElementById('navAdsAlert'); if(naa) naa.style.display = (me.khongBoGhim || me.chiXem) ? 'none' : '';  // kế toán không dùng Cảnh báo Telegram
     const nms=document.getElementById('navMySalary'); if(nms) nms.style.display = isAdmin ? 'none' : 'inline-block';
     // Chat TMĐT (tmdt.tdmjsc.com): admin + marketing
-    const nt=document.getElementById('navTmdt'); if(nt) nt.style.display = ['admin','viewer'].includes(me.role) ? 'inline-block' : 'none';
+    const nt=document.getElementById('navTmdt'); if(nt) nt.style.display = ['admin','viewer'].includes(me.role) && !me.chiXem ? 'inline-block' : 'none';
     const rc=document.getElementById('reloadCacheBtn'); if(rc) rc.style.display = isAdmin ? 'inline-block' : 'none';
     const pb=document.getElementById('pinCacheBtn'); if(pb) pb.style.display = isAdmin ? 'inline-block' : 'none';
     const ub=document.getElementById('userBadge'); if(ub&&me.displayName) ub.textContent='👤 '+me.displayName;
