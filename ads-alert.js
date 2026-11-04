@@ -12,6 +12,10 @@
 //      - > 2 đơn: so với lần kiểm tra trước (mốc `base`, chỉ dời khi có đơn mới / đã báo), CPA của đơn mới phát sinh
 //        > cprMax → báo; < lowCpa (80k) → nhắc tăng ngân sách (tối đa 1 lần / lowEveryMin phút). Tiêu thêm > cprMax
 //        mà chưa ra đơn mới cũng báo.
+//      - Nhóm quảng cáo đang chạy tiêu ≥ autoOffAt (180k) mà 0 đơn → bot TỰ TẮT nhóm và báo (người dùng chọn 4/11/2026;
+//        1 lần/ngày/nhóm: NV bật lại thì hôm đó không tự tắt nữa; không đọc được OMS thì không tự tắt).
+//      - Nhóm tiêu > noAdidAt (50k) mà có quảng cáo đang chạy chưa có adid trong thư viện adid OMS → nhắc NV (+ lead)
+//        vào trang Ads thêm adid (mỗi quảng cáo 1 lần/ngày; camp tin nhắn bỏ qua).
 //  • Nút trên tin: Tắt / Bật camp (hoặc nhóm), −/+ x% ngân sách (nhóm dùng ngân sách chiến dịch CBO thì đổi
 //    ngân sách chiến dịch), nhập ngân sách mới, xem số mới nhất. Trước mỗi thao tác máy chủ đọc lại từ Meta và kiểm tra người bấm có quyền với camp đó (theo tên NV trong tên camp).
 //    Ghi lên Meta cần token có quyền ads_management (xem /api/ads-alert?perm=1).
@@ -30,6 +34,8 @@ const CFG_DEFAULT = {
   on: false,          // bật kiểm tra tự động
   cprMax: 150000,     // ngưỡng đắt: CP / đơn (đ)
   offAt: 200000,      // 0–1 đơn mà tiêu tới mức này → đề nghị tắt
+  autoOffAt: 180000,  // nhóm 0 đơn tiêu tới mức này → bot tự tắt nhóm (0 = không tự tắt)
+  noAdidAt: 50000,    // nhóm tiêu trên mức này mà quảng cáo đang chạy chưa có adid → nhắc NV thêm adid (0 = tắt)
   lowCpa: 80000,      // CPA đơn mới phát sinh dưới mức này → nhắc tăng ngân sách (0 = tắt)
   lowEveryMin: 120,   // nhắc tăng ngân sách tối đa 1 lần / … phút / nhóm
   reAlert: [180000, 200000, 250000, 300000], // nút "báo lại khi CPA vượt …"
@@ -240,12 +246,13 @@ export function mountAdsAlert(app, {
   }
 
   // Ai nhận cảnh báo: NV có camp (gồm lead của team), admin nếu adminAll
-  function recipients(u, cfg) {
+  // admin=false: chỉ NV + lead (nhắc thêm adid)
+  function recipients(u, cfg, { admin = true } = {}) {
     const out = [];
     for (const [login, l] of Object.entries(STORE.links || {})) {
       const who = employeesOfLogin(login);
       if (!who || !l.chatId || who.khongBoGhim) continue;   // kế toán không nhận
-      if (who.role === 'admin' ? cfg.adminAll : (who.employees || []).includes(u.employee)) out.push(l.chatId);
+      if (who.role === 'admin' ? admin && cfg.adminAll : (who.employees || []).includes(u.employee)) out.push(l.chatId);
     }
     return out;
   }
@@ -264,30 +271,95 @@ export function mountAdsAlert(app, {
     const cfg = STORE.cfg;
     const day = vnDay(), now = Date.now();
     const [camps, oms] = await Promise.all([getCampaigns(day, day), omsToday(day)]);
-    const units = [];
-    for (const c of camps || []) if (c.on) for (const u of unitsOf(c, oms)) if (u.on) units.push(u);
+    const units = [], offs = [], noAdid = [];
+    for (const c of camps || []) if (c.on) {
+      for (const u of unitsOf(c, oms)) if (u.on) units.push(u);
+      for (const a of c.adsets || []) if (a.on) {
+        const u = setUnit(c, a, oms);
+        if (oms && cfg.autoOffAt > 0 && u.st.res === 0 && u.st.spend >= cfg.autoOffAt) offs.push({ u, camp: String(c.id), one: c.adsets.length === 1 });
+        const ads = (a.ads || []).filter(x => x.on);
+        if (cfg.noAdidAt > 0 && c.obj !== 'tin nhắn' && u.st.spend > cfg.noAdidAt && ads.length) noAdid.push({ u, ads });
+      }
+    }
+    // Quảng cáo đang chạy chưa có adid (cặp xung đột không tính) trong thư viện adid OMS
+    if (noAdid.length && typeof global.__omsAdidsForAds === 'function') {
+      try {
+        const map = await global.__omsAdidsForAds(noAdid.flatMap(x => x.ads.map(a => a.id)));
+        for (const x of noAdid) x.ads = x.ads.filter(a => !(map[a.id] || []).some(r => !r.xung_dot));
+      } catch (e) { console.error('[ADSALERT] đọc thư viện adid lỗi:', e.message); noAdid.length = 0; }
+    } else noAdid.length = 0;
     // Quyết định cho mọi camp / nhóm trong 1 lần commit (đọc trạng thái mới nhất → đánh dấu → ghi) để nhiều
     // tiến trình không báo trùng; gửi Telegram sau.
     const run = s => {
       const today = (s.sent[day] ||= {});
       for (const d of Object.keys(s.sent)) if (d < day) delete s.sent[d];
-      const out = [];
+      const out = [], offed = [], adid = [];
+      // Tự tắt nhóm 0 đơn: 1 lần/ngày/nhóm (đánh dấu trước khi gọi Meta → nhiều tiến trình không tắt trùng)
+      const offIds = new Set();
+      for (const o of offs) {
+        const e = (today[o.u.id] ||= {});
+        if (e.autoOff) continue;
+        e.autoOff = now;
+        offed.push(o.u); offIds.add(o.u.id);
+        if (o.one) offIds.add(o.camp);   // camp 1 nhóm được xét theo camp → tin "đắt" của camp đó thôi
+      }
+      for (const x of noAdid) {
+        if (offIds.has(x.u.id)) continue;   // nhóm vừa tự tắt thì thôi nhắc adid
+        const e = (today[x.u.id] ||= {});
+        const moi = x.ads.filter(a => !(e.noAdid || []).includes(a.id));
+        if (!moi.length) continue;
+        e.noAdid = [...(e.noAdid || []), ...moi.map(a => a.id)];
+        adid.push({ u: x.u, ads: x.ads });
+      }
       for (const u of units) {
+        if (offIds.has(u.id)) continue;
         const e = (today[u.id] ||= {});
         if (auto && e.checkedAt && now - e.checkedAt < everyOf(u, cfg) * 60e3 - 2 * 60e3) continue; // chưa tới nhịp (chừa 2 phút lệch)
         if (auto) e.checkedAt = now;
         const R = decide(e, u, cfg, now);
         if (R.length) out.push({ u, R });
       }
-      return out;
+      return { list: out, offed, adid };
     };
+    const offReason = u => ({ lv: 3, kind: 'auto', text: `Đã tiêu ${fmt(u.st.spend)} đ mà chưa ra đơn (ngưỡng tự tắt ${fmt(cfg.autoOffAt)} đ)` });
     if (!send) {
-      const list = run(JSON.parse(JSON.stringify({ sent: STORE.sent || {} })));
-      return { day, oms: !!oms, list: list.map(({ u, R }) => ({ id: u.id, loai: kindName(u.k), ten: u.name, camp: u.campName, nv: u.employee,
-        ...u.st, nhip: everyOf(u, cfg), lyDo: R.map(r => r.text.replace(/<[^>]+>/g, '')), nguoiNhan: recipients(u, cfg).length })) };
+      const r = run(JSON.parse(JSON.stringify({ sent: STORE.sent || {} })));
+      const row = (u, lyDo, nguoiNhan) => ({ id: u.id, loai: kindName(u.k), ten: u.name, camp: u.campName, nv: u.employee,
+        ...u.st, nhip: everyOf(u, cfg), lyDo, nguoiNhan });
+      return { day, oms: !!oms, list: [
+        ...r.offed.map(u => row(u, ['SẼ TỰ TẮT: ' + offReason(u).text], recipients(u, cfg).length)),
+        ...r.list.map(({ u, R }) => row(u, R.map(r => r.text.replace(/<[^>]+>/g, '')), recipients(u, cfg).length)),
+        ...r.adid.map(({ u, ads }) => row(u, ['Chưa có adid: ' + ads.map(a => a.name).join(', ')], recipients(u, cfg, { admin: false }).length)),
+      ] };
     }
-    const list = commit(run);
+    const { list, offed, adid } = commit(run);
     let n = 0;
+    for (const u of offed) {
+      let head, loi = '';
+      try {
+        await fbPost(u.id, { status: 'PAUSED' }, tokenForAcc(u.acc));
+        u.on = false; head = '🛑 <b>Bot đã TỰ TẮT nhóm</b>';
+        addLog({ who: 'bot (tự tắt)', camp: u.id, ten: 'Nhóm ' + u.name, viec: 'Đã TẮT nhóm', ok: true });
+      } catch (e) {
+        loi = metaMsg(e); head = '⚠️ <b>Không tự tắt được nhóm</b> — tắt tay giúp';
+        addLog({ who: 'bot (tự tắt)', camp: u.id, ten: 'Nhóm ' + u.name, viec: 'Tắt nhóm', ok: false, loi });
+      }
+      const R = [offReason(u)];
+      if (loi) R.push({ lv: 3, kind: 'auto', text: 'Lỗi Meta: ' + esc(loi) });
+      const kb = keyboard('s', u.acc, u.id, u.on, cfg.step);
+      for (const chatId of recipients(u, cfg)) if ((await say(chatId, alertText(u, cfg, head, R), { reply_markup: kb })).ok) n++;
+    }
+    for (const { u, ads } of adid) {
+      const text = `🏷 <b>Nhóm chưa có adid</b>\n<b>${esc(u.name)}</b>\nChiến dịch: ${esc(u.campName)}\nNV: ${esc(u.employee)} · ${esc(u.accName || u.acc)}\n`
+        + `Hôm nay đã tiêu <b>${fmt(u.st.spend)} đ</b>. Quảng cáo đang chạy chưa có adid (đơn từ link trong bài / bình luận sẽ không ghép được vào nhóm):\n`
+        + ads.slice(0, 15).map(a => `• ${esc(a.name || a.id)}` + (a.preview ? ` — <a href="${esc(a.preview)}">bản xem trước</a>` : '')).join('\n')
+        + `\n\nThêm adid: mở bản xem trước → bấm nút / link đặt hàng → copy link trang bán hàng (có ?fbclid=) → dán vào ô dưới quảng cáo ở <a href="${PUBLIC_URL}/">trang Ads</a>.`;
+      for (const chatId of recipients(u, cfg, { admin: false })) {
+        const j = await say(chatId, text);
+        if (!j.ok) addLog({ who: 'bot', camp: u.id, ten: 'Nhóm ' + u.name, viec: 'nhắc thêm adid', ok: false, loi: j.description || 'Telegram từ chối' });
+        else n++;
+      }
+    }
     for (const { u, R } of list) {
       const cpaR = R.find(r => r.kind === 'cpa');
       const kb = keyboard(u.k, u.acc, u.id, u.on, cfg.step, cpaR && nextLevels(cpaR.cpa, cfg));
@@ -297,7 +369,7 @@ export function mountAdsAlert(app, {
         else n++;
       }
     }
-    return { day, oms: !!oms, dat: list.length, daGui: n };
+    return { day, oms: !!oms, dat: list.length, tuTat: offed.length, thieuAdid: adid.length, daGui: n };
   }
 
   async function tick() {
@@ -734,7 +806,7 @@ export function mountAdsAlert(app, {
       })() : undefined,
       fromHour: num(b.fromHour, 0, 23), toHour: num(b.toHour, 1, 24),
       step: num(b.step, 5, 100), maxBudget: num(b.maxBudget, 10000, 1e10),
-      offAt: num(b.offAt, 0, 1e9), lowCpa: num(b.lowCpa, 0, 1e9), lowEveryMin: num(b.lowEveryMin, 10, 1440),
+      offAt: num(b.offAt, 0, 1e9), autoOffAt: num(b.autoOffAt, 0, 1e9), noAdidAt: num(b.noAdidAt, 0, 1e9), lowCpa: num(b.lowCpa, 0, 1e9), lowEveryMin: num(b.lowEveryMin, 10, 1440),
       reAlert: Array.isArray(b.reAlert) ? [...new Set(b.reAlert.map(Number).filter(v => Number.isFinite(v) && v > 0).map(Math.round))].sort((x, y) => x - y).slice(0, 6) : undefined,
     };
     commit(s => { s.cfg = { ...CFG_DEFAULT, ...s.cfg }; for (const [k, v] of Object.entries(patch)) if (v !== undefined) s.cfg[k] = v; });
