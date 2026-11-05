@@ -10,7 +10,9 @@
 //      - 0–1 đơn: tiêu ≥ cprMax (150k) → "có dấu hiệu bị đắt"; tiêu ≥ offAt (200k) → "đề nghị tắt". Mỗi mức 1 lần/ngày.
 //      - ≥ 2 đơn: CPA trung bình > cprMax → báo, tin có nút chọn mức báo lại (cpaNext); chưa chọn thì mức kế tiếp.
 //      - > 2 đơn: so với lần kiểm tra trước (mốc `base`, chỉ dời khi có đơn mới / đã báo), CPA của đơn mới phát sinh
-//        > cprMax → báo; < lowCpa (80k) → nhắc tăng ngân sách (tối đa 1 lần / lowEveryMin phút). Tiêu thêm > cprMax
+//        > cprMax → báo.
+//      - Nhắc tăng ngân sách: so với mốc gần nhất (mốc ghi mỗi lần số đơn đổi) mà từ đó đã ra thêm ≥ 2 đơn, CPA các
+//        đơn mới ≤ lowCpa (80k) → nhắc (người dùng chốt 5/11/2026; tối đa 1 lần / lowEveryMin phút, nhắc xong đếm lại). Tiêu thêm > cprMax
 //        mà chưa ra đơn mới cũng báo.
 //      - Nhóm quảng cáo đang chạy tiêu ≥ autoOffAt (180k) mà 0 đơn → bot TỰ TẮT nhóm và báo (người dùng chọn 4/11/2026;
 //        1 lần/ngày/nhóm: NV bật lại thì hôm đó không tự tắt nữa; không đọc được OMS thì không tự tắt).
@@ -36,7 +38,7 @@ const CFG_DEFAULT = {
   offAt: 200000,      // 0–1 đơn mà tiêu tới mức này → đề nghị tắt
   autoOffAt: 180000,  // nhóm 0 đơn tiêu tới mức này → bot tự tắt nhóm (0 = không tự tắt)
   noAdidAt: 50000,    // nhóm tiêu trên mức này mà quảng cáo đang chạy chưa có adid → nhắc NV thêm adid (0 = tắt)
-  lowCpa: 80000,      // CPA đơn mới phát sinh dưới mức này → nhắc tăng ngân sách (0 = tắt)
+  lowCpa: 80000,      // ra thêm ≥ 2 đơn từ mốc và CPA các đơn mới ≤ mức này → nhắc tăng ngân sách (0 = tắt)
   lowEveryMin: 120,   // nhắc tăng ngân sách tối đa 1 lần / … phút / nhóm
   reAlert: [180000, 200000, 250000, 300000], // nút "báo lại khi CPA vượt …"
   // Nhịp kiểm tra từng camp / nhóm theo ngân sách/ngày (nhóm CBO lấy ngân sách chiến dịch), người dùng đặt 3/11/2026:
@@ -161,7 +163,7 @@ export function mountAdsAlert(app, {
      e = trạng thái hôm nay của 1 camp / nhóm (s.sent[day][id]), sửa trực tiếp:
        lv1/lv2: đã báo mức "dấu hiệu đắt" / "đề nghị tắt" (0–1 đơn); cpaNext: mức CPA trung bình sẽ báo
        (chưa có = cprMax, 0 = không báo lại hôm nay); base: mốc { spend, res, at } để tính CPA đơn mới;
-       lowAt: lần nhắc tăng ngân sách gần nhất.
+       lowAt: lần nhắc tăng ngân sách gần nhất; pts: mốc mỗi lần số đơn đổi (cho nhắc tăng ngân sách).
      Trả các lý do cần báo: { lv: 3 đề nghị tắt | 2 đắt | 1 rẻ, kind, text }. */
   // Mức báo lại kế tiếp: mức đầu tiên trong cfg.reAlert lớn hơn CPA hiện tại; không có thì CPA × 1,2
   const nextLevels = (cpa, cfg) => {
@@ -197,16 +199,26 @@ export function mountAdsAlert(app, {
       if (dR > 0) {
         if (b.res > 2 && T > 0 && dS / dR > T)
           R.push({ lv: 2, kind: 'new', text: `Đơn mới ${since}: tiêu thêm ${fmt(dS)} đ ra ${dR} đơn → <b>${per(dS, dR)}</b> (vượt ${fmt(T)} đ)` });
-        else if (b.res > 2 && cfg.lowCpa > 0 && dS / dR < cfg.lowCpa && (!e.lowAt || now - e.lowAt >= cfg.lowEveryMin * 60e3)) {
-          e.lowAt = now;
-          R.push({ lv: 1, kind: 'low', text: `Đơn mới ${since}: tiêu thêm ${fmt(dS)} đ ra ${dR} đơn → <b>${per(dS, dR)}</b> (dưới ${fmt(cfg.lowCpa)} đ) → nên tăng ngân sách` });
-        }
         e.base = { spend, res, at: hhmm(), vat: 1 };
       } else if (T > 0 && dS > T) {
         if (b.res > 2) R.push({ lv: 2, kind: 'new', text: `${since[0].toUpperCase() + since.slice(1)}: tiêu thêm ${fmt(dS)} đ chưa ra đơn mới` });
         e.base = { spend, res, at: hhmm(), vat: 1 };
       }
     }
+    // Nhắc tăng ngân sách (người dùng chốt 5/11/2026): pts = mốc { spend, res, at } mỗi lần kiểm tra thấy số đơn đổi.
+    // Lấy mốc gần nhất mà từ đó đã ra thêm ≥ 2 đơn (vd 11h 100k/1 đơn, 12h 200k/2, 13h 250k/3 → so với 11h:
+    // 150k / 2 đơn = 75k) → CPA các đơn mới ≤ lowCpa thì nhắc, rồi bắt đầu đếm lại từ lúc nhắc.
+    let P = e.pts || [];
+    if (P.some(p => p.res > res || p.spend > spend)) P = [];   // số liệu lùi (đơn huỷ…) → bắt đầu lại
+    if (!P.length || P[P.length - 1].res !== res) P = [...P, { spend, res, at: hhmm() }];
+    const p = P.slice().reverse().find(p => res - p.res >= 2);
+    if (p && cfg.lowCpa > 0 && (spend - p.spend) / (res - p.res) <= cfg.lowCpa && (!e.lowAt || now - e.lowAt >= cfg.lowEveryMin * 60e3)) {
+      const dS = spend - p.spend, dR = res - p.res;
+      e.lowAt = now;
+      R.push({ lv: 1, kind: 'low', text: `Đơn mới từ ${p.at}: tiêu thêm ${fmt(dS)} đ ra ${dR} đơn → <b>${per(dS, dR)}</b> (≤ ${fmt(cfg.lowCpa)} đ) → nên tăng ngân sách` });
+      P = [P[P.length - 1]];
+    }
+    e.pts = P.slice(-12);
     return R;
   }
   function headOf(R, k) {

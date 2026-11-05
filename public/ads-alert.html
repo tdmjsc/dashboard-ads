@@ -75,7 +75,7 @@
         <label>0–1 đơn mà tiêu tới … thì đề nghị tắt (đ)<input id="c-offAt" inputmode="numeric"></label>
         <label>Nhóm 0 đơn tiêu tới … thì bot TỰ TẮT nhóm (đ, 0 = không tự tắt)<input id="c-autoOffAt" inputmode="numeric"></label>
         <label>Nhóm tiêu trên … mà quảng cáo chưa có adid thì nhắc NV (đ, 0 = tắt)<input id="c-noAdidAt" inputmode="numeric"></label>
-        <label>CPA đơn mới dưới … thì nhắc tăng NS (đ, 0 = tắt)<input id="c-lowCpa" inputmode="numeric"></label>
+        <label>Ra thêm ≥ 2 đơn mà CPA các đơn mới ≤ … thì nhắc tăng NS (đ, 0 = tắt)<input id="c-lowCpa" inputmode="numeric"></label>
         <label>Nhắc tăng NS tối đa 1 lần / … phút<input id="c-lowEveryMin" inputmode="numeric"></label>
         <label>Các mức "báo lại khi CPA vượt" (đ, cách nhau dấu phẩy)<input id="c-reAlert" placeholder="180000, 200000, 250000, 300000"></label>
         <div class="tiers">
@@ -103,7 +103,8 @@
         • Nhóm đang chạy 0 đơn tiêu ≥ mức tự tắt → bot tự tắt nhóm và báo NV / lead / admin (mỗi lượt kiểm tra, không chờ nhịp; 1 lần/ngày/nhóm — NV bật lại thì hôm đó không tự tắt nữa; không đọc được OMS thì không tự tắt).<br>
         • Nhóm tiêu trên mức nhắc adid mà có quảng cáo đang chạy chưa có adid → nhắc NV / lead (không gửi admin; mỗi quảng cáo 1 lần/ngày; camp tin nhắn bỏ qua).<br>
         • Từ 2 đơn: CPA trung bình vượt ngưỡng đắt → báo, kèm nút chọn mức báo lại.<br>
-        • Trên 2 đơn: CPA của các đơn mới phát sinh từ lần kiểm tra trước của nhóm đó vượt ngưỡng đắt (hoặc tiêu thêm quá ngưỡng mà chưa ra đơn mới) → báo; dưới mức nhắc → nhắc tăng ngân sách.
+        • Trên 2 đơn: CPA của các đơn mới phát sinh từ lần kiểm tra trước của nhóm đó vượt ngưỡng đắt (hoặc tiêu thêm quá ngưỡng mà chưa ra đơn mới) → báo.<br>
+        • Nhắc tăng ngân sách: so với lần kiểm tra gần nhất mà từ đó đã ra thêm từ 2 đơn trở lên (vd 11h 100k/1 đơn, 12h 200k/2, 13h 250k/3 → so với 11h: 150k ra 2 đơn = 75k), CPA các đơn mới ≤ mức nhắc → nhắc; nhắc xong đếm lại.
       </div>
     </div>
 
