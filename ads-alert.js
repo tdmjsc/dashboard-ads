@@ -5,7 +5,7 @@
 //    → bot nhận /start <mã> → ghi chat của người đó). NV nhận camp của mình (gồm team nếu là lead),
 //    admin nhận mọi camp (tắt được trong cài đặt).
 //  • Kết quả = đơn về OMS (như cột Kết quả trang Ads); camp tin nhắn chưa có đơn OMS thì dùng kết quả Meta.
-//    Camp có từ 2 nhóm quảng cáo thì xét và báo riêng từng nhóm (người dùng chọn 3/11/2026); camp / nhóm đã tắt
+//    Luôn xét và báo theo từng nhóm quảng cáo, kể cả camp 1 nhóm (người dùng chọn 5/11/2026); camp / nhóm đã tắt
 //    thì không báo. Luật báo (người dùng đặt 3/11/2026, số liệu hôm nay, `decide`):
 //      - 0–1 đơn: tiêu ≥ cprMax (150k) → "có dấu hiệu bị đắt"; tiêu ≥ offAt (200k) → "đề nghị tắt". Mỗi mức 1 lần/ngày.
 //      - ≥ 2 đơn: CPA trung bình > cprMax → báo, tin có nút chọn mức báo lại (cpaNext); chưa chọn thì mức kế tiếp.
@@ -14,7 +14,7 @@
 //      - Nhắc tăng ngân sách: so với mốc gần nhất (mốc ghi mỗi lần số đơn đổi) mà từ đó đã ra thêm ≥ 2 đơn, CPA các
 //        đơn mới ≤ lowCpa (80k) → nhắc (người dùng chốt 5/11/2026; tối đa 1 lần / lowEveryMin phút, nhắc xong đếm lại). Tiêu thêm > cprMax
 //        mà chưa ra đơn mới cũng báo.
-//      - Nhóm quảng cáo đang chạy tiêu ≥ autoOffAt (180k) mà 0 đơn → bot TỰ TẮT nhóm và báo (người dùng chọn 4/11/2026;
+//      - Nhóm quảng cáo đang chạy tiêu ≥ autoOffAt (180k) mà 0 đơn → bot TỰ TẮT nhóm (không tắt camp) và báo (người dùng chọn 4/11/2026;
 //        1 lần/ngày/nhóm: NV bật lại thì hôm đó không tự tắt nữa; không đọc được OMS thì không tự tắt).
 //      - Nhóm tiêu > noAdidAt (50k) mà có quảng cáo đang chạy chưa có adid trong thư viện adid OMS → nhắc NV (+ lead)
 //        vào trang Ads thêm adid (mỗi quảng cáo 1 lần/ngày; camp tin nhắn bỏ qua).
@@ -150,13 +150,16 @@ export function mountAdsAlert(app, {
     return { ...baseOf(c), k: 'c', id: String(c.id), name: c.name, on: !!c.on, budget: c.budget || 0,
       st: statOf(spend, meta, oms ? (oms.c[String(c.id)] || 0) : 0, c.obj, !!oms) };
   }
-  // Nhóm không có ngân sách riêng = ngân sách ở chiến dịch (CBO)
+  // Nhóm không có ngân sách riêng = ngân sách ở chiến dịch (CBO). Camp chỉ 1 nhóm: đơn OMS tính theo camp (đơn chỉ
+  // tra ra chiến dịch, chưa ra nhóm — vd ghép theo trang đích — vẫn là của nhóm đó, kẻo bị coi là 0 đơn rồi tự tắt).
   function setUnit(c, a, oms) {
+    const don = !oms ? 0 : (c.adsets || []).length === 1 ? Math.max(oms.c[String(c.id)] || 0, oms.s[String(a.id)] || 0) : (oms.s[String(a.id)] || 0);
     return { ...baseOf(c), k: 's', id: String(a.id), name: a.name, on: !!(c.on && a.on), budget: a.budget || 0, cbo: a.budget ? 0 : (c.budget || 0),
-      st: statOf(a.spent || 0, a.results || 0, oms ? (oms.s[String(a.id)] || 0) : 0, c.obj, !!oms) };
+      st: statOf(a.spent || 0, a.results || 0, don, c.obj, !!oms) };
   }
-  // Camp có từ 2 nhóm → xét từng nhóm; 1 nhóm → xét cả camp
-  const unitsOf = (c, oms) => (c.adsets || []).length >= 2 ? c.adsets.map(a => setUnit(c, a, oms)) : [campUnit(c, oms)];
+  // Luôn xét + báo theo từng nhóm, kể cả camp 1 nhóm (người dùng chọn 5/11/2026). Chỉ khi không đọc được nhóm nào của
+  // camp (lỗi Meta) mới xét cả camp để vẫn có cảnh báo — trường hợp này không tự tắt.
+  const unitsOf = (c, oms) => (c.adsets || []).length ? c.adsets.map(a => setUnit(c, a, oms)) : [campUnit(c, oms)];
   const kindName = k => k === 's' ? 'nhóm' : 'camp';
 
   /* ---------- Luật báo ----------
@@ -229,11 +232,12 @@ export function mountAdsAlert(app, {
     return `💡 <b>${Nm} đang rẻ — nên tăng ngân sách</b>`;
   }
 
+  // Tên camp đậm, dòng dưới tên nhóm chữ nghiêng (Telegram không cho chỉnh cỡ chữ)
+  const unitTitle = u => `<b>${esc(u.campName)}</b>` + (u.k === 's' ? `\n<i>↳ Nhóm: ${esc(u.name)}</i>` : '');
   function alertText(u, cfg, head, R = []) {
     const st = u.st;
     const budget = u.budget ? `${fmt(u.budget)} đ/ngày` : u.cbo ? `theo chiến dịch (CBO) ${fmt(u.cbo)} đ/ngày` : 'chưa rõ';
-    return `${head}\n<b>${esc(u.name)}</b>\n`
-      + (u.k === 's' ? `Chiến dịch: ${esc(u.campName)}\n` : '')
+    return `${head}\n${unitTitle(u)}\n`
       + `NV: ${esc(u.employee)} · ${esc(u.accName || u.acc)}\n`
       + R.map(r => '• ' + r.text + '\n').join('')
       + `Hôm nay (đến ${hhmm()}): chi <b>${fmt(st.spend)} đ</b> (sau thuế) · <b>${st.res}</b> ${esc(st.label)}`
@@ -284,11 +288,12 @@ export function mountAdsAlert(app, {
     const day = vnDay(), now = Date.now();
     const [camps, oms] = await Promise.all([getCampaigns(day, day), omsToday(day)]);
     const units = [], offs = [], noAdid = [];
+    const offIf = o => oms && cfg.autoOffAt > 0 && o.u.st.res === 0 && o.u.st.spend >= cfg.autoOffAt && offs.push(o);
     for (const c of camps || []) if (c.on) {
       for (const u of unitsOf(c, oms)) if (u.on) units.push(u);
       for (const a of c.adsets || []) if (a.on) {
         const u = setUnit(c, a, oms);
-        if (oms && cfg.autoOffAt > 0 && u.st.res === 0 && u.st.spend >= cfg.autoOffAt) offs.push({ u, camp: String(c.id), one: c.adsets.length === 1 });
+        offIf({ u });
         const ads = (a.ads || []).filter(x => x.on);
         if (cfg.noAdidAt > 0 && c.obj !== 'tin nhắn' && u.st.spend > cfg.noAdidAt && ads.length) noAdid.push({ u, ads });
       }
@@ -313,7 +318,6 @@ export function mountAdsAlert(app, {
         if (e.autoOff) continue;
         e.autoOff = now;
         offed.push(o.u); offIds.add(o.u.id);
-        if (o.one) offIds.add(o.camp);   // camp 1 nhóm được xét theo camp → tin "đắt" của camp đó thôi
       }
       for (const x of noAdid) {
         if (offIds.has(x.u.id)) continue;   // nhóm vừa tự tắt thì thôi nhắc adid
@@ -350,19 +354,19 @@ export function mountAdsAlert(app, {
       let head, loi = '';
       try {
         await fbPost(u.id, { status: 'PAUSED' }, tokenForAcc(u.acc));
-        u.on = false; head = '🛑 <b>Bot đã TỰ TẮT nhóm</b>';
-        addLog({ who: 'bot (tự tắt)', camp: u.id, ten: 'Nhóm ' + u.name, viec: 'Đã TẮT nhóm', ok: true });
+        u.on = false; head = `🛑 <b>Bot đã TỰ TẮT ${kindName(u.k)}</b>`;
+        addLog({ who: 'bot (tự tắt)', camp: u.id, ten: (u.k === 's' ? 'Nhóm ' : '') + u.name, viec: 'Đã TẮT ' + kindName(u.k), ok: true });
       } catch (e) {
-        loi = metaMsg(e); head = '⚠️ <b>Không tự tắt được nhóm</b> — tắt tay giúp';
-        addLog({ who: 'bot (tự tắt)', camp: u.id, ten: 'Nhóm ' + u.name, viec: 'Tắt nhóm', ok: false, loi });
+        loi = metaMsg(e); head = `⚠️ <b>Không tự tắt được ${kindName(u.k)}</b> — tắt tay giúp`;
+        addLog({ who: 'bot (tự tắt)', camp: u.id, ten: (u.k === 's' ? 'Nhóm ' : '') + u.name, viec: 'Tắt ' + kindName(u.k), ok: false, loi });
       }
       const R = [offReason(u)];
       if (loi) R.push({ lv: 3, kind: 'auto', text: 'Lỗi Meta: ' + esc(loi) });
-      const kb = keyboard('s', u.acc, u.id, u.on, cfg.step);
+      const kb = keyboard(u.k, u.acc, u.id, u.on, cfg.step);
       for (const chatId of recipients(u, cfg)) if ((await say(chatId, alertText(u, cfg, head, R), { reply_markup: kb })).ok) n++;
     }
     for (const { u, ads } of adid) {
-      const text = `🏷 <b>Nhóm chưa có adid</b>\n<b>${esc(u.name)}</b>\nChiến dịch: ${esc(u.campName)}\nNV: ${esc(u.employee)} · ${esc(u.accName || u.acc)}\n`
+      const text = `🏷 <b>Nhóm chưa có adid</b>\n${unitTitle(u)}\nNV: ${esc(u.employee)} · ${esc(u.accName || u.acc)}\n`
         + `Hôm nay đã tiêu <b>${fmt(u.st.spend)} đ</b>. Quảng cáo đang chạy chưa có adid (đơn từ link trong bài / bình luận sẽ không ghép được vào nhóm):\n`
         + ads.slice(0, 15).map(a => `• ${esc(a.name || a.id)}` + (a.preview ? ` — <a href="${esc(a.preview)}">bản xem trước</a>` : '')).join('\n')
         + `\n\nThêm adid: mở bản xem trước → bấm nút / link đặt hàng → copy link trang bán hàng (có ?fbclid=) → dán vào ô dưới quảng cáo ở <a href="${PUBLIC_URL}/">trang Ads</a>.`;
