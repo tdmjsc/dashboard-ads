@@ -748,6 +748,8 @@ async function fbAdRef(id) {
   return ref;
 }
 global.__fbAdRef = fbAdRef;
+// Chiến dịch trang Ads của 1 ngày (dự phòng ghép đơn theo trang đích, oms.js __omsLandingGuess)
+global.__getCampaignsDay = d => getCampaigns(d, d);
 // Giá trị cột NV marketing của OMS → tên NV: ID Meta thì tra tên chiến dịch, chữ (vd tên
 // chiến dịch "TD4 - My - Túi giữ lạnh…" do utm_content={{campaign.name}}) thì nhận diện trực tiếp.
 // Đã đúng tên đầy đủ thì trả lại chính nó; không nhận ra được thì trả ''.

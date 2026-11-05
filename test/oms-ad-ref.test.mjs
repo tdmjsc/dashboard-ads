@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { adRefFromUtm, adIdFromFbclid, findFbclid, utmFromUrl } from '../oms-ad-ref.js';
+import { adRefFromUtm, adIdFromFbclid, findFbclid, utmFromUrl, landingKey, guessByLanding, addLandingHist } from '../oms-ad-ref.js';
 
 const META = {
   '1200000000000001': { ad_id: '1200000000000001', adset_id: '1200000000000002', adset_name: 'Nhóm A', campaign_id: '1200000000000003', campaign_name: 'TD1 - Máy đo' },
@@ -107,4 +107,35 @@ test('pasted link: any copy form gives the adid', () => {
   assert.equal(utmFromUrl(NUT).utm_content, '52658160753113');
   assert.equal(utmFromUrl('https://www.tdmjsc.com/gelduoichuototochinhhang'), null);
   assert.equal(utmFromUrl(''), null);
+});
+
+test('landing key ignores domain, query, trailing slash, case', () => {
+  assert.equal(landingKey('https://www.tdmjsc.com/MaydonongdoCon-td-auto/?fbclid=Iw123'), '/maydonongdocon-td-auto');
+  assert.equal(landingKey('tdmjs.com/maydonongdocon-td-auto'), '/maydonongdocon-td-auto');
+  assert.equal(landingKey('https://www.tdmjsc.com/'), '');
+  assert.equal(landingKey(''), '');
+});
+
+test('guess by landing: only when exactly one spending campaign of that NV used the page', () => {
+  const hist = new Map();
+  addLandingHist(hist, 'https://www.tdmjsc.com/maydonongdocon-td-auto?x=1', '111', '211');
+  addLandingHist(hist, 'tdmjs.com/maydonongdocon-td-auto', '111', '212');
+  addLandingHist(hist, 'tdmjsc.com/maydonongdocon-td-auto', '333', '');
+  const camp = (id, emp, sp, adsets) => ({ id, name: 'C' + id, employee: emp, daily: [{ spent: sp }], adsets });
+  const one = [camp('111', 'Vũ Hà Giang', 100, [{ id: '211', name: 'N1', spent: 100 }]), camp('333', 'Nguyễn Thị Trà My', 50, [])];
+  const base = { landing: '/maydonongdocon-td-auto', nv: 'Vũ Hà Giang', hist };
+  assert.deepEqual(guessByLanding({ ...base, camps: one }),
+    { campaign_id: '111', campaign_name: 'C111', adset_id: '211', adset_name: 'N1' });
+  // 2 nhóm đang tiêu, chỉ 1 nhóm từng ra đơn từ trang → nhóm đó; cả 2 từng ra → chỉ chiến dịch
+  const two = [camp('111', 'Vũ Hà Giang', 100, [{ id: '211', name: 'N1', spent: 50 }, { id: '299', name: 'N9', spent: 50 }])];
+  assert.equal(guessByLanding({ ...base, camps: two }).adset_id, '211');
+  const both = [camp('111', 'Vũ Hà Giang', 100, [{ id: '211', spent: 50 }, { id: '212', spent: 50 }])];
+  assert.equal(guessByLanding({ ...base, camps: both }).adset_id, undefined);
+  // 2 chiến dịch của NV cùng trang → không đoán; chiến dịch không tiêu hôm đó → không tính
+  addLandingHist(hist, 'tdmjsc.com/maydonongdocon-td-auto', '444', '');
+  const amb = [...one, camp('444', 'Vũ Hà Giang', 10, [])];
+  assert.equal(guessByLanding({ ...base, camps: amb }), null);
+  assert.equal(guessByLanding({ ...base, camps: [...one, camp('444', 'Vũ Hà Giang', 0, [])] }).campaign_id, '111');
+  assert.equal(guessByLanding({ ...base, landing: '/khac', camps: one }), null);
+  assert.equal(guessByLanding({ ...base, nv: '', camps: one }), null);
 });

@@ -5,7 +5,7 @@
 // =====================================================================
 import { sendApns, apnsConfigured } from './apns.js';
 import { omsDateBoundary } from './oms-date.js';
-import { adRefFromUtm, hasUtm, findFbclid, adIdFromFbclid, utmFromUrl, AD_REF_FROM } from './oms-ad-ref.js';
+import { adRefFromUtm, hasUtm, findFbclid, adIdFromFbclid, utmFromUrl, landingKey, guessByLanding, addLandingHist, AD_REF_FROM } from './oms-ad-ref.js';
 
 // ---- Trạng thái đơn hàng hợp lệ ----
 const TRANG_THAI = ['Đơn mới', 'Đã chốt', 'Đang ship', 'Ship thành công', 'Hoàn thành công', 'Không mua',
@@ -207,6 +207,8 @@ async function ensureTables(pool) {
     "url_page VARCHAR(1000) DEFAULT ''",
     // adid (ID ad nội bộ Meta) giải từ fbclid, '-' = có fbclid mà không có adid (xem oms-ad-ref.js)
     "fb_adid VARCHAR(32) DEFAULT ''",
+    // 'trang' = chiến dịch / nhóm ghép dự phòng theo trang đích + NV (guessByLanding), '' = ghép chắc chắn / chưa ra
+    "fb_ref_src VARCHAR(8) DEFAULT ''",
   ];
   for (const col of addCols) {
     try { await pool.query(`ALTER TABLE oms_orders ADD COLUMN ${col}`); } catch(e) {}
@@ -436,7 +438,7 @@ export function mountOMS(app, { mysql, express, getTeamLead = () => ({}) }) {
     if (typeof global.__thaiRegroupAdid === 'function') {
       await Promise.resolve(global.__thaiRegroupAdid(adid, ref, oldAd)).catch(e => console.error('[OMS] ghép adid đơn Thái:', e.message));
     }
-    return saveAdRef(`ngay_ve >= ? AND fb_adid=? AND (fb_campaign_id=''${oldAd ? ` OR (fb_ad_id=? AND ${NO_UTM_ID})` : ''})`,
+    return saveAdRef(`ngay_ve >= ? AND fb_adid=? AND (fb_campaign_id='' OR fb_ref_src='trang'${oldAd ? ` OR (fb_ad_id=? AND ${NO_UTM_ID})` : ''})`,
       [omsDateBoundary(AD_REF_FROM), adid, ...(oldAd ? [oldAd] : [])], ref);
   }
   // Điền fb_adid cho đơn có fbclid về trước khi có cột (chạy trong fixAdRefs)
@@ -448,7 +450,7 @@ export function mountOMS(app, { mysql, express, getTeamLead = () => ({}) }) {
   // Ghi kết quả tra cho các đơn khớp where; tra không ra vẫn ghi fb_ref_at để không tra lại mãi
   function saveAdRef(where, params, ref) {
     return db(`UPDATE oms_orders SET fb_campaign_id=?, fb_campaign_name=?, fb_adset_id=?, fb_adset_name=?,
-      fb_ad_id=?, fb_ref_at=UTC_TIMESTAMP() WHERE ${where}`,
+      fb_ad_id=?, fb_ref_src='', fb_ref_at=UTC_TIMESTAMP() WHERE ${where}`,
       [ref.campaign_id || '', (ref.campaign_name || '').slice(0, 255), ref.adset_id || '',
        (ref.adset_name || '').slice(0, 255), ref.ad_id || '', ...params]);
   }
@@ -464,7 +466,7 @@ export function mountOMS(app, { mysql, express, getTeamLead = () => ({}) }) {
       const dienAdid = await fillFbAdid();
       // Đơn chưa ra chiến dịch mà adid đã có trong thư viện (cặp nhập sẵn / thêm tay / học sau) → ghép ngay
       const pend = await db(`SELECT DISTINCT o.fb_adid FROM oms_orders o JOIN oms_adid_map m ON m.adid=o.fb_adid AND m.xung_dot=''
-        WHERE o.ngay_ve >= ? AND o.fb_campaign_id=''`, [omsDateBoundary(AD_REF_FROM)]);
+        WHERE o.ngay_ve >= ? AND (o.fb_campaign_id='' OR o.fb_ref_src='trang')`, [omsDateBoundary(AD_REF_FROM)]);
       let ghepAdid = 0;
       for (const { fb_adid } of pend) {
         const ref = await adidRef(fb_adid).catch(() => null);
@@ -487,8 +489,52 @@ export function mountOMS(app, { mysql, express, getTeamLead = () => ({}) }) {
         if (ref.campaign_id) out.ra++; else out.khongRa++;
         out.don += Number(r.don) || 0;
       }
+      out.theoTrang = await guessLandingRefs().catch(e => { out.loiTheoTrang = e.message; return 0; });
       return out;
     } finally { fixingAdRefs = false; }
+  }
+
+  // ---- Dự phòng ghép theo trang đích (guessByLanding trong oms-ad-ref.js): đơn có fbclid nhưng không có adid
+  // (hoặc adid chưa có trong thư viện), tra thường không ra → chiến dịch duy nhất của NV đó có chi tiêu hôm đặt đơn
+  // và từng ra đơn ghép chắc chắn từ trang đích này. Ghi fb_ref_src='trang'; ghép chắc chắn sau này (học được
+  // adid) ghi đè. Đơn không có fbclid (vào thẳng, Zalo…) không đoán. Dùng chung cho đơn Thái (thailand.js).
+  let histCache = null;
+  async function landingHist() {
+    if (histCache && Date.now() - histCache.at < 10 * 60 * 1000) return histCache.hist;
+    const hist = new Map();
+    const rows = await db(`SELECT url_page, fb_campaign_id, fb_adset_id FROM oms_orders WHERE ngay_ve >= ?
+      AND fb_campaign_id!='' AND fb_ref_src='' AND url_page!=''`, [omsDateBoundary(AD_REF_FROM)]);
+    for (const r of rows) addLandingHist(hist, r.url_page, r.fb_campaign_id, r.fb_adset_id);
+    if (typeof global.__thaiLandingRows === 'function') {
+      for (const r of await global.__thaiLandingRows().catch(() => [])) addLandingHist(hist, r.url, r.fb_campaign_id, r.fb_adset_id);
+    }
+    histCache = { at: Date.now(), hist };
+    return hist;
+  }
+  global.__omsLandingGuess = async ({ url, nv, day }) => {
+    if (!getPool() || typeof global.__getCampaignsDay !== 'function') return null;
+    const landing = landingKey(url);
+    if (!landing || !nv || !day) return null;
+    const hist = await landingHist();
+    if (!hist.has(landing)) return null;
+    const camps = await global.__getCampaignsDay(day);
+    return guessByLanding({ landing, nv, camps: Array.isArray(camps) ? camps : [], hist });
+  };
+  async function guessLandingRefs() {
+    const rows = await db(`SELECT id, url_page, nv_marketing, DATE_FORMAT(ngay_ve + INTERVAL 7 HOUR, '%Y-%m-%d') AS d
+      FROM oms_orders WHERE ngay_ve >= ? AND ngay_ve > UTC_TIMESTAMP() - INTERVAL 14 DAY AND fb_campaign_id=''
+      AND fb_ref_at IS NOT NULL AND fbclid!='' AND url_page!='' AND nv_marketing!='' ORDER BY id DESC LIMIT 500`,
+      [omsDateBoundary(AD_REF_FROM)]);
+    let n = 0;
+    for (const r of rows) {
+      const ref = await global.__omsLandingGuess({ url: r.url_page, nv: r.nv_marketing, day: r.d });
+      if (!ref) continue;
+      await db(`UPDATE oms_orders SET fb_campaign_id=?, fb_campaign_name=?, fb_adset_id=?, fb_adset_name=?, fb_ad_id='',
+        fb_ref_src='trang', fb_ref_at=UTC_TIMESTAMP() WHERE id=? AND fb_campaign_id=''`,
+        [ref.campaign_id, ref.campaign_name.slice(0, 255), ref.adset_id || '', (ref.adset_name || '').slice(0, 255), r.id]);
+      n++;
+    }
+    return n;
   }
 
   // Cho trang Ads (server.js /api/ads/adids, /api/ads/adid): adid đã có theo quảng cáo, và lưu adid từ link
@@ -653,7 +699,7 @@ export function mountOMS(app, { mysql, express, getTeamLead = () => ({}) }) {
   // Admin: chẩn đoán vì sao đơn (theo SĐT) không ra chiến dịch — fbclid, adid, cặp trong thư viện adid
   app.get('/oms/api/ad-ref-debug', requireRole('admin'), wrap(async (req, res) => {
     const rows = await db(`SELECT id, ngay_ve, utm_source, utm_campaign, utm_medium, utm_term, utm_content, fbclid, url_page,
-      fb_campaign_id, fb_campaign_name, fb_adset_id, fb_adset_name, fb_ad_id, fb_adid, fb_ref_at
+      fb_campaign_id, fb_campaign_name, fb_adset_id, fb_adset_name, fb_ad_id, fb_adid, fb_ref_src, fb_ref_at
       FROM oms_orders WHERE sdt=? ORDER BY id DESC LIMIT 3`, [String(req.query.sdt || '').trim()]);
     const out = [];
     for (const r of rows) {

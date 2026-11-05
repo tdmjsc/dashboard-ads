@@ -95,6 +95,8 @@ async function ensureTable(pool) {
     "fb_adset_name VARCHAR(255) DEFAULT ''",
     "fb_ad_id VARCHAR(32) DEFAULT ''",
     "fb_ref_at DATETIME NULL",
+    // 'trang' = ghép dự phòng theo trang đích + NV (global.__omsLandingGuess, oms.js)
+    "fb_ref_src VARCHAR(8) DEFAULT ''",
   ]) {
     try { await pool.query(`ALTER TABLE th_orders ADD COLUMN ${col}`); } catch (e) {}
   }
@@ -405,7 +407,7 @@ export function mountThailand(app, { mysql, requireLogin, express, getCampaigns,
   async function saveThaiAdRef(where, params, ref) {
     const p = await db();
     const [r] = await p.query(`UPDATE th_orders SET fb_campaign_id=?, fb_campaign_name=?, fb_adset_id=?, fb_adset_name=?,
-      fb_ad_id=?, fb_ref_at=UTC_TIMESTAMP() WHERE ${where}`,
+      fb_ad_id=?, fb_ref_src='', fb_ref_at=UTC_TIMESTAMP() WHERE ${where}`,
       [ref.campaign_id || '', (ref.campaign_name || '').slice(0, 255), ref.adset_id || '',
        (ref.adset_name || '').slice(0, 255), ref.ad_id || '', ...params]);
     return r.affectedRows || 0;
@@ -419,7 +421,7 @@ export function mountThailand(app, { mysql, requireLogin, express, getCampaigns,
   global.__thaiRegroupAdid = (adid, ref, oldAd) => {
     if (!ref?.campaign_id) return null;
     const noUtmId = UTM_ID_KEYS.map(k => `${k} NOT REGEXP '^[0-9]{10,}$'`).join(' AND ');
-    return saveThaiAdRef(`ngay_ve >= ? AND fb_adid=? AND (fb_campaign_id=''${oldAd ? ` OR (fb_ad_id=? AND ${noUtmId})` : ''})`,
+    return saveThaiAdRef(`ngay_ve >= ? AND fb_adid=? AND (fb_campaign_id='' OR fb_ref_src='trang'${oldAd ? ` OR (fb_ad_id=? AND ${noUtmId})` : ''})`,
       [AD_REF_FROM, adid, ...(oldAd ? [oldAd] : [])], ref);
   };
   // Đơn về trước khi có cột: lấy UTM / fbclid từ nguon_url; không có gì để tra thì đánh dấu đã tra
@@ -460,8 +462,34 @@ export function mountThailand(app, { mysql, requireLogin, express, getCampaigns,
         if (ref.campaign_id) out.ra++; else out.khongRa++;
         out.don += Number(r.don) || 0;
       }
+      out.theoTrang = await guessThaiLanding().catch(e => { out.loiTheoTrang = e.message; return 0; });
       return out;
     } finally { fixingThai = false; }
+  }
+  // Đơn Thái ghép chắc chắn → lịch sử trang đích của dự phòng ghép theo trang (oms.js landingHist)
+  global.__thaiLandingRows = async () => {
+    const p = await db();
+    const [rows] = await p.query(`SELECT nguon_url AS url, fb_campaign_id, fb_adset_id FROM th_orders WHERE ngay_ve >= ?
+      AND fb_campaign_id!='' AND fb_ref_src='' AND nguon_url!=''`, [AD_REF_FROM]);
+    return rows;
+  };
+  // Dự phòng ghép theo trang đích + NV cho đơn Thái có fbclid mà tra không ra (xem guessLandingRefs ở oms.js)
+  async function guessThaiLanding() {
+    if (typeof global.__omsLandingGuess !== 'function') return 0;
+    const p = await db();
+    const [rows] = await p.query(`SELECT id, nguon_url, nhan_vien, DATE_FORMAT(ngay_ve, '%Y-%m-%d') AS d FROM th_orders
+      WHERE ngay_ve >= ? AND ngay_ve > CURDATE() - INTERVAL 14 DAY AND fb_campaign_id='' AND fb_ref_at IS NOT NULL
+      AND fbclid!='' AND nguon_url!='' AND nhan_vien!='' ORDER BY id DESC LIMIT 500`, [AD_REF_FROM]);
+    let n = 0;
+    for (const r of rows) {
+      const ref = await global.__omsLandingGuess({ url: r.nguon_url, nv: r.nhan_vien, day: r.d });
+      if (!ref) continue;
+      await p.query(`UPDATE th_orders SET fb_campaign_id=?, fb_campaign_name=?, fb_adset_id=?, fb_adset_name=?, fb_ad_id='',
+        fb_ref_src='trang', fb_ref_at=UTC_TIMESTAMP() WHERE id=? AND fb_campaign_id=''`,
+        [ref.campaign_id, ref.campaign_name.slice(0, 255), ref.adset_id || '', (ref.adset_name || '').slice(0, 255), r.id]);
+      n++;
+    }
+    return n;
   }
   setTimeout(function loop() {
     fixThaiAdRefs().catch(e => console.error('[thailand] fixThaiAdRefs:', e.message));
@@ -497,7 +525,7 @@ export function mountThailand(app, { mysql, requireLogin, express, getCampaigns,
     if (!thaiWho(req).isAdmin) return res.status(403).json({ ok: false, message: 'Chỉ admin' });
     const p = await db();
     const [rows] = await p.query(`SELECT id, ngay_ve, nhan_vien, nguon_url, utm_campaign, utm_medium, utm_term, utm_content, fbclid,
-      fb_adid, fb_campaign_id, fb_campaign_name, fb_adset_id, fb_adset_name, fb_ad_id, fb_ref_at
+      fb_adid, fb_campaign_id, fb_campaign_name, fb_adset_id, fb_adset_name, fb_ad_id, fb_ref_src, fb_ref_at
       FROM th_orders WHERE sdt=? ORDER BY id DESC LIMIT 3`, [String(req.query.sdt || '').trim()]);
     const out = [];
     for (const r of rows) out.push({ ...r, adidTuFbclid: adIdFromFbclid(r.fbclid) || null,

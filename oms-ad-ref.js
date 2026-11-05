@@ -86,6 +86,40 @@ export function utmFromUrl(url) {
   return out.fbclid || out.utm_content || out.utm_medium || out.utm_term || out.utm_campaign ? out : null;
 }
 
+// ---- Dự phòng: đơn có fbclid KHÔNG có adid (khách mở bài như bài thường, vd bấm thông báo trả lời bình luận)
+// hoặc không có gì để tra → ghép theo trang đích + NV (người dùng chọn 5/11/2026). Không đoán khi mơ hồ.
+// Trang đích = đường dẫn trang Ladipage (bỏ tên miền: tdmjsc.com và tdmjs.com đều là của công ty).
+export function landingKey(url) {
+  const m = /^(?:[a-z]+:\/\/)?[^/?#\s]+(\/[^?#\s]*)/i.exec(String(url || '').trim());
+  const path = m ? m[1].replace(/\/+$/, '').toLowerCase() : '';
+  return path && path !== '/' ? path : '';
+}
+// hist: Map trang đích → Map ID chiến dịch → Set ID nhóm, học từ đơn đã ghép chắc chắn (UTM / adid).
+// camps: chiến dịch trang Ads của ngày đặt đơn (getCampaigns(day, day): employee, daily[].spent, adsets[]).
+// Ghép khi đúng 1 chiến dịch của NV đó có chi tiêu trong ngày và từng ra đơn từ trang đích này; nhóm chỉ khi
+// chiến dịch có 1 nhóm đang tiêu, hoặc trong các nhóm đang tiêu chỉ 1 nhóm từng ra đơn từ trang này.
+export function guessByLanding({ landing, nv, camps, hist }) {
+  const h = landing && nv ? hist.get(landing) : null;
+  if (!h) return null;
+  const spent = c => (c.daily || []).reduce((a, d) => a + (Number(d.spent) || 0), 0);
+  const cands = (camps || []).filter(c => c.employee === nv && spent(c) > 0 && h.has(String(c.id)));
+  if (cands.length !== 1) return null;
+  const c = cands[0];
+  const ref = { campaign_id: String(c.id), campaign_name: c.name || '' };
+  const active = (c.adsets || []).filter(a => a.spent > 0);
+  const known = h.get(String(c.id));
+  const pick = active.length === 1 ? active : active.filter(a => known.has(String(a.id)));
+  if (pick.length === 1) { ref.adset_id = String(pick[0].id); ref.adset_name = pick[0].name || ''; }
+  return ref;
+}
+export function addLandingHist(hist, url, campaignId, adsetId) {
+  const k = landingKey(url);
+  if (!k || !campaignId) return;
+  const byCamp = hist.get(k) || hist.set(k, new Map()).get(k);
+  const set = byCamp.get(String(campaignId)) || byCamp.set(String(campaignId), new Set()).get(String(campaignId));
+  if (adsetId) set.add(String(adsetId));
+}
+
 export function hasUtm(u) {
   return ['utm_campaign', 'utm_medium', 'utm_term', 'utm_content', 'fbclid'].some(k => String(u[k] || '').trim());
 }
