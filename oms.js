@@ -496,7 +496,8 @@ export function mountOMS(app, { mysql, express, getTeamLead = () => ({}) }) {
 
   // ---- Dự phòng ghép theo trang đích (guessByLanding trong oms-ad-ref.js): đơn có fbclid nhưng không có adid
   // (hoặc adid chưa có trong thư viện), tra thường không ra → chiến dịch duy nhất của NV đó có chi tiêu hôm đặt đơn
-  // và từng ra đơn ghép chắc chắn từ trang đích này. Ghi fb_ref_src='trang'; ghép chắc chắn sau này (học được
+  // và từng ra đơn ghép chắc chắn từ trang đích này hoặc có quảng cáo trỏ tới trang này (link đọc từ Meta).
+  // Ghi fb_ref_src='trang'; ghép chắc chắn sau này (học được
   // adid) ghi đè. Đơn không có fbclid (vào thẳng, Zalo…) không đoán. Dùng chung cho đơn Thái (thailand.js).
   let histCache = null;
   async function landingHist() {
@@ -516,7 +517,6 @@ export function mountOMS(app, { mysql, express, getTeamLead = () => ({}) }) {
     const landing = landingKey(url);
     if (!landing || !nv || !day) return null;
     const hist = await landingHist();
-    if (!hist.has(landing)) return null;
     const camps = await global.__getCampaignsDay(day);
     return guessByLanding({ landing, nv, camps: Array.isArray(camps) ? camps : [], hist });
   };

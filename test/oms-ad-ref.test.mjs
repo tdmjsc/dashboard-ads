@@ -139,3 +139,28 @@ test('guess by landing: only when exactly one spending campaign of that NV used 
   assert.equal(guessByLanding({ ...base, landing: '/khac', camps: one }), null);
   assert.equal(guessByLanding({ ...base, nv: '', camps: one }), null);
 });
+
+test('guess by landing: campaign whose ads link to the page counts even with no history', () => {
+  const hist = new Map();
+  const ad = (land) => ({ id: 'a', land });
+  const camp = (id, emp, sp, adsets) => ({ id, name: 'C' + id, employee: emp, daily: [{ spent: sp }], adsets });
+  const L = 'https://www.tdmjs.com/maydonongdocon-tdauto-chinhhang-rv-2';
+  const base = { landing: '/maydonongdocon-tdauto-chinhhang-rv-2', nv: 'Vũ Hà Giang', hist };
+  // 1 chiến dịch của NV có quảng cáo trỏ tới trang, chiến dịch kia trỏ trang khác → ghép, nhóm có quảng cáo đó
+  const camps = [
+    camp('111', 'Vũ Hà Giang', 100, [{ id: '211', name: 'N1', spent: 60, ads: [ad([L + '?utm_source=x'])] },
+      { id: '212', name: 'N2', spent: 40, ads: [ad(['https://tdmjs.com/khac'])] }]),
+    camp('555', 'Vũ Hà Giang', 100, [{ id: '511', spent: 100, ads: [ad(['https://tdmjs.com/khac'])] }]),
+  ];
+  assert.deepEqual(guessByLanding({ ...base, camps }),
+    { campaign_id: '111', campaign_name: 'C111', adset_id: '211', adset_name: 'N1' });
+  // 2 chiến dịch cùng trỏ trang → không đoán
+  camps[1].adsets[0].ads = [ad([L])];
+  assert.equal(guessByLanding({ ...base, camps }), null);
+  // Không có link quảng cáo, không lịch sử → không đoán
+  assert.equal(guessByLanding({ ...base, camps: [camp('111', 'Vũ Hà Giang', 100, [{ id: '211', spent: 100, ads: [ad([])] }])] }), null);
+  // Lịch sử nói 1 chiến dịch, link quảng cáo nói chiến dịch khác → mơ hồ, không đoán
+  addLandingHist(hist, L, '777', '');
+  const mix = [camp('777', 'Vũ Hà Giang', 50, []), camp('111', 'Vũ Hà Giang', 50, [{ id: '211', spent: 50, ads: [ad([L])] }])];
+  assert.equal(guessByLanding({ ...base, camps: mix }), null);
+});

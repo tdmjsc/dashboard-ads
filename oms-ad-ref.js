@@ -95,20 +95,25 @@ export function landingKey(url) {
   return path && path !== '/' ? path : '';
 }
 // hist: Map trang đích → Map ID chiến dịch → Set ID nhóm, học từ đơn đã ghép chắc chắn (UTM / adid).
-// camps: chiến dịch trang Ads của ngày đặt đơn (getCampaigns(day, day): employee, daily[].spent, adsets[]).
-// Ghép khi đúng 1 chiến dịch của NV đó có chi tiêu trong ngày và từng ra đơn từ trang đích này; nhóm chỉ khi
-// chiến dịch có 1 nhóm đang tiêu, hoặc trong các nhóm đang tiêu chỉ 1 nhóm từng ra đơn từ trang này.
+// camps: chiến dịch trang Ads của ngày đặt đơn (getCampaigns(day, day): employee, daily[].spent, adsets[],
+// adsets[].ads[].land = link trang đích của quảng cáo đọc từ Meta, server.js creativeLinks).
+// Chiến dịch "dùng trang này" = từng ra đơn ghép chắc chắn từ trang (hist) HOẶC có quảng cáo trỏ tới trang
+// (người dùng yêu cầu 6/11/2026: trang chưa có đơn ghép chắc chắn nào vẫn ghép được). Ghép khi đúng 1 chiến
+// dịch của NV đó có chi tiêu trong ngày và dùng trang này; nhóm chỉ khi chiến dịch có 1 nhóm đang tiêu, hoặc
+// trong các nhóm đang tiêu chỉ 1 nhóm dùng trang này (từng ra đơn / có quảng cáo trỏ tới).
 export function guessByLanding({ landing, nv, camps, hist }) {
-  const h = landing && nv ? hist.get(landing) : null;
-  if (!h) return null;
+  if (!landing || !nv) return null;
+  const h = (hist && hist.get(landing)) || new Map();
   const spent = c => (c.daily || []).reduce((a, d) => a + (Number(d.spent) || 0), 0);
-  const cands = (camps || []).filter(c => c.employee === nv && spent(c) > 0 && h.has(String(c.id)));
+  const adsetLands = a => (a.ads || []).some(ad => (ad.land || []).some(u => landingKey(u) === landing));
+  const uses = c => h.has(String(c.id)) || (c.adsets || []).some(adsetLands);
+  const cands = (camps || []).filter(c => c.employee === nv && spent(c) > 0 && uses(c));
   if (cands.length !== 1) return null;
   const c = cands[0];
   const ref = { campaign_id: String(c.id), campaign_name: c.name || '' };
   const active = (c.adsets || []).filter(a => a.spent > 0);
-  const known = h.get(String(c.id));
-  const pick = active.length === 1 ? active : active.filter(a => known.has(String(a.id)));
+  const known = h.get(String(c.id)) || new Set();
+  const pick = active.length === 1 ? active : active.filter(a => known.has(String(a.id)) || adsetLands(a));
   if (pick.length === 1) { ref.adset_id = String(pick[0].id); ref.adset_name = pick[0].name || ''; }
   return ref;
 }

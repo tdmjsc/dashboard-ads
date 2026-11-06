@@ -9,6 +9,7 @@ import path from 'node:path';
 import fs from 'node:fs';
 import crypto from 'node:crypto';
 import { fileURLToPath } from 'node:url';
+import { jsonStore } from './json-store.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
@@ -382,6 +383,65 @@ async function fbByIds(ids, fields, token, chunk = 50) {
   }
   return out;
 }
+// Link trang đích của quảng cáo (ads[].land, cho dự phòng ghép đơn theo trang đích trong oms-ad-ref.js):
+// chỉ giữ link web (bỏ link facebook / messenger / l.facebook.com chưa gỡ), tối đa 5.
+function uniqLinks(arr) {
+  const out = [];
+  for (const u of arr) {
+    const v = String(u || '').trim();
+    if (!/^https?:\/\//i.test(v) || /(^|\.)(facebook|fb|messenger|instagram)\.(com|me)\//i.test(v.replace(/^https?:\/\//i, ''))) continue;
+    if (!out.includes(v)) out.push(v);
+  }
+  return out.slice(0, 5);
+}
+function creativeLinks(cr) {
+  if (!cr) return [];
+  const sp = cr.object_story_spec || {};
+  const cta = x => x?.call_to_action?.value?.link;
+  return uniqLinks([cr.link_url, sp.link_data?.link, cta(sp.link_data), cta(sp.video_data), sp.template_data?.link,
+    cta(sp.template_data), ...(sp.link_data?.child_attachments || []).map(c => c.link),
+    ...(cr.asset_feed_spec?.link_urls || []).map(l => l.website_url)]);
+}
+// Cache link trang đích theo creative (DATA_DIR/ad-land.json): link quảng cáo gần như không đổi, sửa quảng
+// cáo thì Meta tạo creative mới (id mới) → chỉ đọc từ Meta các creative chưa có trong cache. Creative không ra
+// link thì thử lại sau 1 ngày; mục quá 90 ngày bỏ khỏi file. Mất file chỉ phải đọc lại, không mất dữ liệu.
+const AD_LAND = jsonStore(path.join(DATA_DIR, 'ad-land.json'), () => ({ c: {} }), { space: 0, tag: 'AD-LAND' });
+async function fillAdLandings(byCreative, token) {
+  const now = Date.now();
+  const cache = AD_LAND.read().c || {};
+  const fresh = e => e && (e.l.length || now - e.at < 24 * 3600 * 1000);
+  const todo = Object.keys(byCreative).filter(id => !fresh(cache[id]));
+  const found = {};
+  if (todo.length) {
+    try {
+      const crs = await fbByIds(todo, 'link_url,object_story_spec,asset_feed_spec{link_urls}', token);
+      for (const id of todo) found[id] = creativeLinks(crs[id]);
+      // Quảng cáo dùng bài có sẵn: creative không có link → đọc nút / đính kèm của bài
+      const needPost = {};
+      for (const id of todo) if (!found[id].length && byCreative[id].sid) (needPost[byCreative[id].sid] ||= []).push(id);
+      const pids = Object.keys(needPost);
+      if (pids.length) {
+        const posts = await fbByIds(pids, 'call_to_action,attachments{unshimmed_url,url}', token).catch(e => {
+          if (isRateLimitError(e)) throw e; return {};
+        });
+        for (const pid in posts) {
+          const p = posts[pid] || {};
+          const urls = uniqLinks([p.call_to_action?.value?.link, ...(p.attachments?.data || []).map(a => a.unshimmed_url || a.url)]);
+          for (const id of needPost[pid] || []) found[id] = urls;
+        }
+      }
+    } catch (e) { if (isRateLimitError(e)) throw e; console.error('[AD-LAND]', e.message); }
+    if (Object.keys(found).length) AD_LAND.commit(s => {
+      s.c ||= {};
+      for (const id in s.c) if (now - (s.c[id].at || 0) > 90 * 24 * 3600 * 1000) delete s.c[id];
+      for (const id in found) s.c[id] = { l: found[id], at: now };
+    });
+  }
+  for (const id in byCreative) {
+    const l = found[id] || cache[id]?.l || [];
+    for (const row of byCreative[id].rows) row.land = l;
+  }
+}
 // Chia 1 mảng thành các lô nhỏ n phần tử.
 function chunkArr(arr, n) { const r = []; for (let i = 0; i < arr.length; i += n) r.push(arr.slice(i, i + n)); return r; }
 
@@ -469,6 +529,7 @@ async function fetchAccount(acc, token, days, since, until) {
   const idChunks = chunkArr(keepIds, 50);
   // Quảng cáo của từng nhóm (cho ô adid trên trang Ads, xem oms-ad-ref.js): id, tên, link chia sẻ bản xem trước
   const adsByAdset = {};
+  const byCreative = {};
 
   await Promise.all([
 
@@ -478,15 +539,19 @@ async function fetchAccount(acc, token, days, since, until) {
         const chosen = {};
         for (const ids of idChunks) {
           const ads = await fbAll(`act_${acc}/ads`, {
-            fields: 'id,name,adset_id,campaign_id,effective_status,preview_shareable_link,creative{effective_object_story_id}',
+            fields: 'id,name,adset_id,campaign_id,effective_status,preview_shareable_link,creative{id,effective_object_story_id}',
             filtering: [{ field: 'campaign.id', operator: 'IN', value: ids }],
             limit: 500,
           }, token);
           for (const ad of ads) {
             const cid = ad.campaign_id;
             if (!cid || !byId[cid]) continue;
-            if (ad.adset_id) (adsByAdset[ad.adset_id] ||= []).push({ id: String(ad.id), name: ad.name || '',
-              on: ad.effective_status === 'ACTIVE', preview: ad.preview_shareable_link || '' });
+            if (ad.adset_id) {
+              const row = { id: String(ad.id), name: ad.name || '', on: ad.effective_status === 'ACTIVE',
+                preview: ad.preview_shareable_link || '', land: [] };
+              (adsByAdset[ad.adset_id] ||= []).push(row);
+              if (ad.creative?.id) (byCreative[ad.creative.id] ||= { sid: ad.creative.effective_object_story_id || '', rows: [] }).rows.push(row);
+            }
             // Bài đều ĐÃ ĐĂNG CÔNG KHAI lên page → trỏ thẳng vào BÀI GỐC: mở ra ngay
             // trên app điện thoại, có sẵn bình luận, KHÔNG có màn hình "chấp nhận" như
             // link xem trước. Phải dùng permalink.php?story_fbid=..&id=.. (dạng ghép
@@ -507,6 +572,7 @@ async function fetchAccount(acc, token, days, since, until) {
           }
         }
         for (const cid in chosen) byId[cid].link = chosen[cid].link;
+        await fillAdLandings(byCreative, token);
       } catch (e) { if (isRateLimitError(e)) throw e; /* lỗi khác: bỏ qua link */ }
     })(),
 
