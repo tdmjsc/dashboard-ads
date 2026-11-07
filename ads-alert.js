@@ -253,11 +253,14 @@ export function mountAdsAlert(app, {
         { text: '🔄 Số mới nhất', callback_data: d('ref') }],
       [{ text: `➖ ${step}% NS`, callback_data: d('dn') }, { text: `➕ ${step}% NS`, callback_data: d('up') },
         // Mở Mini App sửa ngân sách (ô điền sẵn ngân sách hiện tại). Tin cũ có nút d('set') vẫn mở bàn phím số.
-        { text: '✏️ Nhập NS', web_app: { url: `${PUBLIC_URL}/tg-ads/app?k=${k}&acc=${acc}&id=${id}` } }],
+        { text: '✏️ Nhập', web_app: { url: `${PUBLIC_URL}/tg-ads/app?k=${k}&acc=${acc}&id=${id}` } }],
     ];
-    if (levels && levels.length) rows.push(
-      levels.slice(0, 3).map(v => ({ text: `🔔 CPA > ${Math.round(v / 1000)}k`, callback_data: d('rn', v) }))
-        .concat({ text: '🔕 Không báo lại', callback_data: d('rn', 0) }));
+    // Telegram không cho chỉnh cỡ chữ nút; 4 nút / hàng thì điện thoại chỉ hiện "🔔 CPA…" → 2 nút / hàng
+    if (levels && levels.length) {
+      const bs = levels.slice(0, 3).map(v => ({ text: `🔔 CPA > ${Math.round(v / 1000)}k`, callback_data: d('rn', v) }))
+        .concat({ text: '🔕 Không báo lại', callback_data: d('rn', 0) });
+      for (let i = 0; i < bs.length; i += 2) rows.push(bs.slice(i, i + 2));
+    }
     return { inline_keyboard: rows };
   }
 
