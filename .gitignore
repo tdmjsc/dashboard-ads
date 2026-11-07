@@ -5,3 +5,4 @@ node_modules/
 ios/build/
 ios/**/xcuserdata/
 .DS_Store
+*.apk

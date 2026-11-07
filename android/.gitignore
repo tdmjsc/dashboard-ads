@@ -1,0 +1,7 @@
+.gradle/
+build/
+app/build/
+local.properties
+# Khoá ký APK: KHÔNG đưa lên git, phải tự sao lưu (mất khoá thì bản sau không cài đè được)
+keystore.properties
+*.jks
