@@ -1,0 +1,29 @@
+{
+  "project_info": {
+    "project_number": "63539832211",
+    "project_id": "tdm-ads-2d085",
+    "storage_bucket": "tdm-ads-2d085.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:63539832211:android:88c3e5d5b0a01b977e7466",
+        "android_client_info": {
+          "package_name": "com.tdmjsc.ads"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyCqDuGm0BjcEJVILDNLAx-QhipZqBU_0ZU"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}

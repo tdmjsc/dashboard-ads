@@ -8,7 +8,12 @@ import android.content.Intent;
 import android.graphics.Bitmap;
 import android.graphics.Color;
 import android.net.Uri;
+import android.os.Build;
 import android.os.Bundle;
+import android.content.SharedPreferences;
+import android.content.pm.PackageManager;
+import android.provider.Settings;
+import android.app.NotificationManager;
 import android.os.SystemClock;
 import android.util.Base64;
 import android.view.Gravity;
@@ -34,6 +39,9 @@ import android.widget.TextView;
 import android.widget.Toast;
 
 import androidx.core.content.FileProvider;
+
+import com.google.firebase.FirebaseApp;
+import com.google.firebase.messaging.FirebaseMessaging;
 import androidx.swiperefreshlayout.widget.SwipeRefreshLayout;
 
 import java.io.File;
@@ -51,6 +59,8 @@ public class MainActivity extends Activity {
     // Mở lại app sau khoảng này thì tải lại trang để lấy bản web mới nhất.
     static final long RELOAD_AFTER_BG_MS = 10 * 60 * 1000;
     static final int REQ_FILE = 1;
+    static final int REQ_NOTIF = 2;
+    static final String PREFS = "tdm";
     static final int BG = Color.rgb(0x0B, 0x13, 0x22);
 
     WebView web;
@@ -58,11 +68,16 @@ public class MainActivity extends Activity {
     LinearLayout errorView;
     long backgroundedAt = 0;
     ValueCallback<Uri[]> fileCallback;
+    SharedPreferences prefs;
+    boolean showPushResult = false;
 
     @SuppressLint({"SetJavaScriptEnabled", "AddJavascriptInterface"})
     @Override
     protected void onCreate(Bundle saved) {
         super.onCreate(saved);
+        prefs = getSharedPreferences(PREFS, MODE_PRIVATE);
+        PushService.createChannel(this);
+        if (prefs.getBoolean("pushEnabled", false)) fetchPushToken(); // token có thể đổi sau khi cài lại
         FrameLayout root = new FrameLayout(this);
         root.setBackgroundColor(BG);
 
@@ -189,6 +204,7 @@ public class MainActivity extends Activity {
         @Override public void onPageFinished(WebView v, String url) {
             swipe.setRefreshing(false);
             CookieManager.getInstance().flush();
+            syncPush();
         }
 
         @Override public void onReceivedError(WebView v, WebResourceRequest r, WebResourceError e) {
@@ -349,7 +365,91 @@ public class MainActivity extends Activity {
         startActivity(Intent.createChooser(i, f.getName()));
     }
 
+    // ---- Thông báo đẩy (FCM). Nút 🔔 trang OMS gọi TDMAndroid.enablePush() → xin quyền, lấy token,
+    // gửi về /oms/api/push/fcm-register bằng fetch trong trang (có cookie phiên → máy chủ biết ai). ----
+
+    void enablePush() {
+        if (FirebaseApp.getApps(this).isEmpty()) {
+            alert("Bản app này chưa cài Firebase nên chưa nhận được thông báo. Cài bản APK mới hơn.", false);
+            return;
+        }
+        if (Build.VERSION.SDK_INT >= 33 && checkSelfPermission("android.permission.POST_NOTIFICATIONS") != PackageManager.PERMISSION_GRANTED) {
+            requestPermissions(new String[]{"android.permission.POST_NOTIFICATIONS"}, REQ_NOTIF);
+            return;
+        }
+        afterNotifPermission();
+    }
+
+    @Override public void onRequestPermissionsResult(int req, String[] perms, int[] res) {
+        if (req != REQ_NOTIF) { super.onRequestPermissionsResult(req, perms, res); return; }
+        if (res.length > 0 && res[0] == PackageManager.PERMISSION_GRANTED) afterNotifPermission();
+        else alert("Thông báo đang bị tắt cho TDM Ads. Bật trong Cài đặt → Ứng dụng → TDM Ads → Thông báo.", true);
+    }
+
+    void afterNotifPermission() {
+        if (!getSystemService(NotificationManager.class).areNotificationsEnabled()) {
+            alert("Thông báo đang bị tắt cho TDM Ads. Bật trong Cài đặt → Ứng dụng → TDM Ads → Thông báo.", true);
+            return;
+        }
+        prefs.edit().putBoolean("pushEnabled", true).remove("fcmSynced").apply();
+        showPushResult = true;
+        fetchPushToken();
+    }
+
+    void fetchPushToken() {
+        if (FirebaseApp.getApps(this).isEmpty()) return;
+        FirebaseMessaging.getInstance().getToken().addOnCompleteListener(t -> {
+            if (t.isSuccessful() && t.getResult() != null) {
+                String tok = t.getResult();
+                if (!tok.equals(prefs.getString("fcmToken", null))) prefs.edit().putString("fcmToken", tok).remove("fcmSynced").apply();
+                syncPush();
+            } else if (showPushResult) {
+                showPushResult = false;
+                Exception e = t.getException();
+                alert("Không đăng ký được thông báo: " + (e != null ? e.getMessage() : "lỗi không rõ"), false);
+            }
+        });
+    }
+
+    // Gửi token về máy chủ. Gọi sau mỗi lần tải trang xong (trang đăng nhập chưa có phiên thì lần sau gửi lại).
+    void syncPush() {
+        if (!prefs.getBoolean("pushEnabled", false)) return;
+        String tok = prefs.getString("fcmToken", null);
+        String url = web.getUrl();
+        if (tok == null || url == null || !isAppUrl(Uri.parse(url))) return;
+        String key = tok + "|" + url;
+        if (key.equals(prefs.getString("fcmSynced", null)) && !showPushResult) return;
+        String js = "fetch('/oms/api/push/fcm-register',{method:'POST',credentials:'same-origin',"
+                + "headers:{'Content-Type':'application/json'},body:JSON.stringify({token:'" + tok.replaceAll("[^A-Za-z0-9_:\\-]", "") + "'})})"
+                + ".then(function(r){TDMAndroid.pushResult(r.ok,'" + key.replace("\\", "").replace("'", "") + "');})"
+                + ".catch(function(){TDMAndroid.pushResult(false,'');});";
+        web.evaluateJavascript(js, null);
+    }
+
+    void onPushResult(boolean ok, String key) {
+        if (ok) prefs.edit().putString("fcmSynced", key).apply();
+        if (showPushResult) {
+            showPushResult = false;
+            alert(ok ? "✅ Đã bật thông báo trên máy này." : "⚠️ Chưa gửi được đăng ký thông báo lên máy chủ. Kéo xuống tải lại trang rồi thử lại.", false);
+        }
+    }
+
+    void alert(String msg, boolean openSettings) {
+        AlertDialog.Builder b = new AlertDialog.Builder(this).setMessage(msg).setPositiveButton("OK", null);
+        if (openSettings) b.setNeutralButton("Mở Cài đặt", (d, w) -> {
+            Intent i = Build.VERSION.SDK_INT >= 26
+                    ? new Intent(Settings.ACTION_APP_NOTIFICATION_SETTINGS).putExtra(Settings.EXTRA_APP_PACKAGE, getPackageName())
+                    : new Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS, Uri.parse("package:" + getPackageName()));
+            try { startActivity(i); } catch (ActivityNotFoundException e) { /* bỏ qua */ }
+        });
+        b.show();
+    }
+
     class Bridge {
+        @JavascriptInterface public void enablePush() { runOnUiThread(MainActivity.this::enablePush); }
+
+        @JavascriptInterface public void pushResult(boolean ok, String key) { runOnUiThread(() -> onPushResult(ok, key)); }
+
         @JavascriptInterface public void saveBase64(String dataUrl, String name) {
             runOnUiThread(() -> saveDataUrl(dataUrl, name));
         }

@@ -2336,9 +2336,12 @@ async function subscribePush() {
 
 // App iOS TDM Ads (WKWebView) không có web push: nhờ app xin quyền + gửi device token APNs về /push/apns-register
 const IN_IOS_APP = !!(window.webkit && window.webkit.messageHandlers && window.webkit.messageHandlers.tdmPush);
+// App Android TDM Ads (WebView) cũng không có web push: app xin quyền + gửi FCM token về /push/fcm-register
+const IN_ANDROID_APP = !!(window.TDMAndroid && window.TDMAndroid.enablePush);
 
 async function requestNotifPermission() {
   if (IN_IOS_APP) { window.webkit.messageHandlers.tdmPush.postMessage('enable'); return; }
+  if (IN_ANDROID_APP) { window.TDMAndroid.enablePush(); return; }
   if (!('Notification' in window)) { alert('Trình duyệt không hỗ trợ thông báo'); return; }
   const p = await Notification.requestPermission();
   if (p === 'granted') {

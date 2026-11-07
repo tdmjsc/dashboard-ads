@@ -6,3 +6,5 @@ ios/build/
 ios/**/xcuserdata/
 .DS_Store
 *.apk
+# Khoá tài khoản dịch vụ Firebase (bí mật)
+*firebase-adminsdk*.json

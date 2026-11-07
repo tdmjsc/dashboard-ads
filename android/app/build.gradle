@@ -1,4 +1,6 @@
 plugins { id 'com.android.application' }
+// Thông báo đẩy cần app/google-services.json (Firebase console). Không có file thì app vẫn build, chỉ không có push.
+if (file('google-services.json').exists()) apply plugin: 'com.google.gms.google-services'
 
 def ksFile = rootProject.file('keystore.properties')
 def ks = new Properties()
@@ -12,8 +14,8 @@ android {
         applicationId 'com.tdmjsc.ads'
         minSdk 24
         targetSdk 35
-        versionCode 1
-        versionName '1.0'
+        versionCode 2
+        versionName '1.1'
     }
 
     signingConfigs {
@@ -42,4 +44,5 @@ android {
 
 dependencies {
     implementation 'androidx.swiperefreshlayout:swiperefreshlayout:1.1.0'
+    implementation 'com.google.firebase:firebase-messaging:24.1.2'
 }

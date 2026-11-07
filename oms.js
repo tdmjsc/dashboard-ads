@@ -4,6 +4,7 @@
 //  Mount vào server.js: mountOMS(app, { mysql, express })
 // =====================================================================
 import { sendApns, apnsConfigured } from './apns.js';
+import { sendFcm, fcmConfigured } from './fcm.js';
 import { omsDateBoundary } from './oms-date.js';
 import { adRefFromUtm, hasUtm, findFbclid, adIdFromFbclid, utmFromUrl, landingKey, guessByLanding, addLandingHist, AD_REF_FROM } from './oms-ad-ref.js';
 
@@ -2150,6 +2151,16 @@ export function mountOMS(app, { mysql, express, getTeamLead = () => ({}) }) {
         updated_at DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
       ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4`);
     } catch(e) {}
+    // FCM token của app Android TDM Ads (WebView Android không có web push → gửi qua FCM, fcm.js)
+    try {
+      await getPool().query(`CREATE TABLE IF NOT EXISTS oms_fcm_tokens (
+        token VARCHAR(255) PRIMARY KEY,
+        user_id INT DEFAULT 0,
+        username VARCHAR(120) DEFAULT '',
+        created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+        updated_at DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
+      ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4`);
+    } catch(e) {}
     // Đăng ký từ hồi endpoint chưa đòi đăng nhập (người lạ cũng nhận được thông báo đơn mới).
     // Giờ subscribe/apns-register bắt buộc omsAuth nên không phát sinh thêm.
     try {
@@ -2170,6 +2181,22 @@ export function mountOMS(app, { mysql, express, getTeamLead = () => ({}) }) {
       r.username = u;
       if (r.dead) await db('DELETE FROM oms_apns_tokens WHERE token=?', [r.token]);
       else if (!r.ok) console.error('[OMS] APNs send error:', u, r.status, r.reason);
+    }
+    return results;
+  }
+
+  // Gửi FCM tới mọi token app Android, xoá token Google báo đã chết
+  async function sendFcmToAll(title, body, recipients = null) {
+    await ensurePushTable();
+    const rows = (await db('SELECT token, user_id, username FROM oms_fcm_tokens'))
+      .filter(row => recipients === null || recipients.has(row.username));
+    if (!rows.length) return [];
+    const results = await sendFcm(rows.map(r => r.token), title, body);
+    for (const r of results) {
+      const u = rows.find(x => x.token === r.token)?.username || '';
+      r.username = u;
+      if (r.dead) await db('DELETE FROM oms_fcm_tokens WHERE token=?', [r.token]);
+      else if (!r.ok) console.error('[OMS] FCM send error:', u, r.status, r.reason);
     }
     return results;
   }
@@ -2248,6 +2275,20 @@ export function mountOMS(app, { mysql, express, getTeamLead = () => ({}) }) {
     res.json({ ok: true, apns_configured: apnsConfigured(), devices: n });
   }));
 
+  // API: app Android gửi FCM token (gọi từ trong WebView nên có cookie phiên → biết ai)
+  app.post('/oms/api/push/fcm-register', omsAuth, jsonParser, wrap(async (req, res) => {
+    await ensurePushTable();
+    const token = String(req.body?.token || '');
+    if (!/^[A-Za-z0-9_:\-]{20,255}$/.test(token)) return res.status(400).json({ error: 'Token không hợp lệ' });
+    const omsUser = req.session?.omsUser;
+    const mainUser = req.session?.user;
+    const username = omsUser?.username || mainUser?.username || 'anonymous';
+    await db(`INSERT INTO oms_fcm_tokens (token, user_id, username) VALUES (?,?,?)
+      ON DUPLICATE KEY UPDATE user_id=VALUES(user_id), username=VALUES(username), updated_at=CURRENT_TIMESTAMP`,
+      [token, omsUser?.id || 0, username]);
+    res.json({ ok: true, fcm_configured: fcmConfigured() });
+  }));
+
   app.post('/oms/api/push/apns-unregister', omsAuth, jsonParser, wrap(async (req, res) => {
     const token = String(req.body?.token || '').toLowerCase();
     if (token) await db('DELETE FROM oms_apns_tokens WHERE token=?', [token]);
@@ -2268,16 +2309,19 @@ export function mountOMS(app, { mysql, express, getTeamLead = () => ({}) }) {
     const keys = await getVapidKeys();
     const subs = await db('SELECT id, username, LEFT(endpoint,80) as ep, created_at FROM oms_push_subs');
     const apns = await db('SELECT username, LEFT(token,12) AS token, updated_at FROM oms_apns_tokens');
+    const fcm = await db('SELECT username, LEFT(token,12) AS token, updated_at FROM oms_fcm_tokens');
     res.json({
       apns_configured: apnsConfigured(),
       apns_devices: apns,
+      fcm_configured: fcmConfigured(),
+      fcm_devices: fcm,
       webpush_installed: ready,
       webpush_loaded: !!webpush,
       vapid_ok: !!keys,
       vapid_public_length: keys?.publicKey?.length || 0,
       vapid_error: vapidError || null,
       subscriptions: subs,
-      subscription_count: subs.length + apns.length,
+      subscription_count: subs.length + apns.length + fcm.length,
     });
   }));
 
@@ -2286,15 +2330,17 @@ export function mountOMS(app, { mysql, express, getTeamLead = () => ({}) }) {
     await webpushReady;
     await ensurePushTable();
     const apnsResults = await sendApnsToAll('🧪 Test thông báo OMS', 'Push notification hoạt động!');
+    const fcmResults = await sendFcmToAll('🧪 Test thông báo OMS', 'Push notification hoạt động!');
     if (!webpush) return res.json({ error: 'web-push chưa cài', apns: apnsResults });
     const keys = await getVapidKeys();
     if (!keys) return res.json({ error: 'VAPID keys chưa sẵn sàng', apns: apnsResults });
     const subs = await db('SELECT * FROM oms_push_subs');
-    if (!subs.length && !apnsResults.length) return res.json({ error: 'Chưa có ai subscribe. Bấm 🔔 trong app trước.' });
+    if (!subs.length && !apnsResults.length && !fcmResults.length) return res.json({ error: 'Chưa có ai subscribe. Bấm 🔔 trong app trước.' });
 
     webpush.setVapidDetails('mailto:admin@tdmjsc.com', keys.publicKey, keys.privateKey);
     const payload = JSON.stringify({ title: '🧪 Test thông báo OMS', body: 'Push notification hoạt động!' });
-    const results = apnsResults.map(r => ({ username: r.username, ok: r.ok, app_ios: true, error: r.ok ? undefined : r.reason, statusCode: r.status }));
+    const results = apnsResults.map(r => ({ username: r.username, ok: r.ok, app_ios: true, error: r.ok ? undefined : r.reason, statusCode: r.status }))
+      .concat(fcmResults.map(r => ({ username: r.username, ok: r.ok, app_android: true, error: r.ok ? undefined : r.reason, statusCode: r.status })));
     for (const sub of subs) {
       try {
         await webpush.sendNotification({ endpoint: sub.endpoint, keys: { p256dh: sub.p256dh, auth: sub.auth } }, payload, { TTL: 60 });
@@ -2333,6 +2379,7 @@ export function mountOMS(app, { mysql, express, getTeamLead = () => ({}) }) {
     try { recipients = await orderPushRecipients(orderId); }
     catch (e) { console.error('[OMS] Push recipients error:', e.message); return; }
     try { await sendApnsToAll(title, body, recipients); } catch(e) { console.error('[OMS] APNs error:', e.message); }
+    try { await sendFcmToAll(title, body, recipients); } catch(e) { console.error('[OMS] FCM error:', e.message); }
     await webpushReady;
     if (!webpush) return;
     try {
