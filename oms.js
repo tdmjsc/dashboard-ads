@@ -6,7 +6,7 @@
 import { sendApns, apnsConfigured } from './apns.js';
 import { sendFcm, fcmConfigured } from './fcm.js';
 import { omsDateBoundary } from './oms-date.js';
-import { adRefFromUtm, hasUtm, findFbclid, adIdFromFbclid, utmFromUrl, landingKey, guessByLanding, addLandingHist, AD_REF_FROM } from './oms-ad-ref.js';
+import { adRefFromUtm, hasUtm, findFbclid, adIdFromFbclid, utmFromUrl, landingKey, guessByLanding, landingCands, campLandings, addLandingHist, AD_REF_FROM } from './oms-ad-ref.js';
 
 // ---- Trạng thái đơn hàng hợp lệ ----
 const TRANG_THAI = ['Đơn mới', 'Đã chốt', 'Đang ship', 'Ship thành công', 'Hoàn thành công', 'Không mua',
@@ -710,6 +710,96 @@ export function mountOMS(app, { mysql, express, getTeamLead = () => ({}) }) {
         traLai: await lookupAdRef(r).catch(e => ({ loi: e.message })) });
     }
     res.json(out);
+  }));
+
+  // Admin: vì sao chiến dịch không có đơn OMS (trang Ads, link "Vì sao?" khi 0 đơn OMS mà Meta có đơn).
+  // ?id=<ID chiến dịch>&since&until (ngày VN, tối đa 14 ngày). Mỗi ngày: đơn của NV chiến dịch / đơn về trang đích
+  // của chiến dịch / đơn đã ghép vào chiến dịch, kèm lý do ghép hoặc không ghép được.
+  app.get('/oms/api/camp-debug', requireRole('admin'), wrap(async (req, res) => {
+    if (typeof global.__getCampaignsDay !== 'function') return res.status(503).json({ error: 'Chưa nạp dữ liệu Ads' });
+    await ensureTables(getPool());
+    const id = String(req.query.id || '').trim();
+    const isDay = v => /^\d{4}-\d{2}-\d{2}$/.test(v || '');
+    const today = new Date(Date.now() + 7 * 3600e3).toISOString().slice(0, 10);
+    const until = isDay(req.query.until) ? req.query.until : today;
+    let since = isDay(req.query.since) ? req.query.since : until;
+    if (since < AD_REF_FROM) since = AD_REF_FROM;
+    const days = [];
+    for (let t = Date.parse(since + 'T00:00:00Z'); days.length < 14; t += 86400e3) {
+      const d = new Date(t).toISOString().slice(0, 10);
+      if (d > until) break;
+      days.push(d);
+    }
+    const hist = await landingHist();
+    const isNum = v => /^\d{10,}$/.test(String(v || '').trim());
+    const out = { chienDich: null, tomTat: {}, ngay: [] };
+    for (const day of days) {
+      const camps = await global.__getCampaignsDay(day).catch(() => null);
+      const c = Array.isArray(camps) && camps.find(x => String(x.id) === id);
+      if (!c) { out.ngay.push({ ngay: day, loi: 'Không thấy chiến dịch trong dữ liệu Ads ngày này' }); continue; }
+      const lands = campLandings(c, hist);
+      const ads = (c.adsets || []).flatMap(a => (a.ads || []).map(ad => ({ nhom: a.name, nhomTieu: a.spent || 0,
+        id: String(ad.id), ten: ad.name, trangDich: (ad.land || []).map(landingKey).filter(Boolean) })));
+      const adids = ads.length && typeof global.__omsAdidsForAds === 'function'
+        ? await global.__omsAdidsForAds(ads.map(a => a.id)).catch(() => ({})) : {};
+      for (const a of ads) a.adid = (adids[a.id] || []).map(x => x.adid + (x.xung_dot ? ' (xung đột)' : ''));
+      if (!out.chienDich) out.chienDich = { id, ten: c.name, nv: c.employee || '' };
+      const rows = await db(`SELECT id, ngay_ve, nv_marketing, url_page, utm_campaign, utm_medium, utm_term, utm_content,
+        fbclid, fb_adid, fb_campaign_id, fb_campaign_name, fb_ref_src, fb_ref_at FROM oms_orders
+        WHERE ngay_ve >= ? AND ngay_ve < ? ORDER BY id`, [omsDateBoundary(day), omsDateBoundary(day, true)]);
+      const mine = rows.filter(r => r.fb_campaign_id === id || (c.employee && r.nv_marketing === c.employee)
+        || lands.includes(landingKey(r.url_page)));
+      const don = [];
+      for (const r of mine) {
+        const landing = landingKey(r.url_page);
+        const utmIds = ['utm_content', 'utm_medium', 'utm_term', 'utm_campaign'].filter(k => isNum(r[k])).map(k => `${k}=${r[k]}`);
+        const utmText = ['utm_campaign', 'utm_medium', 'utm_content'].filter(k => r[k] && !isNum(r[k])).map(k => `${k}=${r[k]}`);
+        let loai, lyDo;
+        if (r.fb_campaign_id === id) { loai = 'da_ghep'; lyDo = r.fb_ref_src === 'trang' ? 'Đã ghép (theo trang đích)' : 'Đã ghép'; }
+        else if (r.fb_campaign_id) { loai = 'chien_dich_khac'; lyDo = `Đã ghép vào chiến dịch khác: ${r.fb_campaign_name || r.fb_campaign_id}${r.fb_ref_src === 'trang' ? ' (theo trang đích)' : ''}`; }
+        else if (!r.fbclid && !utmIds.length && !utmText.length) {
+          loai = 'khong_tham_so';
+          lyDo = 'Đơn không mang UTM lẫn fbclid (Ladipage không gửi tham số link, hoặc khách vào thẳng / qua Zalo, inbox) → không ghép được';
+        } else if (!r.fb_ref_at) { loai = 'chua_tra'; lyDo = 'Chưa tra (chờ lượt tra 30 phút)'; }
+        else if (utmIds.length) { loai = 'utm_khong_ra'; lyDo = `UTM có ID (${utmIds.join(', ')}) nhưng Graph API không ra chiến dịch: token không đọc được TK quảng cáo, hoặc ID sai`; }
+        else {
+          const parts = [];
+          if (utmText.length) parts.push(`UTM không có ID số (${utmText.join(', ')}): thông số URL quảng cáo phải dùng macro {{ad.id}}…`);
+          if (!r.fbclid) parts.push('không có fbclid');
+          else if (r.fb_adid && r.fb_adid !== '-') {
+            const [m] = await db('SELECT ad_id, xung_dot FROM oms_adid_map WHERE adid=?', [r.fb_adid]);
+            parts.push(!m ? `adid ${r.fb_adid} chưa có trong thư viện adid (dán link quảng cáo ở trang Ads)`
+              : m.xung_dot ? `adid ${r.fb_adid} bị xung đột trong thư viện` : `adid ${r.fb_adid} có trong thư viện (quảng cáo ${m.ad_id}) nhưng chưa ghép, chờ lượt tra`);
+          } else parts.push('fbclid không có adid');
+          if (r.fbclid) {
+            if (!landing) parts.push('đơn không có trang đích (url_page) → không đoán theo trang');
+            else if (!r.nv_marketing) parts.push(`đơn không có NV marketing → không đoán theo trang (${landing})`);
+            else {
+              const cands = landingCands({ landing, nv: r.nv_marketing, camps, hist });
+              if (cands.length > 1) parts.push(`đoán theo trang ${landing}: ${cands.length} chiến dịch của ${r.nv_marketing} cùng chạy trang này (${cands.map(x => x.name).join(' | ')}) → không biết chọn cái nào`);
+              else if (!cands.length) {
+                const all = landingCands({ landing, nv: '', camps, hist });
+                parts.push(`đoán theo trang ${landing}: không chiến dịch nào của "${r.nv_marketing}" có chi tiêu dùng trang này`
+                  + (c.employee && r.nv_marketing !== c.employee ? ` (NV của đơn khác NV chiến dịch "${c.employee}")` : '')
+                  + (!lands.includes(landing) ? ` (quảng cáo của chiến dịch trỏ tới: ${lands.join(', ') || 'chưa đọc được link'})` : '')
+                  + (all.length ? `; chiến dịch NV khác dùng trang này: ${all.map(x => `${x.name} (${x.employee})`).join(' | ')}` : ''));
+              } else if (Date.parse(r.ngay_ve) < Date.now() - 14 * 86400e3) parts.push('đơn quá 14 ngày, không đoán theo trang nữa');
+              else parts.push(`đoán theo trang ${landing} ra ${cands[0].name}, chờ lượt tra 30 phút`);
+            }
+          }
+          loai = !r.fbclid ? 'utm_khong_id' : r.fb_adid && r.fb_adid !== '-' ? 'adid_chua_ghep' : 'fbclid_khong_adid';
+          lyDo = parts.join('; ');
+        }
+        out.tomTat[loai] = (out.tomTat[loai] || 0) + 1;
+        don.push({ id: r.id, luc: r.ngay_ve, nv: r.nv_marketing, trangDich: landing || r.url_page,
+          utm: [...utmIds, ...utmText].join(' ') || '', fbclid: !!r.fbclid, adid: r.fb_adid || '', loai, lyDo });
+      }
+      out.ngay.push({ ngay: day, trangDichChienDich: lands, quangCao: ads, donVeTrangHoacNv: don.length, don });
+    }
+    out.giaiThichLoai = { da_ghep: 'đã ghép vào chiến dịch này', chien_dich_khac: 'ghép vào chiến dịch khác',
+      khong_tham_so: 'đơn không mang UTM / fbclid', chua_tra: 'chưa tra', utm_khong_ra: 'UTM có ID nhưng tra không ra',
+      utm_khong_id: 'UTM không có ID số, không fbclid', adid_chua_ghep: 'có adid nhưng chưa ghép', fbclid_khong_adid: 'fbclid không có adid' };
+    res.type('application/json').send(JSON.stringify(out, null, 2));
   }));
 
   // ---- Thư viện adid (trang /oms-adid.html) ----

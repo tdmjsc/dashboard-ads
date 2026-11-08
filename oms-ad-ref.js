@@ -101,13 +101,28 @@ export function landingKey(url) {
 // (người dùng yêu cầu 6/11/2026: trang chưa có đơn ghép chắc chắn nào vẫn ghép được). Ghép khi đúng 1 chiến
 // dịch của NV đó có chi tiêu trong ngày và dùng trang này; nhóm chỉ khi chiến dịch có 1 nhóm đang tiêu, hoặc
 // trong các nhóm đang tiêu chỉ 1 nhóm dùng trang này (từng ra đơn / có quảng cáo trỏ tới).
+const campSpent = c => (c.daily || []).reduce((a, d) => a + (Number(d.spent) || 0), 0);
+const adsetLandsOn = (a, landing) => (a.ads || []).some(ad => (ad.land || []).some(u => landingKey(u) === landing));
+// Chiến dịch "dùng trang này" (từng ra đơn ghép chắc chắn từ trang / có quảng cáo trỏ tới trang) có chi tiêu trong
+// ngày; nv: chỉ chiến dịch của NV đó (bỏ trống = mọi NV, dùng cho chẩn đoán /oms/api/camp-debug)
+export function landingCands({ landing, nv, camps, hist }) {
+  if (!landing) return [];
+  const h = (hist && hist.get(landing)) || new Map();
+  const uses = c => h.has(String(c.id)) || (c.adsets || []).some(a => adsetLandsOn(a, landing));
+  return (camps || []).filter(c => (!nv || c.employee === nv) && campSpent(c) > 0 && uses(c));
+}
+// Trang đích các quảng cáo của chiến dịch trỏ tới (link đọc từ Meta) + trang từng ra đơn ghép chắc chắn
+export function campLandings(c, hist) {
+  const out = new Set();
+  for (const a of c.adsets || []) for (const ad of a.ads || []) for (const u of ad.land || []) { const k = landingKey(u); if (k) out.add(k); }
+  for (const [k, byCamp] of hist || []) if (byCamp.has(String(c.id))) out.add(k);
+  return [...out];
+}
 export function guessByLanding({ landing, nv, camps, hist }) {
   if (!landing || !nv) return null;
   const h = (hist && hist.get(landing)) || new Map();
-  const spent = c => (c.daily || []).reduce((a, d) => a + (Number(d.spent) || 0), 0);
-  const adsetLands = a => (a.ads || []).some(ad => (ad.land || []).some(u => landingKey(u) === landing));
-  const uses = c => h.has(String(c.id)) || (c.adsets || []).some(adsetLands);
-  const cands = (camps || []).filter(c => c.employee === nv && spent(c) > 0 && uses(c));
+  const adsetLands = a => adsetLandsOn(a, landing);
+  const cands = landingCands({ landing, nv, camps, hist });
   if (cands.length !== 1) return null;
   const c = cands[0];
   const ref = { campaign_id: String(c.id), campaign_name: c.name || '' };

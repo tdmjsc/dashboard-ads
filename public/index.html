@@ -481,6 +481,11 @@ function metaLine(m){
   return `<div style="font-size:11px;color:#3949AB;margin-top:3px" title="Đơn Pixel ghi nhận trên Trình quản lý quảng cáo">Meta: <b>${fmtVND(m.don)}</b> đơn</div>`;
 }
 
+/* admin: chiến dịch đã chi mà 0 đơn OMS → mở chẩn đoán vì sao đơn không ghép được (/oms/api/camp-debug) */
+function whyLink(c){
+  const since=document.getElementById('from').value, until=document.getElementById('to').value;
+  return `<div style="font-size:11px;margin-top:3px"><a href="/oms/api/camp-debug?id=${encodeURIComponent(c.id)}&since=${since}&until=${until}" target="_blank" rel="noopener" onclick="event.stopPropagation()">Vì sao 0 đơn?</a></div>`;
+}
 /* mặc định: HÔM NAY (dùng giờ máy = giờ VN) */
 (function(){
   const p=n=>String(n).padStart(2,'0');
@@ -531,6 +536,7 @@ async function loadData(opts){
       const a=document.getElementById('avatar'); a.textContent=data.me.user.slice(0,2).toUpperCase(); a.title=data.me.user+(data.me.role==='admin'?' (admin)':'');
       const ub=document.getElementById('userBadge'); if(ub&&data.me.displayName) ub.textContent='👤 '+data.me.displayName;
       const isAdmin=data.me.role==='admin';
+      IS_ADMIN=isAdmin;
       CAN_CTL=['admin','viewer'].includes(data.me.role)&&!data.me.khongBoGhim&&!data.me.chiXem;   // kế toán / tài khoản demo chỉ xem
       // Menu admin: chỉ hiện khi là admin (mặc định CSS đã ẩn)
       ['navProducts','navSalary','navSalaryProduct','navKQKD','navEmployees','navTonKho'].forEach(id=>{
@@ -741,7 +747,7 @@ function cprClass(cpr,obj,bench){const a=bench[obj]||0;if(!a||!cpr)return 'mid';
 /* mở/đóng chi tiết nhóm quảng cáo của 1 chiến dịch */
 /* ===== Tắt/bật + đổi ngân sách ngay trên trang (API /api/ads-alert/ctl, cùng kiểm tra quyền với nút Telegram:
    NV chỉ camp của mình / team, admin mọi camp, kế toán không) ===== */
-let CAN_CTL=false, BM=null;
+let CAN_CTL=false, BM=null, IS_ADMIN=false;
 const findCamp=id=>CAMPAIGNS.find(c=>String(c.id)===String(id));
 const findSet=(c,id)=>(c.adsets||[]).find(a=>String(a.id)===String(id));
 function ctlToast(t){let el=document.getElementById('ctlToast');if(!el){el=document.createElement('div');el.id='ctlToast';el.className='ctl-toast';document.body.appendChild(el);}
@@ -936,7 +942,7 @@ function renderCamp(){
       <td class="r" data-label="Ngân sách"><span class="money">${fmtVND(c.budget||0)}<span class="cur">₫</span></span>${budBtn(c)}<div style="font-size:11px;color:var(--faint);margin-top:2px">/ ngày</div></td>
       <td class="r" data-label="Đã chi tiêu"><div class="spendcell"><span class="money">${fmtVND(s)}<span class="cur">₫</span></span><div class="spendbar"><i class="${barCls}" style="width:${pct}%"></i></div><div class="pct">${pct}% NS kỳ này</div></div></td>
       <td class="r" data-label="Sau thuế"><span class="money" style="color:#9A7B2E">${fmtVND(sTax)}<span class="cur">₫</span></span></td>
-      <td class="r" data-label="Kết quả"><span class="res">${fmtVND(r)}<small>${obj}</small></span>${metaLine(metaSum(c))}</td>
+      <td class="r" data-label="Kết quả"><span class="res">${fmtVND(r)}<small>${obj}</small></span>${metaLine(metaSum(c))}${noOrder&&IS_ADMIN?whyLink(c):''}</td>
       <td class="r" data-label="CP/kết quả">${noOrder?'<span class="cpr bad">Chưa có đơn</span>':`<span class="cpr ${cls}">${fmtVND(cprVal)} ₫</span>`}</td>
       <td class="r" data-label="CP/KQ sau thuế"><span class="money" style="color:#9A7B2E">${noOrder?'—':fmtVND(cprTax)+' ₫'}</span></td>
       <td class="r" data-label="Link">${c.link?`<a class="adlink" href="${c.link}" target="_blank" rel="noopener">Xem bài ↗</a>`:'<span style="color:var(--faint)">—</span>'}</td>
@@ -991,6 +997,7 @@ async function setupMenu(){
     const me = await (await fetch('/api/me')).json();
     if(!me) return;
     const isAdmin = me.role==='admin';
+    IS_ADMIN=isAdmin;
     window.NO_UNPIN = !!me.khongBoGhim;   // kế toán: được ghim nhưng KHÔNG được bỏ ghim
     ['navProducts','navSalary','navSalaryProduct','navKQKD','navEmployees','navTonKho'].forEach(id=>{
       const el=document.getElementById(id); if(el) el.style.display = isAdmin ? 'inline-block' : 'none';
