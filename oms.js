@@ -744,7 +744,7 @@ export function mountOMS(app, { mysql, express, getTeamLead = () => ({}) }) {
         ? await global.__omsAdidsForAds(ads.map(a => a.id)).catch(() => ({})) : {};
       for (const a of ads) a.adid = (adids[a.id] || []).map(x => x.adid + (x.xung_dot ? ' (xung đột)' : ''));
       if (!out.chienDich) out.chienDich = { id, ten: c.name, nv: c.employee || '' };
-      const rows = await db(`SELECT id, ngay_ve, nv_marketing, url_page, utm_campaign, utm_medium, utm_term, utm_content,
+      const rows = await db(`SELECT id, ngay_ve, nv_marketing, san_pham, url_page, utm_campaign, utm_medium, utm_term, utm_content,
         fbclid, fb_adid, fb_campaign_id, fb_campaign_name, fb_ref_src, fb_ref_at FROM oms_orders
         WHERE ngay_ve >= ? AND ngay_ve < ? ORDER BY id`, [omsDateBoundary(day), omsDateBoundary(day, true)]);
       const mine = rows.filter(r => r.fb_campaign_id === id || (c.employee && r.nv_marketing === c.employee)
@@ -794,7 +794,14 @@ export function mountOMS(app, { mysql, express, getTeamLead = () => ({}) }) {
         don.push({ id: r.id, luc: r.ngay_ve, nv: r.nv_marketing, trangDich: landing || r.url_page,
           utm: [...utmIds, ...utmText].join(' ') || '', fbclid: !!r.fbclid, adid: r.fb_adid || '', loai, lyDo });
       }
-      out.ngay.push({ ngay: day, trangDichChienDich: lands, quangCao: ads, donVeTrangHoacNv: don.length, don });
+      // Mọi đơn trong ngày chưa ra chiến dịch (mọi NV): đơn của chiến dịch này có thể mang NV khác / không có NV
+      // hoặc về trang đích mà máy chủ chưa biết là của chiến dịch này
+      const donChuaRo = rows.filter(r => !r.fb_campaign_id && !mine.includes(r)).map(r => ({ id: r.id, luc: r.ngay_ve,
+        nv: r.nv_marketing, sanPham: r.san_pham, trangDich: landingKey(r.url_page) || r.url_page,
+        utm: ['utm_campaign', 'utm_medium', 'utm_content'].filter(k => r[k]).map(k => `${k}=${r[k]}`).join(' '),
+        fbclid: !!r.fbclid, adid: r.fb_adid || '' }));
+      out.ngay.push({ ngay: day, trangDichChienDich: lands, quangCao: ads, donVeTrangHoacNv: don.length, don,
+        donChuaRoCuaNgay: donChuaRo.length, donChuaRo: donChuaRo.slice(0, 150) });
     }
     out.giaiThichLoai = { da_ghep: 'đã ghép vào chiến dịch này', chien_dich_khac: 'ghép vào chiến dịch khác',
       khong_tham_so: 'đơn không mang UTM / fbclid', chua_tra: 'chưa tra', utm_khong_ra: 'UTM có ID nhưng tra không ra',

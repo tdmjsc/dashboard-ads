@@ -394,13 +394,27 @@ function uniqLinks(arr) {
   }
   return out.slice(0, 5);
 }
+// Link viết trong nội dung bài (quảng cáo không có nút / đính kèm, chỉ ghi link trong chữ, vd camp
+// "Vòng tay định vị" 7/11/2026): link đầy đủ hoặc dạng "tdmjsc.com/trang" không có https://
+function textLinks(...texts) {
+  const out = [];
+  for (const t of texts) {
+    for (const m of String(t || '').matchAll(/(?:https?:\/\/)?(?:[a-z0-9-]+\.)+[a-z]{2,}\/[^\s"'<>()]*/gi)) {
+      const u = m[0].replace(/[.,;:!?…]+$/, '');
+      out.push(/^https?:\/\//i.test(u) ? u : 'https://' + u);
+    }
+  }
+  return uniqLinks(out);
+}
 function creativeLinks(cr) {
   if (!cr) return [];
   const sp = cr.object_story_spec || {};
   const cta = x => x?.call_to_action?.value?.link;
-  return uniqLinks([cr.link_url, sp.link_data?.link, cta(sp.link_data), cta(sp.video_data), sp.template_data?.link,
+  const l = uniqLinks([cr.link_url, sp.link_data?.link, cta(sp.link_data), cta(sp.video_data), sp.template_data?.link,
     cta(sp.template_data), ...(sp.link_data?.child_attachments || []).map(c => c.link),
     ...(cr.asset_feed_spec?.link_urls || []).map(l => l.website_url)]);
+  return l.length ? l : textLinks(cr.body, sp.link_data?.message, sp.video_data?.message, sp.photo_data?.caption,
+    ...(cr.asset_feed_spec?.bodies || []).map(b => b.text));
 }
 // Cache link trang đích theo creative (DATA_DIR/ad-land.json): link quảng cáo gần như không đổi, sửa quảng
 // cáo thì Meta tạo creative mới (id mới) → chỉ đọc từ Meta các creative chưa có trong cache. Creative không ra
@@ -414,19 +428,20 @@ async function fillAdLandings(byCreative, token) {
   const found = {};
   if (todo.length) {
     try {
-      const crs = await fbByIds(todo, 'link_url,object_story_spec,asset_feed_spec{link_urls}', token);
+      const crs = await fbByIds(todo, 'link_url,body,object_story_spec,asset_feed_spec{link_urls,bodies}', token);
       for (const id of todo) found[id] = creativeLinks(crs[id]);
       // Quảng cáo dùng bài có sẵn: creative không có link → đọc nút / đính kèm của bài
       const needPost = {};
       for (const id of todo) if (!found[id].length && byCreative[id].sid) (needPost[byCreative[id].sid] ||= []).push(id);
       const pids = Object.keys(needPost);
       if (pids.length) {
-        const posts = await fbByIds(pids, 'call_to_action,attachments{unshimmed_url,url}', token).catch(e => {
+        const posts = await fbByIds(pids, 'call_to_action,attachments{unshimmed_url,url},message', token).catch(e => {
           if (isRateLimitError(e)) throw e; return {};
         });
         for (const pid in posts) {
           const p = posts[pid] || {};
-          const urls = uniqLinks([p.call_to_action?.value?.link, ...(p.attachments?.data || []).map(a => a.unshimmed_url || a.url)]);
+          let urls = uniqLinks([p.call_to_action?.value?.link, ...(p.attachments?.data || []).map(a => a.unshimmed_url || a.url)]);
+          if (!urls.length) urls = textLinks(p.message);
           for (const id of needPost[pid] || []) found[id] = urls;
         }
       }
