@@ -2044,6 +2044,16 @@ export function mountOMS(app, { mysql, express, getTeamLead = () => ({}) }) {
   }));
 
   // ===================== ĐĂNG KÝ LINK (NV Marketing khai báo) =====================
+  // Cùng URL (bỏ khoảng trắng, không phân biệt hoa thường, bỏ / cuối) đã đăng ký → trả dòng đó
+  const linkKey = u => String(u || '').trim().toLowerCase().replace(/\/+$/, '');
+  async function findDupLink(url, exceptId = 0) {
+    const key = linkKey(url);
+    if (!key) return null;
+    const rows = await db('SELECT id, url_pattern, nv_marketing, ten_sp, active FROM oms_link_registry WHERE id<>?', [Number(exceptId) || 0]);
+    return rows.find(r => linkKey(r.url_pattern) === key) || null;
+  }
+  const dupLinkMsg = r => `Link này đã đăng ký rồi (#${r.id}, NV ${r.nv_marketing}, SP ${r.ten_sp || '?'}${r.active ? '' : ', đang tắt'}). Sửa dòng đó thay vì đăng ký thêm.`;
+
   app.get('/oms/api/links', omsAuth, wrap(async (req, res) => {
     const user = req.session.omsUser;
     let where = ['1=1'];
@@ -2077,6 +2087,10 @@ export function mountOMS(app, { mysql, express, getTeamLead = () => ({}) }) {
       tenSp = prod?.ten_sp || '';
     } catch(e) {}
 
+    // Chặn đăng ký trùng: máy chủ chỉ dùng 1 dòng cho mỗi URL khi nhận đơn, các dòng trùng chỉ làm rối bảng
+    const dup = await findDupLink(d.url_pattern);
+    if (dup) return res.status(409).json({ error: dupLinkMsg(dup) });
+
     const result = await db(`INSERT INTO oms_link_registry (url_pattern, product_id, ten_sp, nv_marketing, nguon_du_lieu, ghi_chu)
       VALUES (?,?,?,?,?,?)`,
       [d.url_pattern, d.product_id, tenSp, nvName, d.nguon_du_lieu||'', d.ghi_chu||'']);
@@ -2091,7 +2105,11 @@ export function mountOMS(app, { mysql, express, getTeamLead = () => ({}) }) {
       if (existing?.nv_marketing !== user.ho_ten) return res.status(403).json({ error: 'Không phải link của bạn' });
     }
     const sets = []; const vals = [];
-    if (d.url_pattern) { sets.push('url_pattern=?'); vals.push(d.url_pattern); }
+    if (d.url_pattern) {
+      const dup = await findDupLink(d.url_pattern, req.params.id);
+      if (dup) return res.status(409).json({ error: dupLinkMsg(dup) });
+      sets.push('url_pattern=?'); vals.push(d.url_pattern);
+    }
     if (d.product_id) {
       sets.push('product_id=?'); vals.push(d.product_id);
       try { const [p] = await db('SELECT ten_sp FROM oms_products WHERE id=?', [d.product_id]); sets.push('ten_sp=?'); vals.push(p?.ten_sp||''); } catch(e) {}

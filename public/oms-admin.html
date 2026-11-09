@@ -2033,10 +2033,13 @@ function renderLinks(){
     const hay=normSearch([lk.url_pattern,lk.nv_marketing,lk.product_name,lk.ten_sp].join(' '));
     return words.every(w=>hay.includes(w));
   });
+  // Đếm URL trùng (cùng URL, không phân biệt hoa thường / dấu / cuối) để admin dọn
+  const lkKey=u=>String(u||'').trim().toLowerCase().replace(/\/+$/,'');
+  const dupCount={}; allLinks.forEach(lk=>{const k=lkKey(lk.url_pattern); dupCount[k]=(dupCount[k]||0)+1;});
   document.getElementById('linkCount').textContent=words.length?`${links.length}/${allLinks.length} link`:`${allLinks.length} link`;
   document.getElementById('linkTable').innerHTML=links.map(lk=>`
     <tr class="border-t hover:bg-gray-50">
-      <td class="p-3 text-sm text-blue-600 max-w-[250px] truncate" title="${esc(lk.url_pattern)}"><a href="${esc(lk.url_pattern)}" target="_blank" class="hover:underline">${esc(lk.url_pattern)}</a></td>
+      <td class="p-3 text-sm text-blue-600 max-w-[250px] truncate" title="${esc(lk.url_pattern)}"><a href="${esc(lk.url_pattern)}" target="_blank" class="hover:underline">${esc(lk.url_pattern)}</a>${dupCount[lkKey(lk.url_pattern)]>1?`<div class="text-xs text-orange-600">⚠ trùng ${dupCount[lkKey(lk.url_pattern)]} dòng · #${lk.id}</div>`:''}</td>
       <td class="p-3 font-medium">${esc(lk.product_name||lk.ten_sp||'?')}</td>
       <td class="p-3">${esc(lk.nv_marketing)}</td>
       <td class="p-3 text-xs text-gray-400">${esc(lk.ghi_chu||'')}</td>
@@ -2078,8 +2081,16 @@ async function submitLink(){
     nv_marketing:document.getElementById('lkNv').value.trim(),nguon_du_lieu:document.getElementById('lkNguon').value,ghi_chu:document.getElementById('lkNote').value};
   if(!body.url_pattern) return alert('❌ Thiếu URL landing page');
   if(!body.product_id) return alert('❌ Chưa chọn sản phẩm');
-  const r=await fetch(API+'/links'+(editId?'/'+editId:''),{method:editId?'PUT':'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});
-  const d=await r.json();
+  // Khoá nút trong lúc gửi: bấm nhiều lần từng tạo ra nhiều dòng trùng
+  const btn=document.getElementById('lkSubmitBtn');
+  if(btn.disabled) return;
+  btn.disabled=true; btn.classList.add('opacity-50');
+  let d={};
+  try{
+    const r=await fetch(API+'/links'+(editId?'/'+editId:''),{method:editId?'PUT':'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});
+    d=await r.json().catch(()=>({error:'Lỗi '+r.status}));
+  }catch(e){ d={error:e.message}; }
+  finally{ btn.disabled=false; btn.classList.remove('opacity-50'); }
   if(d.ok){closeModal('addLinkModal');loadLinks();alert(editId?'✅ Đã lưu link':'✅ Đã đăng ký link');} else alert('❌ '+(d.error||'Lỗi'));
 }
 async function toggleLink(id,active){await fetch(API+'/links/'+id,{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify({active})});loadLinks();}
