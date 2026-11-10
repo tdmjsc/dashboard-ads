@@ -67,7 +67,7 @@ function refresh() {
       : '';
     ok = v > 0 && v !== cur && !over; if (v) label = `Lưu ${fmt(v)} đ`;
   } else {
-    document.getElementById('list').innerHTML = INFO.targets.map(t => `<div><span>${esc(t.ten)}</span><span>${fmt(t.budget)}${PCT ? ` → <b>${fmt(Math.round(t.budget * (1 + PCT / 100) / 1000) * 1000)}</b>` : ''} đ</span></div>`).join('');
+    document.getElementById('list').innerHTML = INFO.targets.map(t => `<div><span>${esc(t.ten)}</span><span>${fmt(t.budget)}${PCT ? ` → <b>${fmt(Math.round(t.budget * (1 + PCT / 100)))}</b>` : ''} đ</span></div>`).join('');
     ok = !!PCT; if (PCT) label = `Lưu (${PCT > 0 ? '+' : '−'}${Math.abs(PCT)}% tất cả nhóm)`;
   }
   const b = document.getElementById('save'); b.disabled = !ok || busy; b.textContent = busy ? 'Đang lưu…' : label;
@@ -75,7 +75,7 @@ function refresh() {
 }
 function pct(p) {
   if (INFO.targets.length === 1) {
-    const v = Math.round(INFO.targets[0].budget * (1 + p / 100) / 1000) * 1000;
+    const v = Math.round(INFO.targets[0].budget * (1 + p / 100));
     document.getElementById('in').value = fmt(v);
   } else PCT = PCT === p ? 0 : p;
   document.querySelectorAll('.pct button').forEach(b => b.classList.toggle('on', INFO.targets.length > 1 && Number(b.dataset.p) === PCT));

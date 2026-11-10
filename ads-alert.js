@@ -467,7 +467,7 @@ export function mountAdsAlert(app, {
     return sets.map(a => ({ id: a.id, ten: 'Nhóm ' + a.name, label: 'Nhóm ' + esc(a.name), budget: Number(a.daily_budget) }));
   }
   async function setBudgets(targets, newOf, tk, maxBudget, out = []) {
-    const plan = targets.map(t => ({ ...t, moi: Math.max(1000, Math.round(newOf(t.budget) / 1000) * 1000) }));
+    const plan = targets.map(t => ({ ...t, moi: Math.max(1000, Math.round(newOf(t.budget))) }));
     const over = plan.find(p => p.moi > maxBudget);
     if (over) throw new Error(`Ngân sách mới ${fmt(over.moi)} đ vượt mức tối đa ${fmt(maxBudget)} đ/ngày (admin chỉnh ở trang Cảnh báo Telegram).`);
     const done = [];

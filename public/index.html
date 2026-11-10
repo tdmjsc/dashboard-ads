@@ -799,7 +799,7 @@ async function openBudget(campId,asId){
 }
 function bmInput(){const inp=document.getElementById('bmIn');const v=onlyDigits(inp.value);inp.value=v?fmtVND(v):'';BM.pct=0;bmRefresh();}
 function bmPct(p){
-  if(BM.targets.length===1){const inp=document.getElementById('bmIn');const v=Math.round(BM.targets[0].budget*(1+p/100)/1000)*1000;inp.value=fmtVND(v);BM.pct=0;}
+  if(BM.targets.length===1){const inp=document.getElementById('bmIn');const v=Math.round(BM.targets[0].budget*(1+p/100));inp.value=fmtVND(v);BM.pct=0;}
   else BM.pct=BM.pct===p?0:p;
   document.querySelectorAll('.bm-pct button').forEach(b=>b.classList.toggle('on',BM.targets.length>1&&Number(b.dataset.p)===BM.pct));
   bmRefresh();
@@ -812,7 +812,7 @@ function bmRefresh(){
     d.innerHTML=v&&v!==cur?`${v>cur?'Tăng':'Giảm'} ${Math.round(Math.abs(v/cur-1)*100)}%`+(v>BM.max?` · <span style="color:var(--red)">vượt mức tối đa ${fmtVND(BM.max)} ₫</span>`:''):'';
     ok.disabled=!v||v===cur||v>BM.max;
   }else{
-    document.getElementById('bmList').innerHTML=BM.targets.map(t=>`<div><span>${esc(t.ten)}</span><span>${fmtVND(t.budget)} ₫${BM.pct?` → <b>${fmtVND(Math.round(t.budget*(1+BM.pct/100)/1000)*1000)} ₫</b>`:''}</span></div>`).join('');
+    document.getElementById('bmList').innerHTML=BM.targets.map(t=>`<div><span>${esc(t.ten)}</span><span>${fmtVND(t.budget)} ₫${BM.pct?` → <b>${fmtVND(Math.round(t.budget*(1+BM.pct/100)))} ₫</b>`:''}</span></div>`).join('');
     ok.disabled=!BM.pct;
   }
 }
