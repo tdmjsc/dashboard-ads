@@ -1037,6 +1037,7 @@ app.use((req, res, next) => {
     const TRANG_CHI_ADMIN = [
       '/salary.html',              // Lương Marketing
       '/salary-product.html',      // Lương Phát triển sản phẩm
+      '/salary-khac.html',         // Lương NV khác (sale, kho, kế toán) — API /api/salary-khac
       '/ket-qua-kinh-doanh.html',  // Kết quả kinh doanh
       '/attribution.html',         // Đơn theo chiến dịch / nguồn
       '/ton-kho.html',             // Tồn kho (MISA AMIS)
@@ -4373,6 +4374,11 @@ function saveKqkd() {
   try { fs.writeFileSync(KQKD_FILE, JSON.stringify(KQKD_MANUAL)); }
   catch (e) { console.error('[SAVE] ket-qua-kinh-doanh lỗi:', e.message); }
 }
+// Tổng lương từ trang Lương NV Khác (salary-khac.js); lỗi / chưa gắn module → null (KQKD dùng ô nhập tay)
+function luongKhacOf(month) {
+  try { return global.__salaryKhacTong ? global.__salaryKhacTong(month) : null; }
+  catch (e) { console.error('[KQKD] lương NV khác:', e.message); return null; }
+}
 const KQKD_FIELDS = ['luongSale', 'luongKeToan', 'luongKho', 'tinhDonChuaShip'];
 
 // Lấy bản ghi 1 tháng, tự nâng cấp dữ liệu cũ (chiPhi là 1 số) sang danh sách
@@ -4424,7 +4430,7 @@ app.get('/api/business-result', async (req, res) => {
     if (ghim && ghim.so) {
       return res.json({
         ok: true, month, since, until, thueSuat: THUE_SUAT,
-        tay: kqkdOf(month),
+        tay: kqkdOf(month), luongKhac: luongKhacOf(month),
         ghim: { at: ghim.at, by: ghim.by || '', so: ghim.so },
         lastUpdated: ghim.lastUpdated || ghim.at,
       });
@@ -4446,7 +4452,7 @@ app.get('/api/business-result', async (req, res) => {
       mktManual: SALARY_MANUAL[month] || {}, mktTtsp: ttspCfgOf(month),
       ptsp: { managers: repPTSP.managers },
       ptspManual: PTSP_MANUAL[month] || {},
-      tay: kqkdOf(month),
+      tay: kqkdOf(month), luongKhac: luongKhacOf(month),
       lastUpdated: new Date().toISOString(),
     });
   } catch (e) {
@@ -4827,6 +4833,13 @@ app.post('/api/cash-flow/note', express.json(), (req, res) => {
     mountTonKho(app, { express, DATA_DIR, fetchWithTimeout });
   } catch (e) {
     console.error('[TONKHO] KHÔNG gắn được module (app chính vẫn chạy bình thường):', e.message);
+  }
+  // LƯƠNG NV KHÁC (sale, kho, kế toán) — nhập tay (xem salary-khac.js)
+  try {
+    const { mountSalaryKhac } = await import('./salary-khac.js');
+    mountSalaryKhac(app, { express, DATA_DIR });
+  } catch (e) {
+    console.error('[LUONG-KHAC] KHÔNG gắn được module (app chính vẫn chạy bình thường):', e.message);
   }
   // SỔ QUỸ TIỀN MẶT — thu / chi nhập tay (xem thu-chi.js)
   try {

@@ -200,6 +200,7 @@
     <a href="/" class="link">← Dashboard</a>
     <a href="/salary.html" class="link">Lương MKT</a>
     <a href="/salary-product.html" class="link">Lương SP</a>
+    <a href="/salary-khac.html" class="link">Lương NV Khác</a>
     <span class="user-badge" id="userBadge"></span>
     <a href="/logout" class="link">Đăng xuất</a>
   </div>
@@ -423,7 +424,13 @@ function computeKQKD(raw){
     mktAdmin: +so.luongMktAdmin||0,     // tách riêng, không tính vào chi phí
     ptsp: +so.luongPtsp||0,
     sale:+tay.luongSale||0, keToan:+tay.luongKeToan||0, kho:+tay.luongKho||0,
+    tuDong:{},   // bộ phận lấy tổng từ trang Lương NV Khác (thay ô nhập tay)
   };
+  // Lương Sale / Kế toán / Kho: bộ phận có số ở trang Lương NV Khác thì dùng tổng thực nhận ở đó
+  const lk=(raw.luongKhac&&raw.luongKhac.tong)||{};
+  ['sale','keToan','kho'].forEach(function(k){
+    if(+lk[k]){ luong[k]=+lk[k]; luong.tuDong[k]=true; }
+  });
   luong.tong=luong.mkt+luong.ptsp+luong.sale+luong.keToan+luong.kho;
 
   const lnTruocThue=doanhThu-nganSach-giaVon-phiShip-phiSan-luong.tong-chiPhi;
@@ -501,9 +508,9 @@ function render(){
     +detRow('Lương Marketing (đã trừ Admin)', L.mkt)
     +(L.mktAdmin?detRow('↳ lương Admin — KHÔNG tính vào chi phí', L.mktAdmin, true):'')
     +detRow('Lương Phát triển sản phẩm', L.ptsp)
-    +inpRow('Lương Sale','luongSale',L.sale)
-    +inpRow('Lương Kế toán','luongKeToan',L.keToan)
-    +inpRow('Lương Kho','luongKho',L.kho)
+    +(L.tuDong.sale?khacRow('Lương Sale',L.sale):inpRow('Lương Sale','luongSale',L.sale))
+    +(L.tuDong.keToan?khacRow('Lương Kế toán',L.keToan):inpRow('Lương Kế toán','luongKeToan',L.keToan))
+    +(L.tuDong.kho?khacRow('Lương Kho',L.kho):inpRow('Lương Kho','luongKho',L.kho))
     +'</table></td></tr>';
 
   // ── Tổng chi phí: danh sách có TÊN + SỐ TIỀN + ẢNH GIẢI TRÌNH ──
@@ -577,6 +584,11 @@ function detRow(lb,v,mo){
   const st2=mo?' style="color:#6B7C97;"':'';
   return '<tr><td class="sub-lbl"'+st+'>'+lb+'<span class="tag tag-auto">tự động</span></td>'
     +'<td class="num"'+st2+'>'+vnd(v)+'</td></tr>';
+}
+// Lương lấy từ trang Lương NV Khác (tổng thực nhận của bộ phận) — sửa ở trang đó
+function khacRow(lb,v){
+  return '<tr><td class="sub-lbl">'+lb+'<a href="/salary-khac.html?month='+encodeURIComponent((RAW&&RAW.month)||'')+'" class="tag tag-auto" style="text-decoration:none" title="Tổng thực nhận ở trang Lương NV Khác — bấm để sửa">từ Lương NV Khác ↗</a></td>'
+    +'<td class="num">'+vnd(v)+'</td></tr>';
 }
 function inpRow(lb,f,v){
   return '<tr><td class="sub-lbl">'+lb+'<span class="tag tag-tay">nhập tay</span></td>'

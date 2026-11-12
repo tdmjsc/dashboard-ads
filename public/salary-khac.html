@@ -1,0 +1,353 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Lương NV Khác — Check ADS TDMJSC</title>
+<link rel="manifest" href="/manifest.json">
+<meta name="theme-color" content="#0B1322">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="TDM Ads">
+<link rel="apple-touch-icon" href="/icons/icon-192.png">
+<style>
+  *{box-sizing:border-box;}
+  body{margin:0;font-family:'Inter',system-ui,sans-serif;background:#0B1322;color:#E7EEF8;}
+  header{background:#10192B;border-bottom:1px solid rgba(255,255,255,.07);padding:14px 18px;}
+  .top{display:flex;align-items:center;gap:12px;flex-wrap:wrap;}
+  h1{font-size:17px;margin:0;}
+  .sub{color:#9FB0C8;font-size:12px;margin:2px 0 0;font-weight:400;}
+  .ctrl{display:flex;align-items:center;gap:8px;background:rgba(255,255,255,.06);border:1px solid rgba(255,255,255,.10);padding:7px 11px;border-radius:9px;}
+  .ctrl label{font-size:11px;color:#9FB0C8;}
+  .ctrl input{font-family:'Inter';font-size:13px;color:#fff;background:transparent;border:none;outline:none;color-scheme:dark;}
+  .btn{font-family:'Inter';font-size:13px;font-weight:600;color:#fff;background:#3D5AFE;border:none;padding:8px 16px;border-radius:9px;cursor:pointer;white-space:nowrap;}
+  .btn:hover{background:#2f49d6;} .btn:disabled{opacity:.5;cursor:not-allowed;}
+  .btn.sm{padding:6px 12px;font-size:12px;}
+  .btn.ghost{background:rgba(255,255,255,.08);}
+  .link{color:#C4D0E2;font-size:13px;text-decoration:none;border:1px solid rgba(255,255,255,.14);padding:7px 12px;border-radius:9px;white-space:nowrap;}
+  .link:hover{background:rgba(255,255,255,.08);color:#fff;}
+  main{padding:18px;max-width:1280px;margin:0 auto;}
+  .status{font-size:13px;color:#9FB0C8;margin:4px 0 14px;min-height:18px;}
+  .status .warn{color:#ffc56b;} .status .err{color:#ff9b8a;} .status .ok{color:#7BE3B5;}
+  .tblwrap{overflow-x:auto;border-radius:12px;border:1px solid rgba(255,255,255,.06);}
+  table{width:100%;border-collapse:collapse;background:#101B2E;min-width:900px;}
+  th,td{padding:10px 12px;text-align:right;font-size:13px;border-bottom:1px solid rgba(255,255,255,.05);white-space:nowrap;vertical-align:top;}
+  th:first-child,td:first-child{text-align:left;}
+  th{background:#16233A;color:#9FB0C8;font-weight:600;font-size:11px;text-transform:uppercase;letter-spacing:.02em;}
+  td.nm{position:sticky;left:0;background:#101B2E;z-index:1;min-width:170px;}
+  tr.total td{background:#16233A;font-weight:700;color:#fff;}
+  tr.sub td{background:#0E1726;color:#9FB0C8;font-size:12px;}
+  .thucnhan{color:#FFD479;font-weight:800;font-variant-numeric:tabular-nums;white-space:nowrap;}
+  .neg{color:#ff9b8a;}
+  .bp{display:inline-block;font-size:10px;background:rgba(61,90,254,.16);color:#A9B8FF;border:1px solid rgba(61,90,254,.4);padding:1px 6px;border-radius:8px;margin-top:4px;}
+  .kt{font-size:10px;color:#67788F;margin-top:2px;}
+  input.cell{width:116px;font-family:inherit;font-size:12.5px;color:#fff;background:rgba(255,255,255,.05);border:1px solid rgba(255,255,255,.12);border-radius:6px;padding:4px 6px;text-align:right;outline:none;font-variant-numeric:tabular-nums;}
+  input.cell.note{width:180px;text-align:left;}
+  input.cell:focus{border-color:#3D5AFE;background:rgba(61,90,254,.14);}
+  input.cell::placeholder{color:#54657F;}
+  .empty{padding:30px;text-align:center;color:#6B7C97;font-size:14px;}
+  .note{font-size:12px;color:#7C8CA6;margin-top:12px;line-height:1.6;}
+  .card{background:#101B2E;border:1px solid rgba(255,255,255,.06);border-radius:12px;padding:14px;margin-top:18px;}
+  .card h2{font-size:13px;margin:0 0 10px;color:#C4D0E2;}
+  .srow{display:flex;align-items:center;gap:8px;flex-wrap:wrap;padding:6px 0;border-bottom:1px solid rgba(255,255,255,.04);font-size:13px;}
+  .srow:last-child{border-bottom:none;}
+  .srow .n{flex:1;min-width:150px;}
+  .inp,select.inp{font-family:inherit;font-size:13px;color:#E7EEF8;background:rgba(255,255,255,.06);border:1px solid rgba(255,255,255,.12);border-radius:7px;padding:6px 9px;outline:none;}
+  select.inp option{background:#1A2332;}
+  .user-badge{display:inline-flex;align-items:center;gap:6px;font-size:13px;color:#9DB2FF;background:rgba(157,178,255,.1);border:1px solid rgba(157,178,255,.2);padding:7px 12px;border-radius:9px;font-weight:600;white-space:nowrap;}
+  .xfer-btn{background:none;border:none;cursor:pointer;font-size:16px;padding:2px 4px;opacity:.6;vertical-align:middle;}
+  .xfer-btn:hover{opacity:1;}
+  .xfer-modal{position:fixed;top:0;left:0;right:0;bottom:0;background:rgba(0,0,0,.65);display:flex;align-items:center;justify-content:center;z-index:999;padding:16px;}
+  .xfer-box{background:#1A2332;border:1px solid rgba(255,255,255,.12);border-radius:14px;padding:24px;width:100%;max-width:440px;max-height:100%;overflow:auto;}
+  .xfer-box h3{margin:0 0 14px;font-size:15px;}
+  .xfer-row{display:flex;align-items:center;gap:8px;margin:8px 0;}
+  .xfer-label{font-size:12px;color:#9FB0C8;width:90px;flex-shrink:0;}
+  .xfer-val{font-size:14px;font-weight:600;color:#ffc56b;}
+  .xfer-inp{background:rgba(255,255,255,.06);border:1px solid rgba(255,255,255,.12);color:#E7EEF8;border-radius:7px;padding:6px 10px;font-size:13px;flex:1;min-width:0;}
+  .xfer-inp option{background:#1A2332;}
+  .xfer-actions{display:flex;gap:8px;margin-top:16px;justify-content:flex-end;flex-wrap:wrap;}
+  .xfer-actions button{padding:7px 16px;border-radius:8px;border:none;cursor:pointer;font-size:13px;font-weight:600;}
+  .xfer-primary{background:#7BE3B5;color:#0B1322;}
+  .xfer-secondary{background:rgba(255,255,255,.08);color:#E7EEF8;}
+  .xfer-qr{text-align:center;margin-top:12px;}
+  .xfer-qr img{border-radius:8px;max-width:200px;}
+  .stk{font-size:10.5px;color:#7C8CA6;margin-top:2px;}
+  @media(max-width:680px){ main{padding:16px;} h1{font-size:15px;} th,td{padding:8px 8px;font-size:12px;} input.cell{width:92px;} td.nm{min-width:135px;} }
+</style>
+</head>
+<body>
+<header>
+  <div class="top">
+    <div style="flex:1;min-width:200px;">
+      <h1>Lương NV Khác</h1>
+      <p class="sub">Sale · Kho · Kế toán — nhập tay · Thực nhận = Lương + Thưởng − Phạt − BHXH</p>
+    </div>
+    <div class="ctrl"><label>Tháng</label><input type="month" id="month"></div>
+    <button class="btn" id="refreshBtn">Xem</button>
+    <a href="/" class="link">← Dashboard</a>
+    <a href="/salary.html" class="link">Lương MKT</a>
+    <a href="/salary-product.html" class="link">Lương PTSP</a>
+    <a href="/ket-qua-kinh-doanh.html" class="link">📊 KQ Kinh doanh</a>
+    <span class="user-badge" id="userBadge"></span>
+    <a href="/logout" class="link">Đăng xuất</a>
+  </div>
+</header>
+
+<main>
+  <div class="status" id="status">Đang tải…</div>
+  <div class="tblwrap">
+    <table>
+      <thead><tr>
+        <th>Nhân viên</th><th>Lương</th><th>Thưởng</th><th>Phạt</th><th>BHXH</th><th style="text-align:left">Ghi chú</th><th>Thực nhận</th>
+      </tr></thead>
+      <tbody id="rows"></tbody>
+    </table>
+  </div>
+  <div class="note">
+    Nhập xong bấm ra ngoài ô là tự lưu. <b>Lương</b> và <b>BHXH</b> tháng chưa nhập sẽ tự lấy theo tháng gần nhất trước đó (dòng chữ nhỏ "theo tháng …"); sửa ô là lưu số riêng cho tháng này.
+    Tổng thực nhận từng bộ phận tự đổ sang <b>Kết quả kinh doanh</b> (Lương Sale / Kho / Kế toán); bộ phận chưa có số ở đây thì trang đó dùng ô nhập tay.
+    Bấm 💸 để chuyển lương (QR / mở app ngân hàng); số tài khoản nhân viên lưu chung với trang Lương MKT.
+  </div>
+
+  <div class="card">
+    <h2>Danh sách nhân viên</h2>
+    <div id="staffList"></div>
+    <div class="srow" style="margin-top:6px;">
+      <input class="inp" id="newName" placeholder="Tên nhân viên mới" style="flex:1;min-width:160px;">
+      <select class="inp" id="newBp"></select>
+      <button class="btn sm" id="addBtn">＋ Thêm</button>
+    </div>
+  </div>
+</main>
+
+<script>
+const vnd=n=>(Math.round(Number(n)||0)).toLocaleString('vi-VN');
+const $=id=>document.getElementById(id);
+const esc=s=>String(s==null?'':s).replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+const normKey=s=>String(s==null?'':s).trim().toLowerCase().replace(/\s+/g,' ');
+const num=v=>{const n=parseInt(String(v==null?'':v).replace(/[^\d-]/g,''),10);return isFinite(n)?Math.abs(n):0;};
+const BP={sale:'Sale',kho:'Kho',keToan:'Kế toán'};
+const F=[{id:'luong',label:'Lương'},{id:'thuong',label:'Thưởng'},{id:'phat',label:'Phạt'},{id:'bhxh',label:'BHXH'}];
+let STAFF=[], DATA={}, SHOWN_MONTH='', LOAD_SEQ=0;
+
+// Mặc định là THÁNG TRƯỚC (giống trang Lương MKT)
+(function(){ const now=new Date(), pm=new Date(now.getFullYear(), now.getMonth()-1, 1);
+  const q=new URLSearchParams(location.search).get('month');   // mở từ Kết quả kinh doanh
+  $('month').value=/^\d{4}-\d{2}$/.test(q||'')?q:`${pm.getFullYear()}-${String(pm.getMonth()+1).padStart(2,'0')}`; })();
+$('newBp').innerHTML=Object.entries(BP).map(([k,v])=>'<option value="'+k+'">'+v+'</option>').join('');
+
+async function load(){
+  const mo=$('month').value, seq=++LOAD_SEQ;
+  SHOWN_MONTH=''; $('refreshBtn').disabled=true;
+  $('status').innerHTML='<span class="warn">Đang tải…</span>';
+  try{
+    const r=await fetch('/api/salary-khac?month='+mo);
+    if(r.status===401){location.href='/login';return;}
+    if(r.status===403){$('status').innerHTML='<span class="err">Chỉ quản trị viên xem được mục Lương.</span>';return;}
+    const d=await r.json();
+    if(seq!==LOAD_SEQ) return;
+    if(!d.ok){$('status').innerHTML='<span class="err">'+esc(d.message||'Không lấy được dữ liệu')+'</span>';return;}
+    SHOWN_MONTH=mo; STAFF=d.staff||[]; DATA=d.data||{};
+    render();
+    $('status').innerHTML='Tháng '+mo+' · '+STAFF.length+' nhân viên';
+  }catch(e){$('status').innerHTML='<span class="err">Không kết nối được máy chủ: '+esc(e.message)+'</span>';}
+  finally{$('refreshBtn').disabled=false;}
+}
+
+const rowOf=id=>DATA[id]||(DATA[id]={luong:0,thuong:0,phat:0,bhxh:0,ghiChu:'',keThua:{}});
+const tnOf=r=>(r.luong||0)+(r.thuong||0)-(r.phat||0)-(r.bhxh||0);
+function stkLine(name){ const b=BANK_DATA[normKey(name)]; return b&&b.accountNo?(b.bankName||'')+' · '+b.accountNo:''; }
+
+function render(){
+  const tb=$('rows');
+  if(!STAFF.length){tb.innerHTML='<tr><td colspan="7" class="empty">Chưa có nhân viên — thêm ở phần Danh sách nhân viên bên dưới.</td></tr>';}
+  else{
+    let html='';
+    STAFF.forEach(st=>{
+      const r=rowOf(st.id);
+      html+='<tr><td class="nm">'+esc(st.name)+(st.active===false?' <span style="color:#ff9b8a;font-size:11px">(đã nghỉ)</span>':'')
+        +'<div><span class="bp">'+esc(BP[st.boPhan]||'Sale')+'</span></div><div class="stk" id="stk-'+st.id+'">'+esc(stkLine(st.name))+'</div></td>';
+      F.forEach(f=>{
+        const kt=(r.keThua||{})[f.id];
+        html+='<td><input class="cell" inputmode="numeric" data-id="'+st.id+'" data-f="'+f.id+'" value="'+(r[f.id]?vnd(r[f.id]):'')+'" placeholder="0">'
+          +'<div class="kt" id="kt-'+st.id+'-'+f.id+'">'+(kt?'theo tháng '+esc(kt):'')+'</div></td>';
+      });
+      html+='<td style="text-align:left"><input class="cell note" data-id="'+st.id+'" data-f="ghiChu" value="'+esc(r.ghiChu||'')+'" placeholder="—"></td>';
+      html+='<td class="thucnhan" id="tn-'+st.id+'"></td></tr>';
+    });
+    tb.innerHTML=html;
+    tb.querySelectorAll('input.cell').forEach(el=>el.addEventListener('change',onEdit));
+  }
+  STAFF.forEach(st=>paintTn(st.id));
+  totals(); renderStaff();
+}
+function paintTn(id){
+  const e=$('tn-'+id); if(!e) return;
+  const v=tnOf(rowOf(id));
+  e.className='thucnhan'+(v<0?' neg':'');
+  e.innerHTML=vnd(v)+' ₫<button class="xfer-btn" title="Chuyển lương" onclick="xferSalary(\''+id+'\')">💸</button>';
+}
+function totals(){
+  document.querySelectorAll('#rows tr.total, #rows tr.sub').forEach(x=>x.remove());
+  if(!STAFF.length) return;
+  const sum=list=>{const T={luong:0,thuong:0,phat:0,bhxh:0,tn:0};list.forEach(st=>{const r=rowOf(st.id);F.forEach(f=>T[f.id]+=r[f.id]||0);T.tn+=tnOf(r);});return T;};
+  const line=(cls,label,T)=>'<tr class="'+cls+'"><td class="nm">'+label+'</td>'+F.map(f=>'<td>'+vnd(T[f.id])+'</td>').join('')+'<td></td><td class="thucnhan">'+vnd(T.tn)+' ₫</td></tr>';
+  let html='';
+  const groups=Object.keys(BP).filter(k=>STAFF.some(s=>(s.boPhan||'sale')===k));
+  if(groups.length>1) groups.forEach(k=>{ const L=STAFF.filter(s=>(s.boPhan||'sale')===k); html+=line('sub','Tổng '+BP[k]+' ('+L.length+')',sum(L)); });
+  html+=line('total','Tổng ('+STAFF.length+')',sum(STAFF));
+  $('rows').insertAdjacentHTML('beforeend',html);
+}
+
+let flashTimer=null;
+function flash(msg,bad){const s=$('status'),old=s.getAttribute('data-base')||s.innerHTML;s.setAttribute('data-base',old);s.innerHTML='<span class="'+(bad?'err':'ok')+'">'+esc(msg)+'</span>';clearTimeout(flashTimer);flashTimer=setTimeout(()=>{s.innerHTML=s.getAttribute('data-base');s.removeAttribute('data-base');},1400);}
+
+async function onEdit(e){
+  const el=e.target, id=el.dataset.id, f=el.dataset.f, r=rowOf(id), month=SHOWN_MONTH;
+  if(!month) return;
+  let v;
+  if(f==='ghiChu'){ v=el.value.trim(); r.ghiChu=v; }
+  else { v=num(el.value); r[f]=v; el.value=v?vnd(v):''; if(r.keThua) delete r.keThua[f]; const k=$('kt-'+id+'-'+f); if(k) k.textContent=''; }
+  paintTn(id); totals();
+  const values={[f]:v};
+  try{
+    const res=await fetch('/api/salary-khac',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({month,id,values})});
+    const d=await res.json().catch(()=>({}));
+    flash(d.ok?'Đã lưu ✓':(d.message||'Lưu lỗi'),!d.ok);
+  }catch(err){flash('Lưu lỗi, thử lại',true);}
+}
+
+// ── Danh sách nhân viên ──
+function renderStaff(){
+  const box=$('staffList');
+  const list=STAFF.filter(s=>s.active!==false);
+  box.innerHTML=list.map(st=>'<div class="srow"><span class="n">'+esc(st.name)+'</span>'
+    +'<select class="inp" data-bp="'+st.id+'">'+Object.entries(BP).map(([k,v])=>'<option value="'+k+'"'+(st.boPhan===k?' selected':'')+'>'+v+'</option>').join('')+'</select>'
+    +'<button class="btn sm ghost" data-ren="'+st.id+'">Đổi tên</button>'
+    +'<button class="btn sm ghost" data-del="'+st.id+'" style="color:#ff9b8a">Xoá</button></div>').join('')
+    ||'<div class="srow" style="color:#6B7C97">Chưa có nhân viên.</div>';
+  box.querySelectorAll('[data-bp]').forEach(el=>el.addEventListener('change',()=>{const st=STAFF.find(s=>s.id===el.dataset.bp);staffAct({action:'edit',id:st.id,name:st.name,boPhan:el.value});}));
+  box.querySelectorAll('[data-ren]').forEach(el=>el.addEventListener('click',()=>{const st=STAFF.find(s=>s.id===el.dataset.ren);const n=prompt('Tên mới cho '+st.name+':',st.name);if(n&&n.trim()&&n.trim()!==st.name)staffAct({action:'edit',id:st.id,name:n.trim(),boPhan:st.boPhan});}));
+  box.querySelectorAll('[data-del]').forEach(el=>el.addEventListener('click',()=>{const st=STAFF.find(s=>s.id===el.dataset.del);if(confirm('Xoá '+st.name+' khỏi danh sách?\n\nSố lương các tháng đã nhập vẫn được giữ (tháng có số vẫn hiện người này).'))staffAct({action:'remove',id:st.id});}));
+}
+async function staffAct(body){
+  try{
+    const r=await fetch('/api/salary-khac/staff',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});
+    const d=await r.json().catch(()=>({}));
+    if(!d.ok){alert(d.message||'Không lưu được');return;}
+    flash('Đã lưu ✓'); load();
+  }catch(e){alert('Lỗi: '+e.message);}
+}
+$('addBtn').addEventListener('click',()=>{const n=$('newName').value.trim();if(!n){$('newName').focus();return;}staffAct({action:'add',name:n,boPhan:$('newBp').value});$('newName').value='';});
+$('newName').addEventListener('keydown',e=>{if(e.key==='Enter')$('addBtn').click();});
+
+$('refreshBtn').addEventListener('click',load);
+$('month').addEventListener('change',load);
+
+fetch('/api/me').then(r=>r.ok?r.json():null).then(me=>{
+  if(me&&me.displayName){ $('userBadge').textContent='👤 '+me.displayName; }
+}).catch(()=>{});
+
+// ── CHUYỂN LƯƠNG (giống trang Lương MKT; STK dùng chung /api/bank-accounts) ──
+const SENDER_BANKS=[{bin:'970436',name:'Vietcombank',short:'VCB'},{bin:'970422',name:'MB Bank',short:'MB'},{bin:'970407',name:'Techcombank',short:'TCB'},{bin:'970432',name:'VPBank',short:'VPB'}];
+const ALL_BANKS=[
+  {bin:'970436',code:'vcb',name:'Vietcombank'},{bin:'970422',code:'mb',name:'MB Bank'},{bin:'970407',code:'tcb',name:'Techcombank'},{bin:'970432',code:'vpbank',name:'VPBank'},
+  {bin:'970418',code:'bidv',name:'BIDV'},{bin:'970415',code:'icb',name:'VietinBank'},{bin:'970416',code:'acb',name:'ACB'},{bin:'970423',code:'tpbank',name:'TPBank'},
+  {bin:'970403',code:'stb',name:'Sacombank'},{bin:'970405',code:'vba',name:'Agribank'},{bin:'970443',code:'shb',name:'SHB'},{bin:'970426',code:'msb',name:'MSB'},
+  {bin:'970437',code:'hdb',name:'HDBank'},{bin:'970448',code:'ocb',name:'OCB'},{bin:'970449',code:'lpb',name:'LPBank'},{bin:'970440',code:'seab',name:'SeABank'},
+  {bin:'970441',code:'vib',name:'VIB'},{bin:'970431',code:'eib',name:'Eximbank'},{bin:'970428',code:'nab',name:'Nam A Bank'},{bin:'970406',code:'dab',name:'DongA Bank'},
+  {bin:'970429',code:'scb',name:'SCB'},{bin:'970414',code:'oceanbank',name:'OceanBank'},{bin:'970412',code:'pvcb',name:'PVcomBank'},{bin:'970409',code:'bab',name:'Bac A Bank'},
+  {bin:'970425',code:'abb',name:'ABBank'},{bin:'970427',code:'vab',name:'VietABank'},{bin:'970433',code:'vietbank',name:'VietBank'},{bin:'970454',code:'vccb',name:'Viet Capital Bank'},
+];
+let BANK_DATA={};
+fetch('/api/bank-accounts').then(r=>r.ok?r.json():{}).then(d=>{BANK_DATA=d||{}; STAFF.forEach(st=>{const e=$('stk-'+st.id); if(e) e.textContent=stkLine(st.name);});}).catch(()=>{});
+function getMyBank(){ try{return localStorage.getItem('myBank')||'';}catch{return '';} }
+function setMyBank(v){ try{localStorage.setItem('myBank',v);}catch{} }
+function boDau(s){ return String(s).normalize('NFD').replace(/[̀-ͯ]/g,'').replace(/đ/g,'d').replace(/Đ/g,'D'); }
+function makeDesc(name){ const mn=(SHOWN_MONTH||'').split('-')[1]||''; return boDau('HKD TD chuyen luong '+name+' t'+parseInt(mn)); }
+const APP_IDS={VCB:'vcb',MB:'mb',TCB:'tcb',VPB:'vpbank'};
+function buildTransferUrl(senderShort, recipBin, recipAcc, amount, desc){
+  const appId=APP_IDS[senderShort]||senderShort.toLowerCase();
+  const recipBank=ALL_BANKS.find(b=>b.bin===recipBin);
+  return 'https://dl.vietqr.io/pay?app='+appId+'&ba='+recipAcc+'@'+(recipBank?recipBank.code:recipBin)+'&am='+amount+'&tn='+encodeURIComponent(desc);
+}
+let XF=null;
+function xferSalary(id){
+  const st=STAFF.find(s=>s.id===id); if(!st) return;
+  XF=st;
+  const amount=tnOf(rowOf(id)), desc=makeDesc(st.name), bank=BANK_DATA[normKey(st.name)]||{}, myBank=getMyBank();
+  let h='<div class="xfer-modal" id="xferModal" onclick="if(event.target===this)this.remove()"><div class="xfer-box">';
+  h+='<h3>💸 Chuyển lương — '+esc(st.name)+'</h3>';
+  h+='<div class="xfer-row"><span class="xfer-label">Số tiền</span><input class="xfer-inp xfer-val" id="xf-amt" inputmode="numeric" value="'+vnd(amount)+'" data-def="'+vnd(amount)+'" oninput="xfFmtAmt(this)"><span class="xfer-val">₫</span></div>';
+  h+='<div class="xfer-row"><span class="xfer-label">Nội dung</span><input class="xfer-inp" id="xf-desc" maxlength="80" value="'+esc(desc)+'" data-def="'+esc(desc)+'"></div>';
+  h+='<div style="font-size:11px;color:#9FB0C8;text-align:right;margin-top:-4px;">Sửa được số tiền và nội dung · <a href="#" onclick="xfReset();return false;" style="color:#9DB2FF;">Khôi phục mặc định</a></div>';
+  h+='<hr style="border-color:rgba(255,255,255,.08);margin:12px 0;">';
+  h+='<div style="font-size:12px;color:#7BE3B5;margin-bottom:6px;font-weight:600;">Ngân hàng của bạn (gửi)</div>';
+  h+='<div class="xfer-row"><span class="xfer-label">NH gửi</span><select class="xfer-inp" id="xf-mybank"><option value="">Chọn…</option>';
+  SENDER_BANKS.forEach(b=>{h+='<option value="'+b.short+'" '+(myBank===b.short?'selected':'')+'>'+b.name+'</option>';});
+  h+='</select></div>';
+  h+='<div style="font-size:12px;color:#9FB0C8;margin:10px 0 6px;">Tài khoản nhận (nhân viên)</div>';
+  h+='<div class="xfer-row"><span class="xfer-label">NH nhận</span><select class="xfer-inp" id="xf-bank"><option value="">Chọn ngân hàng…</option>';
+  ALL_BANKS.forEach(b=>{h+='<option value="'+b.bin+'" '+(bank.bankBin===b.bin?'selected':'')+'>'+b.name+'</option>';});
+  h+='</select></div>';
+  h+='<div class="xfer-row"><span class="xfer-label">Số tài khoản</span><input class="xfer-inp" id="xf-acc" value="'+esc(bank.accountNo||'')+'" placeholder="Nhập STK"></div>';
+  h+='<div id="xf-qr" class="xfer-qr"></div>';
+  h+='<div class="xfer-actions">';
+  h+='<button class="xfer-secondary" onclick="document.getElementById(\'xferModal\').remove()">Đóng</button>';
+  h+='<button class="xfer-secondary" onclick="xferSaveBank(true)">💾 Lưu STK</button>';
+  h+='<button class="xfer-secondary" onclick="xferCopy()">📋 Copy</button>';
+  h+='<button class="xfer-primary" onclick="xferGo()">Chuyển khoản →</button>';
+  h+='</div></div></div>';
+  document.body.insertAdjacentHTML('beforeend',h);
+  ['xf-bank','xf-acc','xf-amt','xf-desc'].forEach(i=>$(i).addEventListener(i==='xf-bank'?'change':'input',xfRefresh));
+  xfRefresh();
+}
+function xfAmount(){ return +String(($('xf-amt')||{}).value||'').replace(/\D/g,'')||0; }
+function xfDesc(){ return boDau((($('xf-desc')||{}).value||'').trim()); }
+function xfFmtAmt(el){ const n=+String(el.value).replace(/\D/g,'')||0; el.value=n?vnd(n):''; }
+function xfReset(){ const a=$('xf-amt'), d=$('xf-desc'); a.value=a.dataset.def; d.value=d.dataset.def; xfRefresh(); }
+function xfRefresh(){
+  const bin=$('xf-bank').value, acc=$('xf-acc').value.trim(), qr=$('xf-qr');
+  if(!(bin&&acc)){ qr.innerHTML=''; return; }
+  const url='https://img.vietqr.io/image/'+bin+'-'+encodeURIComponent(acc)+'-compact2.png?amount='+xfAmount()+'&addInfo='+encodeURIComponent(xfDesc())+'&accountName='+encodeURIComponent(boDau(XF.name).toUpperCase());
+  qr.innerHTML='<div style="font-size:11px;color:#9FB0C8;margin-bottom:6px;">Quét QR bằng app ngân hàng — tự điền đủ STK, số tiền, nội dung</div>'
+    +'<img src="'+url+'" alt="VietQR" style="max-width:230px;" onerror="this.style.display=\'none\'">'
+    +'<div style="margin-top:8px;"><a href="'+url+'" download="chuyen-luong-qr.png" target="_blank" style="font-size:12px;color:#9DB2FF;text-decoration:underline;">⬇ Tải QR về máy (mở app NH → quét từ ảnh)</a></div>';
+}
+async function xferSaveBank(show){
+  const recipBin=$('xf-bank').value, recipAcc=$('xf-acc').value.trim();
+  const bankObj=ALL_BANKS.find(b=>b.bin===recipBin);
+  const payload={name:XF.name, bankBin:recipBin, bankName:bankObj?bankObj.name:'', accountNo:recipAcc};
+  try{
+    const r=await fetch('/api/bank-accounts',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(payload)});
+    const d=await r.json().catch(()=>({}));
+    if(d.ok){ if(recipBin||recipAcc) BANK_DATA[normKey(XF.name)]=payload; else delete BANK_DATA[normKey(XF.name)];
+      const e=$('stk-'+XF.id); if(e) e.textContent=stkLine(XF.name); if(show) flash('Đã lưu STK ✓'); }
+    else if(show) alert(d.message||'Không lưu được STK');
+  }catch(e){ if(show) alert('Lỗi: '+e.message); }
+}
+function xferCopy(){
+  const bankObj=ALL_BANKS.find(b=>b.bin===$('xf-bank').value), acc=$('xf-acc').value||'';
+  const txt=xfDesc()+'\nSố tiền: '+vnd(xfAmount())+' ₫'+(bankObj?'\nNgân hàng: '+bankObj.name:'')+(acc?'\nSTK: '+acc:'');
+  navigator.clipboard.writeText(txt).then(()=>alert('Đã copy nội dung chuyển khoản')).catch(()=>{});
+}
+async function xferGo(){
+  const amount=xfAmount(), desc=xfDesc(), myBankShort=$('xf-mybank').value;
+  const recipBin=$('xf-bank').value, recipAcc=$('xf-acc').value.trim();
+  if(myBankShort) setMyBank(myBankShort);
+  if(recipBin||recipAcc) await xferSaveBank(false);
+  if(!myBankShort){alert('Vui lòng chọn ngân hàng của bạn');return;}
+  if(!recipBin||!recipAcc){alert('Vui lòng chọn ngân hàng nhận và nhập STK');return;}
+  if(!amount){alert('Vui lòng nhập số tiền');return;}
+  window.location.href=buildTransferUrl(myBankShort, recipBin, recipAcc, amount, desc);
+}
+
+load();
+</script>
+<script>
+if ('serviceWorker' in navigator) {
+  window.addEventListener('load', () => { navigator.serviceWorker.register('/service-worker.js').catch(() => {}); });
+}
+</script>
+</body>
+</html>

@@ -266,7 +266,7 @@
 </style>
 <style>
 /* Ẩn sẵn menu admin để tránh hiện nhấp nháy với nhân viên; JS sẽ hiện lại nếu là admin */
-#navProducts, #navSalary, #navSalaryProduct, #navKQKD, #navEmployees, #navDongTien, #navTonKho { display: none; }
+#navProducts, #navSalary, #navSalaryProduct, #navSalaryKhac, #navKQKD, #navEmployees, #navDongTien, #navTonKho { display: none; }
 #navMySalary { display: none; }
 #navTmdt { display: none; }
 </style>
@@ -294,6 +294,7 @@
         <a href="/products.html" class="logout" id="navProducts">Sản phẩm</a>
         <a href="/salary.html" class="logout" id="navSalary">Lương MKT</a>
         <a href="/salary-product.html" class="logout" id="navSalaryProduct">Lương PTSP</a>
+        <a href="/salary-khac.html" class="logout" id="navSalaryKhac">Lương NV Khác</a>
         <a href="/ket-qua-kinh-doanh.html" class="logout" id="navKQKD">📊 KQ Kinh doanh</a>
         <a href="/dong-tien.html" class="logout" id="navDongTien">💰 Dòng tiền</a>
         <a href="/ton-kho.html" class="logout" id="navTonKho">📦 Tồn kho</a>
@@ -539,7 +540,7 @@ async function loadData(opts){
       IS_ADMIN=isAdmin;
       CAN_CTL=['admin','viewer'].includes(data.me.role)&&!data.me.khongBoGhim&&!data.me.chiXem;   // kế toán / tài khoản demo chỉ xem
       // Menu admin: chỉ hiện khi là admin (mặc định CSS đã ẩn)
-      ['navProducts','navSalary','navSalaryProduct','navKQKD','navEmployees','navTonKho'].forEach(id=>{
+      ['navProducts','navSalary','navSalaryProduct','navSalaryKhac','navKQKD','navEmployees','navTonKho'].forEach(id=>{
         const el=document.getElementById(id); if(el) el.style.display = isAdmin ? 'inline-block' : 'none';
       });
       // Dòng tiền: CHỈ admin thật (ẩn với kế toán khongBoGhim)
@@ -999,7 +1000,7 @@ async function setupMenu(){
     const isAdmin = me.role==='admin';
     IS_ADMIN=isAdmin;
     window.NO_UNPIN = !!me.khongBoGhim;   // kế toán: được ghim nhưng KHÔNG được bỏ ghim
-    ['navProducts','navSalary','navSalaryProduct','navKQKD','navEmployees','navTonKho'].forEach(id=>{
+    ['navProducts','navSalary','navSalaryProduct','navSalaryKhac','navKQKD','navEmployees','navTonKho'].forEach(id=>{
       const el=document.getElementById(id); if(el) el.style.display = isAdmin ? 'inline-block' : 'none';
     });
     // Dòng tiền: CHỈ admin thật (ẩn với kế toán khongBoGhim)
