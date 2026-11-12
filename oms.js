@@ -581,6 +581,25 @@ export function mountOMS(app, { mysql, express, getTeamLead = () => ({}) }) {
       doanhThu: +r.doanhThu || 0, dangTra: +r.dangTra || 0 })) };
   };
 
+  // Cho bot cảnh báo (ads-alert.js): ngưỡng riêng theo sản phẩm. Danh sách SP, link đăng ký → SP,
+  // và SP của đơn đã ra chiến dịch / nhóm trong 7 ngày tới `day` (nhận ra SP của nhóm khi trang đích chưa đăng ký link).
+  global.__omsProductList = async () => {
+    if (!getPool()) return [];
+    return db('SELECT id, ma_sp, ten_sp FROM oms_products WHERE active=1 ORDER BY ten_sp');
+  };
+  global.__omsLinkProducts = async () => {
+    if (!getPool()) return [];
+    return db(`SELECT url_pattern, product_id, ten_sp FROM oms_link_registry WHERE active=1 AND url_pattern<>''
+      ORDER BY CHAR_LENGTH(url_pattern) DESC, id DESC`);
+  };
+  global.__omsAdsetProducts = async (day) => {
+    if (!getPool()) return [];
+    const from = new Date(Date.parse(day + 'T00:00:00Z') - 6 * 86400e3).toISOString().slice(0, 10);
+    return db(`SELECT fb_campaign_id, fb_adset_id, san_pham, COUNT(*) AS n FROM oms_orders
+      WHERE ngay_ve >= ? AND ngay_ve < ? AND fb_campaign_id<>'' AND san_pham<>''
+      GROUP BY fb_campaign_id, fb_adset_id, san_pham`, [omsDateBoundary(from), omsDateBoundary(day, true)]);
+  };
+
   // Cho module Tồn kho đọc số lượng đã bán theo sản phẩm (tính số ngày đủ bán)
   global.__omsSalesByProduct = (days, trangThai) => db(
     `SELECT san_pham, SUM(so_luong) AS qty, COUNT(*) AS don FROM oms_orders

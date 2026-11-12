@@ -49,7 +49,13 @@ const CFG_DEFAULT = {
   step: 20,           // nút −/+ đổi ngân sách …%
   maxBudget: 20000000, // chặn nhập nhầm (thừa số 0): ngân sách/ngày tối đa đặt qua bot
   adminAll: true,     // admin nhận cảnh báo mọi camp
+  // Ngưỡng riêng theo sản phẩm (người dùng yêu cầu 12/11/2026): { [id SP OMS]: { ten, kw, cprMax, offAt, autoOffAt,
+  // noAdidAt, lowCpa } }; trường để trống (null) = theo cài đặt chung. Nhận SP của camp / nhóm: `productOf`.
+  byProduct: {},
 };
+const SP_KEYS = ['cprMax', 'offAt', 'autoOffAt', 'noAdidAt', 'lowCpa'];
+// So khớp tên không dấu (từ khoá "vong tay" khớp camp "Vòng tay")
+const normTxt = s => String(s == null ? '' : s).replace(/[đĐ]/g, 'd').normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase().replace(/\s+/g, ' ').trim();
 
 const fmt = n => Math.round(Number(n) || 0).toLocaleString('vi-VN');
 const esc = s => String(s == null ? '' : s).replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
@@ -162,6 +168,66 @@ export function mountAdsAlert(app, {
   const unitsOf = (c, oms) => (c.adsets || []).length ? c.adsets.map(a => setUnit(c, a, oms)) : [campUnit(c, oms)];
   const kindName = k => k === 's' ? 'nhóm' : 'camp';
 
+  /* ---------- Ngưỡng riêng theo sản phẩm ----------
+     SP của camp / nhóm, lần lượt (nguồn đầu tiên ra SP thì dùng nguồn đó):
+       1. trang đích các quảng cáo (adsets[].ads[].land) khớp bảng "Đăng ký link" OMS (link chứa url_pattern, pattern dài trước);
+       2. SP nhiều đơn nhất của nhóm (camp) trong 7 ngày (đơn OMS đã ra nhóm / chiến dịch);
+       3. từ khoá đặt cho SP xuất hiện trong tên camp / nhóm (không dấu).
+     Ra nhiều SP thì chỉ dùng khi đúng 1 SP trong đó có ngưỡng riêng. SP không có ngưỡng riêng → cài đặt chung. */
+  const callG = async (fn, ...a) => {
+    if (typeof fn !== 'function') return [];
+    try { return (await fn(...a)) || []; } catch (e) { console.error('[ADSALERT] đọc SP OMS lỗi:', e.message); return []; }
+  };
+  async function spContext(cfg, day) {
+    const ov = cfg.byProduct || {};
+    if (!Object.keys(ov).length) return null;
+    const [links, prods, orders] = await Promise.all([callG(global.__omsLinkProducts), callG(global.__omsProductList), callG(global.__omsAdsetProducts, day)]);
+    const idByName = new Map(prods.map(p => [normTxt(p.ten_sp), String(p.id)]));
+    for (const [id, o] of Object.entries(ov)) if (o.ten && !idByName.has(normTxt(o.ten))) idByName.set(normTxt(o.ten), id);
+    const ordS = {}, ordC = {};
+    const add = (m, k, id, n) => { if (k) ((m[k] ||= {})[id] = (m[k][id] || 0) + n); };
+    for (const r of orders) {
+      const id = idByName.get(normTxt(r.san_pham));
+      if (!id) continue;
+      add(ordS, String(r.fb_adset_id || ''), id, +r.n || 0);
+      add(ordC, String(r.fb_campaign_id || ''), id, +r.n || 0);
+    }
+    const lk = links.map(l => ({ pat: String(l.url_pattern || '').trim().toLowerCase(),
+      id: l.product_id ? String(l.product_id) : idByName.get(normTxt(l.ten_sp)) })).filter(l => l.pat && l.id);
+    const kws = Object.entries(ov).map(([id, o]) => [id, String(o.kw || '').split(/[,;]/).map(normTxt).filter(Boolean)]).filter(x => x[1].length);
+    return { ov, lk, ordS, ordC, kws };
+  }
+  function productOf(ctx, c, u) {
+    if (!ctx) return null;
+    const pick = (ids, src) => {
+      const has = [...new Set(ids)].filter(id => ctx.ov[id]);
+      return has.length === 1 ? { id: has[0], ten: ctx.ov[has[0]].ten || '', src } : null;
+    };
+    const adsets = u.k === 's' ? (c.adsets || []).filter(a => String(a.id) === u.id) : (c.adsets || []);
+    const fromLand = [];
+    for (const a of adsets) for (const ad of a.ads || []) for (const l of ad.land || []) {
+      const L = String(l).toLowerCase(), m = ctx.lk.find(x => L.includes(x.pat));
+      if (m) fromLand.push(m.id);
+    }
+    if (fromLand.length) return pick(fromLand, 'trang đích');
+    const o = (u.k === 's' && (c.adsets || []).length > 1) ? ctx.ordS[u.id] : (ctx.ordC[String(c.id)] || (u.k === 's' ? ctx.ordS[u.id] : null));
+    if (o) {
+      const top = Object.entries(o).sort((x, y) => y[1] - x[1])[0][0];
+      return pick([top], 'đơn OMS');
+    }
+    const name = normTxt(c.name + ' ' + (u.k === 's' ? u.name : ''));
+    const hit = ctx.kws.filter(([, ks]) => ks.some(k => name.includes(k))).map(x => x[0]);
+    return hit.length ? pick(hit, 'tên camp') : null;
+  }
+  // Cài đặt áp cho 1 camp / nhóm: chung + ngưỡng riêng của SP (trường để trống = theo chung)
+  function cfgOf(cfg, sp) {
+    const o = sp && (cfg.byProduct || {})[sp.id];
+    if (!o) return cfg;
+    const r = { ...cfg };
+    for (const k of SP_KEYS) if (o[k] != null) r[k] = o[k];
+    return r;
+  }
+
   /* ---------- Luật báo ----------
      e = trạng thái hôm nay của 1 camp / nhóm (s.sent[day][id]), sửa trực tiếp:
        lv1/lv2: đã báo mức "dấu hiệu đắt" / "đề nghị tắt" (0–1 đơn); cpaNext: mức CPA trung bình sẽ báo
@@ -236,9 +302,10 @@ export function mountAdsAlert(app, {
   const unitTitle = u => `<b>${esc(u.campName)}</b>` + (u.k === 's' ? `\n<i>↳ Nhóm: ${esc(u.name)}</i>` : '');
   function alertText(u, cfg, head, R = []) {
     const st = u.st;
+    const sp = u.sp ? `SP: ${esc(u.sp.ten)} (ngưỡng riêng: đắt ${fmt(u.cfg.cprMax)} đ/đơn)\n` : '';
     const budget = u.budget ? `${fmt(u.budget)} đ/ngày` : u.cbo ? `theo chiến dịch (CBO) ${fmt(u.cbo)} đ/ngày` : 'chưa rõ';
     return `${head}\n${unitTitle(u)}\n`
-      + `NV: ${esc(u.employee)} · ${esc(u.accName || u.acc)}\n`
+      + `NV: ${esc(u.employee)} · ${esc(u.accName || u.acc)}\n` + sp
       + R.map(r => '• ' + r.text + '\n').join('')
       + `Hôm nay (đến ${hhmm()}): chi <b>${fmt(st.spend)} đ</b> (sau thuế) · <b>${st.res}</b> ${esc(st.label)}`
       + ` · CPA <b>${st.cpr == null ? '—' : fmt(st.cpr) + ' đ'}</b>\n`
@@ -289,16 +356,18 @@ export function mountAdsAlert(app, {
     reload();
     const cfg = STORE.cfg;
     const day = vnDay(), now = Date.now();
-    const [camps, oms] = await Promise.all([getCampaigns(day, day), omsToday(day)]);
+    const [camps, oms, spc] = await Promise.all([getCampaigns(day, day), omsToday(day), spContext(cfg, day)]);
     const units = [], offs = [], noAdid = [];
-    const offIf = o => oms && cfg.autoOffAt > 0 && o.u.st.res === 0 && o.u.st.spend >= cfg.autoOffAt && offs.push(o);
+    const offIf = o => oms && o.u.cfg.autoOffAt > 0 && o.u.st.res === 0 && o.u.st.spend >= o.u.cfg.autoOffAt && offs.push(o);
+    // Gắn SP + cài đặt áp dụng (ngưỡng riêng của SP nếu có)
+    const withSp = (c, u) => { u.sp = productOf(spc, c, u); u.cfg = cfgOf(cfg, u.sp); return u; };
     for (const c of camps || []) if (c.on) {
-      for (const u of unitsOf(c, oms)) if (u.on) units.push(u);
+      for (const u of unitsOf(c, oms)) if (u.on) units.push(withSp(c, u));
       for (const a of c.adsets || []) if (a.on) {
-        const u = setUnit(c, a, oms);
+        const u = withSp(c, setUnit(c, a, oms));
         offIf({ u });
         const ads = (a.ads || []).filter(x => x.on);
-        if (cfg.noAdidAt > 0 && c.obj !== 'tin nhắn' && u.st.spend > cfg.noAdidAt && ads.length) noAdid.push({ u, ads });
+        if (u.cfg.noAdidAt > 0 && c.obj !== 'tin nhắn' && u.st.spend > u.cfg.noAdidAt && ads.length) noAdid.push({ u, ads });
       }
     }
     // Quảng cáo đang chạy chưa có adid (cặp xung đột không tính) trong thư viện adid OMS
@@ -335,15 +404,16 @@ export function mountAdsAlert(app, {
         const e = (today[u.id] ||= {});
         if (auto && e.checkedAt && now - e.checkedAt < everyOf(u, cfg) * 60e3 - 2 * 60e3) continue; // chưa tới nhịp (chừa 2 phút lệch)
         if (auto) e.checkedAt = now;
-        const R = decide(e, u, cfg, now);
+        const R = decide(e, u, u.cfg, now);
         if (R.length) out.push({ u, R });
       }
       return { list: out, offed, adid };
     };
-    const offReason = u => ({ lv: 3, kind: 'auto', text: `Đã tiêu ${fmt(u.st.spend)} đ mà chưa ra đơn (ngưỡng tự tắt ${fmt(cfg.autoOffAt)} đ)` });
+    const offReason = u => ({ lv: 3, kind: 'auto', text: `Đã tiêu ${fmt(u.st.spend)} đ mà chưa ra đơn (ngưỡng tự tắt ${fmt(u.cfg.autoOffAt)} đ)` });
     if (!send) {
       const r = run(JSON.parse(JSON.stringify({ sent: STORE.sent || {} })));
       const row = (u, lyDo, nguoiNhan) => ({ id: u.id, loai: kindName(u.k), ten: u.name, camp: u.campName, nv: u.employee,
+        sp: u.sp ? `${u.sp.ten} (theo ${u.sp.src})` : '',
         ...u.st, nhip: everyOf(u, cfg), lyDo, nguoiNhan });
       return { day, oms: !!oms, list: [
         ...r.offed.map(u => row(u, ['SẼ TỰ TẮT: ' + offReason(u).text], recipients(u, cfg).length)),
@@ -826,10 +896,27 @@ export function mountAdsAlert(app, {
       fromHour: num(b.fromHour, 0, 23), toHour: num(b.toHour, 1, 24),
       step: num(b.step, 5, 100), maxBudget: num(b.maxBudget, 10000, 1e10),
       offAt: num(b.offAt, 0, 1e9), autoOffAt: num(b.autoOffAt, 0, 1e9), noAdidAt: num(b.noAdidAt, 0, 1e9), lowCpa: num(b.lowCpa, 0, 1e9), lowEveryMin: num(b.lowEveryMin, 10, 1440),
+      byProduct: b.byProduct && typeof b.byProduct === 'object' ? (() => {
+        const out = {};
+        for (const [id, o] of Object.entries(b.byProduct).slice(0, 300)) {
+          if (!/^\d+$/.test(id) || !o || typeof o !== 'object') continue;
+          const r = { ten: String(o.ten || '').slice(0, 200), kw: String(o.kw || '').slice(0, 300) };
+          for (const k of SP_KEYS) r[k] = o[k] === '' || o[k] == null ? null : (num(o[k], 0, 1e9) ?? null);
+          out[id] = r;
+        }
+        return out;
+      })() : undefined,
       reAlert: Array.isArray(b.reAlert) ? [...new Set(b.reAlert.map(Number).filter(v => Number.isFinite(v) && v > 0).map(Math.round))].sort((x, y) => x - y).slice(0, 6) : undefined,
     };
     commit(s => { s.cfg = { ...CFG_DEFAULT, ...s.cfg }; for (const [k, v] of Object.entries(patch)) if (v !== undefined) s.cfg[k] = v; });
     res.json({ ok: true, cfg: STORE.cfg });
+  });
+  // Danh sách SP OMS cho ô tìm sản phẩm (ngưỡng riêng)
+  app.get('/api/ads-alert/products', async (req, res) => {
+    if (!isAdmin(req)) return res.status(403).json({ ok: false });
+    if (typeof global.__omsProductList !== 'function') return res.json({ ok: false, error: 'OMS chưa nạp' });
+    try { res.json({ ok: true, list: (await global.__omsProductList()).map(p => ({ id: String(p.id), ma: p.ma_sp || '', ten: p.ten_sp })) }); }
+    catch (e) { res.json({ ok: false, error: e.message }); }
   });
   // Xem trước camp đang đắt (không gửi). ?send=1: kiểm tra + gửi ngay (bỏ qua giờ / lượt).
   app.get('/api/ads-alert/check', async (req, res) => {

@@ -42,6 +42,23 @@
   .pill{display:inline-block;font-size:11.5px;font-weight:600;padding:2px 8px;border-radius:20px;}
   .pill.ok{background:rgba(123,227,181,.15);} .pill.err{background:rgba(255,155,138,.15);}
   .hidden{display:none;}
+  .sp-box{grid-column:1/-1;display:flex;flex-direction:column;gap:10px;border:1px solid rgba(255,255,255,.08);border-radius:10px;padding:12px;}
+  .sp-search{position:relative;max-width:460px;}
+  .sp-drop{position:absolute;left:0;right:0;top:100%;margin-top:4px;background:#1B2742;border:1px solid rgba(255,255,255,.14);border-radius:8px;max-height:280px;overflow:auto;z-index:30;}
+  .sp-drop div{padding:8px 10px;font-size:13px;cursor:pointer;color:#C4D0E2;}
+  .sp-drop div:hover,.sp-drop div.on{background:rgba(61,90,254,.25);}
+  .sp-drop .mute{cursor:default;}
+  .sp-card{border:1px solid rgba(61,90,254,.35);border-radius:10px;background:rgba(61,90,254,.06);}
+  .sp-card-h{display:flex;align-items:center;gap:8px;font-weight:600;font-size:13.5px;color:#E7EEF8;padding:9px 12px;cursor:pointer;user-select:none;}
+  .sp-card-h:hover{background:rgba(61,90,254,.1);border-radius:10px;}
+  .sp-card-h .arr{color:#9DB2FF;font-size:11px;width:12px;transition:transform .15s;}
+  .sp-card.open .arr{transform:rotate(90deg);}
+  .sp-card-h .sum{font-weight:400;font-size:12px;color:#8C9BB4;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;min-width:0;}
+  .sp-card .sp-grid{display:none;padding:0 12px 12px;}
+  .sp-card.open .sp-grid{display:grid;}
+  .sp-card-h .x{margin-left:auto;background:none;border:none;color:#ff9b8a;cursor:pointer;font-size:13px;font-family:inherit;}
+  .sp-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(170px,1fr));gap:10px;}
+  .sp-grid label{display:flex;flex-direction:column;gap:5px;font-size:11.5px;color:#9FB0C8;font-weight:600;}
   @media (max-width:600px){header{padding:12px 16px;} main{padding:16px;} th,td{padding:8px 10px;}}
 </style>
 </head>
@@ -84,6 +101,15 @@
           <div class="tier"><span>Mức 2: từ</span><input id="t1-from" inputmode="numeric"><span class="sep">đ/ngày, mỗi</span><input id="t1-every" inputmode="numeric"><span>phút</span></div>
           <div class="tier"><span>Mức 3: từ</span><input id="t2-from" inputmode="numeric"><span class="sep">đ/ngày, mỗi</span><input id="t2-every" inputmode="numeric"><span>phút</span></div>
           <div class="mute" style="font-size:12px">Để trống mức 2 / 3 để bỏ mức đó. Tối thiểu 10 phút.</div>
+        </div>
+        <div class="sp-box">
+          <div class="tiers-h">Ngưỡng riêng theo sản phẩm — camp / nhóm của sản phẩm này dùng các số dưới đây thay cho cài đặt chung (ô để trống = theo chung)</div>
+          <div class="sp-search">
+            <input id="sp-q" placeholder="🔍 Tìm sản phẩm (tên hoặc mã) để thêm ngưỡng riêng…" autocomplete="off">
+            <div class="sp-drop hidden" id="sp-drop"></div>
+          </div>
+          <div id="sp-list" style="display:flex;flex-direction:column;gap:10px"></div>
+          <div class="mute" style="font-size:12px">Nhận sản phẩm của camp / nhóm theo: trang đích của quảng cáo khớp link đã đăng ký ở OMS → sản phẩm nhiều đơn nhất của nhóm trong 7 ngày → từ khoá trong tên camp / nhóm (không phân biệt dấu). Bấm Lưu để áp dụng.</div>
         </div>
         <label>Từ giờ<input id="c-fromHour" inputmode="numeric"></label>
         <label>Đến giờ<input id="c-toHour" inputmode="numeric"></label>
@@ -129,6 +155,72 @@ const $ = id => document.getElementById(id);
 const esc = s => String(s == null ? '' : s).replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
 const fmt = n => Math.round(Number(n) || 0).toLocaleString('vi-VN');
 const tm = s => s ? new Date(s).toLocaleString('vi-VN', { hour12: false }) : '';
+const SP_FIELDS = [
+  ['cprMax', 'Ngưỡng đắt: CPA (đ/đơn)'],
+  ['offAt', '0–1 đơn tiêu tới … thì đề nghị tắt (đ)'],
+  ['autoOffAt', 'Nhóm 0 đơn tiêu tới … thì TỰ TẮT (đ, 0 = không)'],
+  ['lowCpa', 'CPA đơn mới ≤ … thì nhắc tăng NS (đ, 0 = tắt)'],
+  ['noAdidAt', 'Tiêu trên … chưa có adid thì nhắc (đ, 0 = tắt)'],
+];
+let CFG = {}, SP = {}, PRODUCTS = null;
+const OPEN = new Set();   // thẻ SP đang mở (mặc định thu gọn, chỉ hiện tên)
+const k1 = v => v >= 1000 ? fmt(v / 1000) + 'k' : fmt(v);
+// Tóm tắt các số đã cài trên dòng tên khi thu gọn
+const spSum = o => SP_FIELDS.filter(([k]) => o[k] != null).map(([k]) => ({ cprMax: 'CPA', offAt: 'đề nghị tắt', autoOffAt: 'tự tắt', lowCpa: 'tăng NS', noAdidAt: 'adid' }[k] + ' ' + k1(o[k])))
+  .concat(o.kw ? ['từ khoá: ' + o.kw] : []).join(' · ') || 'chưa cài số nào';
+function toggleSp(id) {
+  readSp();
+  OPEN.has(id) ? OPEN.delete(id) : OPEN.add(id);
+  renderSp();
+}
+const normTxt = s => String(s == null ? '' : s).replace(/[đĐ]/g, 'd').normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase().replace(/\s+/g, ' ').trim();
+const toNum = v => { const t = String(v == null ? '' : v).replace(/[.,\s]/g, ''); return t === '' ? null : Number(t); };
+// Đọc lại các ô đang nhập vào SP trước khi vẽ lại danh sách (khỏi mất số đang gõ)
+function readSp() {
+  for (const id of Object.keys(SP)) {
+    const card = document.querySelector(`.sp-card[data-id="${id}"]`);
+    if (!card) continue;
+    for (const [k] of SP_FIELDS) SP[id][k] = toNum(card.querySelector(`[data-k="${k}"]`).value);
+    SP[id].kw = card.querySelector('[data-k="kw"]').value.trim();
+  }
+}
+function renderSp() {
+  const ids = Object.keys(SP).sort((a, b) => normTxt(SP[a].ten).localeCompare(normTxt(SP[b].ten)));
+  $('sp-list').innerHTML = ids.length ? ids.map(id => {
+    const o = SP[id];
+    return `<div class="sp-card${OPEN.has(id) ? ' open' : ''}" data-id="${esc(id)}"><div class="sp-card-h" onclick="toggleSp('${esc(id)}')"><span class="arr">▶</span>📦 ${esc(o.ten || 'SP #' + id)}<span class="sum">${OPEN.has(id) ? '' : esc(spSum(o))}</span><button class="x" onclick="event.stopPropagation();removeSp('${esc(id)}')">✕ Bỏ</button></div><div class="sp-grid">`
+      + SP_FIELDS.map(([k, lb]) => `<label>${esc(lb)}<input data-k="${k}" inputmode="numeric" value="${o[k] == null ? '' : o[k]}" placeholder="chung: ${fmt(CFG[k])}"></label>`).join('')
+      + `<label>Từ khoá trong tên camp (cách nhau dấu phẩy)<input data-k="kw" value="${esc(o.kw || '')}" placeholder="vd: vòng tay, VT"></label></div></div>`;
+  }).join('') : '<div class="mute" style="font-size:12.5px">Chưa có sản phẩm nào có ngưỡng riêng.</div>';
+}
+function removeSp(id) {
+  if (!confirm(`Bỏ ngưỡng riêng của "${SP[id] && SP[id].ten}"? (bấm Lưu để áp dụng)`)) return;
+  readSp(); delete SP[id]; OPEN.delete(id); renderSp();
+}
+function addSp(id, ten) {
+  readSp();
+  if (!SP[id]) SP[id] = { ten, kw: '' };
+  OPEN.add(id);   // vừa chọn → mở sẵn để điền số
+  renderSp();
+  $('sp-q').value = ''; $('sp-drop').classList.add('hidden');
+  const inp = document.querySelector(`.sp-card[data-id="${id}"] input`);
+  if (inp) { inp.scrollIntoView({ block: 'center', behavior: 'smooth' }); inp.focus(); }
+}
+async function spSearch() {
+  const q = normTxt($('sp-q').value), box = $('sp-drop');
+  if (!q) { box.classList.add('hidden'); return; }
+  if (!PRODUCTS) {
+    box.innerHTML = '<div class="mute">Đang tải danh sách sản phẩm…</div>'; box.classList.remove('hidden');
+    const j = await api('/api/ads-alert/products');
+    if (!j.ok) { box.innerHTML = `<div class="mute err">${esc(j.error || 'Không tải được sản phẩm OMS')}</div>`; return; }
+    PRODUCTS = j.list.map(p => ({ ...p, k: normTxt(p.ten + ' ' + p.ma) }));
+  }
+  const words = q.split(' ');
+  const hit = PRODUCTS.filter(p => words.every(w => p.k.includes(w))).slice(0, 30);
+  box.innerHTML = hit.length ? hit.map(p => `<div data-id="${esc(p.id)}" data-ten="${esc(p.ten)}">${esc(p.ten)}${p.ma ? ` <span class="mute">· ${esc(p.ma)}</span>` : ''}${SP[p.id] ? ' <span class="ok">✓ đã có</span>' : ''}</div>`).join('')
+    : '<div class="mute">Không thấy sản phẩm nào.</div>';
+  box.classList.remove('hidden');
+}
 const CFG_KEYS = ['cprMax', 'offAt', 'autoOffAt', 'noAdidAt', 'lowCpa', 'lowEveryMin', 'fromHour', 'toHour', 'step', 'maxBudget'];
 async function api(url, opts) {
   const r = await fetch(url, opts);
@@ -164,6 +256,9 @@ async function unlink() {
 async function loadAdmin() {
   const j = await api('/api/ads-alert');
   if (!j.ok) return;
+  CFG = j.cfg;
+  SP = JSON.parse(JSON.stringify(j.cfg.byProduct || {}));
+  renderSp();
   $('c-on').checked = !!j.cfg.on;
   $('c-adminAll').checked = !!j.cfg.adminAll;
   for (const k of CFG_KEYS) $('c-' + k).value = j.cfg[k];
@@ -187,6 +282,8 @@ async function saveCfg() {
   const n = id => Number(String($(id).value).replace(/[.,\s]/g, ''));
   body.tiers = [{ from: 0, every: n('t0-every') || 60 }];
   for (const i of [1, 2]) if (n('t' + i + '-from') > 0 && n('t' + i + '-every') > 0) body.tiers.push({ from: n('t' + i + '-from'), every: n('t' + i + '-every') });
+  readSp();
+  body.byProduct = SP;
   body.reAlert = $('c-reAlert').value.split(/[,;]/).map(v => Number(v.replace(/[.\s]/g, ''))).filter(v => v > 0);
   const j = await post('/api/ads-alert/cfg', body);
   $('cfg-msg').innerHTML = j.ok ? '<span class="ok">Đã lưu</span>' : `<span class="err">${esc(j.error || 'Lưu lỗi')}</span>`;
@@ -201,8 +298,8 @@ async function preview(send) {
   if (send) { showOut('Đã kiểm tra', `<div class="body">${j.dat} camp / nhóm cần báo · tự tắt ${j.tuTat || 0} nhóm · ${j.thieuAdid || 0} nhóm thiếu adid · đã gửi ${j.daGui} tin. Cái đã báo ở cùng mức trong hôm nay thì không báo lại.</div>`); loadAdmin(); return; }
   const warn = j.oms ? '' : '<div class="body err">Không đọc được OMS — đang tính theo kết quả Meta.</div>';
   showOut(`Sẽ báo nếu gửi bây giờ (${j.list.length})`, warn + (j.list.length
-    ? `<table><tr><th>Loại</th><th>Camp / nhóm</th><th>NV</th><th>Chi (sau thuế)</th><th>Kết quả</th><th>CPA (sau thuế)</th><th>Nhịp</th><th>Lý do báo</th><th>Người nhận</th></tr>`
-      + j.list.map(c => `<tr><td>${c.loai === 'nhóm' ? 'Nhóm' : 'Camp'}</td><td>${esc(c.ten)}${c.loai === 'nhóm' ? `<br><span class="mute">${esc(c.camp)}</span>` : ''}</td><td>${esc(c.nv)}</td><td class="num">${fmt(c.spend)}</td><td class="num">${c.res} ${esc(c.label)}</td><td class="num">${c.cpr == null ? '—' : fmt(c.cpr)}</td><td class="num">${c.nhip}′</td><td>${(c.lyDo || []).map(esc).join('<br>')}</td><td class="num">${c.nguoiNhan || '<span class="err">0</span>'}</td></tr>`).join('') + '</table>'
+    ? `<table><tr><th>Loại</th><th>Camp / nhóm</th><th>NV</th><th>SP (ngưỡng riêng)</th><th>Chi (sau thuế)</th><th>Kết quả</th><th>CPA (sau thuế)</th><th>Nhịp</th><th>Lý do báo</th><th>Người nhận</th></tr>`
+      + j.list.map(c => `<tr><td>${c.loai === 'nhóm' ? 'Nhóm' : 'Camp'}</td><td>${esc(c.ten)}${c.loai === 'nhóm' ? `<br><span class="mute">${esc(c.camp)}</span>` : ''}</td><td>${esc(c.nv)}</td><td>${esc(c.sp || '')}</td><td class="num">${fmt(c.spend)}</td><td class="num">${c.res} ${esc(c.label)}</td><td class="num">${c.cpr == null ? '—' : fmt(c.cpr)}</td><td class="num">${c.nhip}′</td><td>${(c.lyDo || []).map(esc).join('<br>')}</td><td class="num">${c.nguoiNhan || '<span class="err">0</span>'}</td></tr>`).join('') + '</table>'
     : '<div class="body mute">Không có camp / nhóm nào cần báo lúc này.</div>'));
 }
 async function perms() {
@@ -212,6 +309,17 @@ async function perms() {
   showOut('Quyền token Meta (cần ads_management để tắt/bật/đổi ngân sách)', `<table><tr><th>Token (.env)</th><th>Chủ token</th><th>Tài khoản QC</th><th>ads_management</th><th>Quyền đang có</th></tr>`
     + j.perm.map(p => `<tr><td><b>${esc(p.bien)}</b>${p.ten ? '<br>' + esc(p.ten) : ''}</td><td>${esc(p.chu || '')}</td><td>${p.taiKhoan.map(esc).join('<br>')}</td><td>${p.loi ? `<span class="pill err">Lỗi</span> ${esc(p.loi)}` : p.adsManagement ? '<span class="pill ok">Có</span>' : '<span class="pill err">Chưa có</span>'}</td><td class="mute">${esc((p.quyen || []).join(', '))}</td></tr>`).join('') + '</table>');
 }
+$('sp-q').addEventListener('input', spSearch);
+$('sp-q').addEventListener('focus', spSearch);
+$('sp-drop').addEventListener('mousedown', e => {
+  const d = e.target.closest('div[data-id]');
+  if (d) { e.preventDefault(); addSp(d.dataset.id, d.dataset.ten); }
+});
+$('sp-q').addEventListener('keydown', e => {
+  if (e.key === 'Enter') { const d = $('sp-drop').querySelector('div[data-id]'); if (d) { e.preventDefault(); addSp(d.dataset.id, d.dataset.ten); } }
+  if (e.key === 'Escape') $('sp-drop').classList.add('hidden');
+});
+$('sp-q').addEventListener('blur', () => setTimeout(() => $('sp-drop').classList.add('hidden'), 150));
 loadMe();
 </script>
 </body>
