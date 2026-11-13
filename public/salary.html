@@ -126,7 +126,7 @@
   <div class="tblwrap">
     <table>
       <thead><tr>
-        <th>Nhân viên</th><th>Doanh thu</th><th>Chi phí QC</th><th>Giá vốn</th><th>Phí ship</th>
+        <th>Nhân viên</th><th>Doanh thu</th><th>Chi phí QC</th><th>Giá vốn</th><th title="Số đơn Đã giao + Đã thanh toán (Sandbox)">Đơn ship TC</th><th>Phí ship</th>
         <th>Lương 2%</th><th>HH Leader</th><th>Lương cứng</th><th>Thưởng</th><th>Phạt</th><th>BHXH</th><th>Thực nhận</th>
       </tr></thead>
       <tbody id="rows"></tbody>
@@ -253,18 +253,18 @@ function detailHTML(i,emp){
     +' <span class="badge" id="bd-'+i+'-'+c.id+'" style="display:none">có DL</span></div>'
     +chMets(c.id).map(mt=>'<div class="frow"><span>'+mt.label+'</span>'+cInp(i,c.id,mt.id,m.channels[c.id][mt.id])+'</div>').join('')
     +'</div>').join('');
-  return '<tr class="drow" id="det-'+i+'" style="display:none"><td colspan="12"><div class="panel">'+cards+'</div></td></tr>';
+  return '<tr class="drow" id="det-'+i+'" style="display:none"><td colspan="13"><div class="panel">'+cards+'</div></td></tr>';
 }
 
 function buildTable(){
   const tb=$('rows');
-  if(!LIST.length){tb.innerHTML='<tr><td colspan="12" class="empty">Không có dữ liệu trong tháng này.</td></tr>';return;}
+  if(!LIST.length){tb.innerHTML='<tr><td colspan="13" class="empty">Không có dữ liệu trong tháng này.</td></tr>';return;}
   let html='';
   LIST.forEach((emp,i)=>{
     const m=manOf(emp.key);
     html+='<tr class="mrow">'
       +'<td class="nm"><div class="nmtop"><button class="exp" data-exp="'+i+'">＋</button>'+esc(emp.name)+'</div><div class="bdg" id="bdg-'+i+'"></div></td>'
-      +'<td class="num" id="dt-'+i+'"></td><td class="num" id="qc-'+i+'"></td><td class="num" id="gv-'+i+'"></td><td class="num" id="ship-'+i+'"></td>'
+      +'<td class="num" id="dt-'+i+'"></td><td class="num" id="qc-'+i+'"></td><td class="num" id="gv-'+i+'"></td><td class="num" id="sd-'+i+'"></td><td class="num" id="ship-'+i+'"></td>'
       +'<td class="luong" id="l2-'+i+'"></td>'
       +'<td class="leader" id="hl-'+i+'">–</td>'
       +'<td>'+pInp(i,'luongCung',m.luongCung)+'</td>'
@@ -288,7 +288,7 @@ function buildTable(){
     html+=detailHTML(i,emp);
   });
   html+='<tr class="total"><td class="nm">Tổng ('+LIST.length+')</td>'
-    +'<td class="num" id="t-dt"></td><td class="num" id="t-qc"></td><td class="num" id="t-gv"></td><td class="num" id="t-ship"></td>'
+    +'<td class="num" id="t-dt"></td><td class="num" id="t-qc"></td><td class="num" id="t-gv"></td><td class="num" id="t-sd"></td><td class="num" id="t-ship"></td>'
     +'<td class="luong" id="t-l2"></td><td class="leader" id="t-hl"></td><td class="num" id="t-lc"></td><td class="num" id="t-th"></td><td class="num" id="t-ph"></td><td class="num" id="t-bh"></td>'
     +'<td class="thucnhan" id="t-tn"></td></tr>';
   tb.innerHTML=html;
@@ -309,6 +309,7 @@ function recompute(i){
   const DT=x.DT, QC=x.QC, GV=x.GV, SHIP=x.SHIP, l2=x.l2, hl=x.hl;
   srcCell('dt',i,DT,x.autoDT,x.manDT,x.ttsp.dt); srcCell('qc',i,QC,x.autoQC,x.manQC,x.ttsp.qc);
   srcCell('gv',i,GV,x.autoGV,x.manGV,x.ttsp.gv); srcCell('ship',i,SHIP,x.autoSHIP,x.manSHIP,x.ttsp.ship,x.PS);
+  const SD=+(emp.a&&emp.a.soDon)||0; $('sd-'+i).textContent=vnd(SD);
   const l2e=$('l2-'+i); l2e.textContent=vnd(l2); l2e.className=l2<0?'luong neg':'luong';
   const hle=$('hl-'+i); if(hle){ hle.textContent=hl>0?vnd(hl)+'₫':'–'; }
   const tnWithHl=x.tn;
@@ -326,12 +327,12 @@ function recompute(i){
   // Cập nhật nút Thưởng (hiển thị tổng thưởng đã gồm DTT + Top1 + Ngày/Tuần)
   const tbtn=$('tb-'+i);
   if(tbtn){ tbtn.textContent=m.thuong>0?vnd(m.thuong)+' ₫':'–'; tbtn.className='thuong-btn'+(m.thuong>0?' has-data':''); }
-  emp._c={DT,QC,GV,SHIP,l2,hl,lc:m.luongCung,th:x.thuong,ph:m.phat,bh:m.bhxh,tn:tnWithHl};
+  emp._c={DT,QC,GV,SD,SHIP,l2,hl,lc:m.luongCung,th:x.thuong,ph:m.phat,bh:m.bhxh,tn:tnWithHl};
 }
 function updateTotals(){
-  const T={DT:0,QC:0,GV:0,SHIP:0,l2:0,hl:0,lc:0,th:0,ph:0,bh:0,tn:0};
+  const T={DT:0,QC:0,GV:0,SD:0,SHIP:0,l2:0,hl:0,lc:0,th:0,ph:0,bh:0,tn:0};
   LIST.forEach(e=>{const c=e._c||{};for(const k in T)T[k]+=c[k]||0;});
-  $('t-dt').textContent=vnd(T.DT);$('t-qc').textContent=vnd(T.QC);$('t-gv').textContent=vnd(T.GV);$('t-ship').textContent=vnd(T.SHIP);
+  $('t-dt').textContent=vnd(T.DT);$('t-qc').textContent=vnd(T.QC);$('t-gv').textContent=vnd(T.GV);$('t-sd').textContent=vnd(T.SD);$('t-ship').textContent=vnd(T.SHIP);
   $('t-l2').textContent=vnd(T.l2);$('t-hl').textContent=vnd(T.hl);$('t-lc').textContent=vnd(T.lc);$('t-th').textContent=vnd(T.th);$('t-ph').textContent=vnd(T.ph);$('t-bh').textContent=vnd(T.bh);
   $('t-tn').textContent=vnd(T.tn)+' ₫';
 }
