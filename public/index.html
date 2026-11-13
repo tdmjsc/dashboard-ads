@@ -245,6 +245,16 @@
   .sw-btn{border:none;padding:0;cursor:pointer;} .sw-btn:hover{filter:brightness(.92);} .sw-btn:disabled{opacity:.5;cursor:wait;}
   .bud-btn{border:none;background:none;cursor:pointer;font-size:12.5px;padding:2px 4px;border-radius:6px;opacity:.55;vertical-align:middle;}
   .bud-btn:hover{opacity:1;background:var(--line-soft);}
+  .sched-tag{display:block;font-size:11px;color:var(--teal);margin-top:2px;cursor:pointer;white-space:nowrap;}
+  .bm-mode{display:flex;background:var(--line-soft);border-radius:9px;padding:3px;gap:3px;}
+  .bm-mode button{flex:1;border:none;background:none;border-radius:7px;padding:7px 0;font-size:12.5px;font-weight:600;cursor:pointer;color:var(--text);}
+  .bm-mode button.on{background:var(--card);box-shadow:0 1px 3px rgba(0,0,0,.12);}
+  .bm-when{display:flex;gap:6px;flex-wrap:wrap;align-items:center;}
+  .bm-when input{font-size:14px;padding:8px 10px;border:1px solid var(--line);border-radius:8px;background:var(--card);color:var(--text);}
+  .bm-when button{border:1px solid var(--line);background:var(--card);border-radius:14px;padding:5px 10px;font-size:12px;cursor:pointer;color:var(--text);}
+  .bm-sched{display:flex;flex-direction:column;gap:4px;font-size:12.5px;}
+  .bm-sched div{display:flex;justify-content:space-between;gap:10px;align-items:center;}
+  .bm-sched button{border:none;background:none;color:var(--red);cursor:pointer;font-weight:600;font-size:12px;}
   .adset-name .switch{transform:scale(.8);vertical-align:middle;margin:-3px 4px 0 -4px;}
   .bm-wrap{position:fixed;inset:0;background:rgba(16,25,43,.45);display:flex;align-items:center;justify-content:center;z-index:200;padding:16px;}
   .bm-wrap.hidden{display:none;}
@@ -539,6 +549,7 @@ async function loadData(opts){
       const isAdmin=data.me.role==='admin';
       IS_ADMIN=isAdmin;
       CAN_CTL=['admin','viewer'].includes(data.me.role)&&!data.me.khongBoGhim&&!data.me.chiXem;   // kế toán / tài khoản demo chỉ xem
+      if(CAN_CTL) loadScheds();
       // Menu admin: chỉ hiện khi là admin (mặc định CSS đã ẩn)
       ['navProducts','navSalary','navSalaryProduct','navSalaryKhac','navKQKD','navEmployees','navTonKho'].forEach(id=>{
         const el=document.getElementById(id); if(el) el.style.display = isAdmin ? 'inline-block' : 'none';
@@ -760,6 +771,17 @@ async function ctlCall(method,body){
 function swHtml(c,a){const o=a||c;
   if(!CAN_CTL) return `<span class="switch ${o.on?'':'off'}"></span>`;
   return `<button type="button" class="switch sw-btn ${o.on?'':'off'}" title="${o.on?'Bấm để tắt':'Bấm để bật'}" onclick="event.stopPropagation();ctlToggle(this,'${c.id}','${a?a.id:''}')"></button>`;}
+/* Hẹn giờ thay đổi ngân sách (API /api/ads-alert/sched, ads-alert.js): lịch đang chờ hiện dưới ngân sách, bấm mở hộp ✏️ */
+let SCHEDS=[];
+async function loadScheds(){
+  try{const r=await (await fetch('/api/ads-alert/sched')).json(); if(r.ok){SCHEDS=r.list; if(typeof render==='function'&&CAMPAIGNS&&CAMPAIGNS.length) render();}}catch(e){}
+}
+const gioVn=ms=>{const d=new Date(ms+7*3600e3).toISOString();return `${d.slice(11,16)} ${d.slice(8,10)}/${d.slice(5,7)}`;};
+const vnIso=ms=>new Date(ms+7*3600e3).toISOString().slice(0,16);
+function schedTag(c,a){
+  const id=String((a||c).id);
+  return SCHEDS.filter(x=>x.status==='cho'&&x.id===id).map(x=>`<span class="sched-tag" title="Hẹn giờ thay đổi ngân sách (${esc(x.login)}) — bấm để xem / huỷ" onclick="event.stopPropagation();openBudget('${c.id}','${a?a.id:''}',true)">⏰ ${gioVn(x.at)} → ${fmtVND(x.value)} ₫</span>`).join('');
+}
 const budBtn=(c,a)=>CAN_CTL?`<button type="button" class="bud-btn" title="Sửa ngân sách" onclick="event.stopPropagation();openBudget('${c.id}','${a?a.id:''}')">✏️</button>`:'';
 async function ctlToggle(btn,campId,asId){
   const c=findCamp(campId); if(!c) return; const a=asId?findSet(c,asId):null, o=a||c, nm=a?'nhóm':'chiến dịch';
@@ -773,9 +795,10 @@ async function ctlToggle(btn,campId,asId){
   render(); ctlToast(`${r.on?'Đã BẬT':'Đã TẮT'} ${nm} ${o.name}`);
 }
 const onlyDigits=v=>Number(String(v).replace(/\D/g,''))||0;
-async function openBudget(campId,asId){
+async function openBudget(campId,asId,hen){
   const c=findCamp(campId); if(!c) return; const a=asId?findSet(c,asId):null;
-  BM={c,a,k:a?'s':'c',id:(a||c).id,targets:[],pct:0};
+  BM={c,a,k:a?'s':'c',id:(a||c).id,targets:[],pct:0,hen:!!hen};
+  document.getElementById('bmOk').textContent=hen?'Hẹn giờ':'Lưu';
   document.getElementById('bmTitle').textContent='Ngân sách/ngày — '+(a?'nhóm ':'')+(a||c).name;
   document.getElementById('bmBody').innerHTML='<div class="sub">Đang đọc ngân sách hiện tại từ Meta…</div>';
   document.getElementById('bmMsg').textContent=''; document.getElementById('bmOk').disabled=true;
@@ -783,20 +806,56 @@ async function openBudget(campId,asId){
   const r=await ctlCall('GET',{k:BM.k,acc:c.acc,id:BM.id});
   if(!BM) return;
   if(!r.ok||!r.targets.length){document.getElementById('bmBody').innerHTML=`<div class="sub" style="color:var(--red)">${esc(r.error||r.loiNS||'Không có ngân sách ngày để sửa.')}</div>`;return;}
-  BM.targets=r.targets; BM.max=r.maxBudget;
+  BM.targets=r.targets; BM.max=r.maxBudget; BM.info=r;
+  bmDraw();
+}
+function bmMode(h){BM.hen=h;bmDraw();}
+function bmDraw(){
+  const r=BM.info;
   const pcts=[-30,-20,-10,10,20,30];
   const pctRow=`<div class="bm-pct">${pcts.map(p=>`<button type="button" data-p="${p}" onclick="bmPct(${p})">${p>0?'+':'−'}${Math.abs(p)}%</button>`).join('')}</div>`;
-  if(r.targets.length===1){
-    const t=r.targets[0];
-    document.getElementById('bmBody').innerHTML=`<div class="sub">${esc(t.ten)}${t.cbo?' — đổi ngân sách chung của cả chiến dịch':''} · hiện <b>${fmtVND(t.budget)} ₫</b></div>
-      <input class="bm-in" id="bmIn" inputmode="numeric" autocomplete="off" value="${fmtVND(t.budget)}" oninput="bmInput()" onkeydown="if(event.key==='Enter')saveBudget()">
-      ${pctRow}<div class="sub" id="bmDiff"></div>`;
-    const inp=document.getElementById('bmIn'); inp.focus(); inp.select();
-  }else{
-    document.getElementById('bmBody').innerHTML=`<div class="sub">Chiến dịch có ${r.targets.length} nhóm đang chạy với ngân sách riêng: chọn % để đổi tất cả (hoặc sửa từng nhóm ở bảng chi tiết).</div>
-      ${pctRow}<div class="bm-list" id="bmList"></div>`;
+  const mode=`<div class="bm-mode"><button type="button" class="${BM.hen?'':'on'}" onclick="bmMode(false)">✏️ Đổi ngay</button><button type="button" class="${BM.hen?'on':''}" onclick="bmMode(true)">⏰ Hẹn giờ thay đổi</button></div>`;
+  const sched='<div class="bm-sched" id="bmSched"></div>';
+  document.getElementById('bmOk').textContent=BM.hen?'Hẹn giờ':'Lưu';
+  if(BM.hen&&r.targets.length>1){
+    document.getElementById('bmBody').innerHTML=mode+`<div class="sub">Chiến dịch có ${r.targets.length} nhóm đang chạy với ngân sách riêng — hẹn giờ cho từng nhóm (✏️ ở bảng chi tiết nhóm).</div>`+sched;
+    document.getElementById('bmOk').disabled=true; bmSchedRender(); return;
   }
+  if(r.targets.length===1){
+    const t=r.targets[0], old=document.getElementById('bmIn');
+    const val=old?old.value:fmtVND(t.budget);
+    document.getElementById('bmBody').innerHTML=mode+`<div class="sub">${esc(t.ten)}${t.cbo?' — đổi ngân sách chung của cả chiến dịch':''} · hiện <b>${fmtVND(t.budget)} ₫</b></div>
+      <input class="bm-in" id="bmIn" inputmode="numeric" autocomplete="off" value="${val}" oninput="bmInput()" onkeydown="if(event.key==='Enter')saveBudget()">
+      ${pctRow}
+      ${BM.hen?`<div class="sub">Thời gian thay đổi (giờ Việt Nam)</div><div class="bm-when"><input type="datetime-local" id="bmWhen" min="${vnIso(Date.now())}" max="${vnIso(Date.now()+7*864e5)}" oninput="bmRefresh()" onchange="bmRefresh()">
+        <button type="button" onclick="bmChip('h1')">+1 giờ</button><button type="button" onclick="bmChip('d0')">0h05 đêm nay</button><button type="button" onclick="bmChip('d6')">6h sáng mai</button></div>`:''}
+      <div class="sub" id="bmDiff"></div>`+sched;
+    const inp=document.getElementById('bmIn'); if(!old){inp.focus(); inp.select();}
+  }else{
+    document.getElementById('bmBody').innerHTML=mode+`<div class="sub">Chiến dịch có ${r.targets.length} nhóm đang chạy với ngân sách riêng: chọn % để đổi tất cả (hoặc sửa từng nhóm ở bảng chi tiết).</div>
+      ${pctRow}<div class="bm-list" id="bmList"></div>`+sched;
+    BM.pct=0;
+  }
+  bmSchedRender();
   bmRefresh();
+}
+function bmChip(kind){
+  const now=Date.now(), vn=new Date(now+7*3600e3); let t;
+  if(kind==='h1') t=Math.ceil((now+3600e3)/900e3)*900e3;
+  else t=Date.UTC(vn.getUTCFullYear(),vn.getUTCMonth(),vn.getUTCDate()+1,kind==='d0'?0:6,kind==='d0'?5:0)-7*3600e3;
+  document.getElementById('bmWhen').value=vnIso(t); bmRefresh();
+}
+const SCHED_ST={cho:'⏳ chờ',dang:'⏳ đang chạy',xong:'✅ đã đổi',loi:'⚠️ lỗi',huy:'✖ đã huỷ'};
+function bmSchedRender(){
+  const el=document.getElementById('bmSched'); if(!el||!BM) return;
+  const list=SCHEDS.filter(x=>x.id===String(BM.id));
+  el.innerHTML=list.length?'<div class="sub" style="font-weight:600">Lịch hẹn giờ</div>'+list.map(x=>`<div><span>${gioVn(x.at)} → <b>${fmtVND(x.value)} ₫</b> <span class="sub">· ${SCHED_ST[x.status]||x.status} · ${esc(x.login)}${x.loi?' · '+esc(x.loi):''}</span></span>${x.status==='cho'?`<button type="button" onclick="cancelSched('${x.sid}')">Huỷ</button>`:''}</div>`).join(''):'';
+}
+async function cancelSched(sid){
+  if(!confirm('Huỷ lịch hẹn giờ này?')) return;
+  try{const r=await (await fetch('/api/ads-alert/sched/cancel',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({sid})})).json();
+    if(!r.ok) return alert(r.error);}catch(e){return alert('Không kết nối được máy chủ');}
+  await loadScheds(); bmSchedRender(); ctlToast('Đã huỷ lịch hẹn giờ');
 }
 function bmInput(){const inp=document.getElementById('bmIn');const v=onlyDigits(inp.value);inp.value=v?fmtVND(v):'';BM.pct=0;bmRefresh();}
 function bmPct(p){
@@ -807,6 +866,16 @@ function bmPct(p){
 }
 function bmRefresh(){
   const ok=document.getElementById('bmOk');
+  if(BM.hen){
+    if(BM.targets.length!==1){ok.disabled=true;return;}
+    const cur=BM.targets[0].budget,v=onlyDigits(document.getElementById('bmIn').value);
+    const w=document.getElementById('bmWhen').value, t=w?Date.parse(w+':00+07:00'):NaN, past=!(t>Date.now()+60e3);
+    document.getElementById('bmDiff').innerHTML=(v&&v!==cur?`${v>cur?'Tăng':'Giảm'} ${Math.round(Math.abs(v/cur-1)*100)}% so với hiện tại`:'')
+      +(v>BM.max?` · <span style="color:var(--red)">vượt mức tối đa ${fmtVND(BM.max)} ₫</span>`:'')
+      +(w&&past?` · <span style="color:var(--red)">thời gian phải sau hiện tại</span>`:'')
+      +(v&&!past&&v<=BM.max?`<br>Lúc <b>${gioVn(t)}</b> đặt ngân sách <b>${fmtVND(v)} ₫</b>/ngày`:'');
+    ok.disabled=!v||v>BM.max||past; return;
+  }
   if(BM.targets.length===1){
     const cur=BM.targets[0].budget,v=onlyDigits(document.getElementById('bmIn').value);
     const d=document.getElementById('bmDiff');
@@ -820,6 +889,16 @@ function bmRefresh(){
 function closeBudget(){BM=null;document.getElementById('bmWrap').classList.add('hidden');}
 async function saveBudget(){
   if(!BM||document.getElementById('bmOk').disabled) return;
+  if(BM.hen){
+    const ok=document.getElementById('bmOk'); ok.disabled=true; document.getElementById('bmMsg').textContent='Đang hẹn giờ…';
+    let r; try{r=await (await fetch('/api/ads-alert/sched',{method:'POST',headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({k:BM.k,acc:BM.c.acc,id:BM.id,value:onlyDigits(document.getElementById('bmIn').value),at:document.getElementById('bmWhen').value})})).json();}
+    catch(e){r={ok:false,error:'Không kết nối được máy chủ'};}
+    if(!r.ok){document.getElementById('bmMsg').textContent=r.error;ok.disabled=false;return;}
+    document.getElementById('bmMsg').textContent='';
+    await loadScheds(); bmSchedRender(); bmRefresh();
+    ctlToast(`Đã hẹn ${r.item.gio} đổi ngân sách → ${fmtVND(r.item.value)} ₫`); return;
+  }
   const body={k:BM.k,acc:BM.c.acc,id:BM.id,act:'budget'};
   if(BM.targets.length===1) body.value=onlyDigits(document.getElementById('bmIn').value); else body.pct=BM.pct;
   const ok=document.getElementById('bmOk'); ok.disabled=true; document.getElementById('bmMsg').textContent='Đang lưu…';
@@ -846,7 +925,7 @@ function adsetBlock(c){
     const res=om?(m?m.v.don:0):a.results, resLbl=om?'đơn OMS':c.obj;
     const cprVal=res?Math.round(a.spent/res):0, cprTax=res?Math.round(sTax/res):0;
     return `<div class="adset">
-      <div class="adset-head"><span class="adset-name">${CAN_CTL?swHtml(c,a):(a.on?'':'⏸ ')}${a.name}</span><span class="adset-budget">NS: ${a.budget?fmtVND(a.budget)+' ₫/ngày'+budBtn(c,a):'theo chiến dịch'}</span></div>
+      <div class="adset-head"><span class="adset-name">${CAN_CTL?swHtml(c,a):(a.on?'':'⏸ ')}${a.name}</span><span class="adset-budget">NS: ${a.budget?fmtVND(a.budget)+' ₫/ngày'+budBtn(c,a):'theo chiến dịch'+budBtn(c,a)}${schedTag(c,a)}</span></div>
       <div class="adset-metrics">
         <span><b>${fmtVND(a.spent)} ₫</b><small>đã chi</small></span>
         <span><b style="color:#9A7B2E">${fmtVND(sTax)} ₫</b><small>sau thuế</small></span>
@@ -940,7 +1019,7 @@ function renderCamp(){
     return `<tr>
       <td data-label="Trạng thái"><div class="status-cell">${swHtml(c)}<span>${c.on?'Đang chạy':'Tạm dừng'}</span></div></td>
       <td class="cell-name" onclick="toggleCamp('${c.id}')" style="cursor:pointer"><div class="camp-name"><span class="tgl">${exp?'▾':'▸'}</span> ${c.name}</div><div class="camp-meta"><span class="nv-chip">${nv}</span><span class="dot" style="display:inline-block;width:7px;height:7px;border-radius:50%;background:${acc.color}"></span>${acc.name} · <span class="objtag">${c.obj}</span>${nAdsets?` · <span class="objtag">${nAdsets} nhóm có chi tiêu</span>`:''}</div></td>
-      <td class="r" data-label="Ngân sách"><span class="money">${fmtVND(c.budget||0)}<span class="cur">₫</span></span>${budBtn(c)}<div style="font-size:11px;color:var(--faint);margin-top:2px">/ ngày</div></td>
+      <td class="r" data-label="Ngân sách"><span class="money">${fmtVND(c.budget||0)}<span class="cur">₫</span></span>${budBtn(c)}<div style="font-size:11px;color:var(--faint);margin-top:2px">/ ngày</div>${schedTag(c)}</td>
       <td class="r" data-label="Đã chi tiêu"><div class="spendcell"><span class="money">${fmtVND(s)}<span class="cur">₫</span></span><div class="spendbar"><i class="${barCls}" style="width:${pct}%"></i></div><div class="pct">${pct}% NS kỳ này</div></div></td>
       <td class="r" data-label="Sau thuế"><span class="money" style="color:#9A7B2E">${fmtVND(sTax)}<span class="cur">₫</span></span></td>
       <td class="r" data-label="Kết quả"><span class="res">${fmtVND(r)}<small>${obj}</small></span>${metaLine(metaSum(c))}${noOrder&&IS_ADMIN?whyLink(c):''}</td>

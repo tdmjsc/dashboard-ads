@@ -21,6 +21,8 @@
 //  • Nút trên tin: Tắt / Bật camp (hoặc nhóm), −/+ x% ngân sách (nhóm dùng ngân sách chiến dịch CBO thì đổi
 //    ngân sách chiến dịch), nhập ngân sách mới, xem số mới nhất. Trước mỗi thao tác máy chủ đọc lại từ Meta và kiểm tra người bấm có quyền với camp đó (theo tên NV trong tên camp).
 //    Ghi lên Meta cần token có quyền ads_management (xem /api/ads-alert?perm=1).
+//  • Hẹn giờ thay đổi ngân sách (ngân sách mới + thời điểm, giờ VN): nút ⏰ trên tin "đang rẻ" (Mini App mode=hen),
+//    tab ⏰ trong Mini App ✏️ và hộp ✏️ trang Ads. Xem `schedAdd` / `schedRun`.
 //  • Nhận tin qua webhook /tg-ads/webhook (loại trừ khỏi middleware đăng nhập, kiểm tra secret_token).
 //  • Dữ liệu ở DATA_DIR/ads-alert.json theo cách nhiều tiến trình (json-store.js). Lượt kiểm tra được "giành"
 //    qua commit (lastRun) nên nhiều tiến trình không cùng gọi Meta / không báo trùng.
@@ -312,7 +314,8 @@ export function mountAdsAlert(app, {
       + `Ngân sách: ${budget} · ${u.on ? '🟢 đang chạy' : '⚪️ đang tắt'}`;
   }
   // callback_data: a|<việc>|<c|s>|<acc>|<id>[|<giá trị>]. levels: các mức cho nút "báo lại khi CPA vượt …"
-  function keyboard(k, acc, id, on, step, levels) {
+  // hen: thêm nút ⏰ hẹn giờ thay đổi ngân sách (tin "đang rẻ — nên tăng ngân sách")
+  function keyboard(k, acc, id, on, step, levels, hen) {
     const d = (a, v) => `a|${a}|${k}|${acc}|${id}` + (v == null ? '' : '|' + v);
     const nm = kindName(k);
     const rows = [
@@ -322,6 +325,7 @@ export function mountAdsAlert(app, {
         // Mở Mini App sửa ngân sách (ô điền sẵn ngân sách hiện tại). Tin cũ có nút d('set') vẫn mở bàn phím số.
         { text: '✏️ Nhập', web_app: { url: `${PUBLIC_URL}/tg-ads/app?k=${k}&acc=${acc}&id=${id}` } }],
     ];
+    if (hen) rows.push([{ text: '⏰ Hẹn giờ thay đổi ngân sách', web_app: { url: `${PUBLIC_URL}/tg-ads/app?k=${k}&acc=${acc}&id=${id}&mode=hen` } }]);
     // Telegram không cho chỉnh cỡ chữ nút; 4 nút / hàng thì điện thoại chỉ hiện "🔔 CPA…" → 2 nút / hàng
     if (levels && levels.length) {
       const bs = levels.slice(0, 3).map(v => ({ text: `🔔 CPA > ${Math.round(v / 1000)}k`, callback_data: d('rn', v) }))
@@ -451,7 +455,7 @@ export function mountAdsAlert(app, {
     }
     for (const { u, R } of list) {
       const cpaR = R.find(r => r.kind === 'cpa');
-      const kb = keyboard(u.k, u.acc, u.id, u.on, cfg.step, cpaR && nextLevels(cpaR.cpa, cfg));
+      const kb = keyboard(u.k, u.acc, u.id, u.on, cfg.step, cpaR && nextLevels(cpaR.cpa, cfg), R.some(r => r.kind === 'low'));
       for (const chatId of recipients(u, cfg)) {
         const j = await say(chatId, alertText(u, cfg, headOf(R, u.k), R), { reply_markup: kb });
         if (!j.ok) addLog({ who: 'bot', camp: u.id, ten: u.name, viec: 'gửi cảnh báo', ok: false, loi: j.description || 'Telegram từ chối' });
@@ -644,6 +648,7 @@ export function mountAdsAlert(app, {
     const nm = kindName(k);
     const title = `<b>${esc(obj.name)}</b>` + (k === 's' ? ` (chiến dịch ${esc(campName)})` : '');
     const cfg = STORE.cfg;
+    const hen = JSON.stringify((cq.message && cq.message.reply_markup) || {}).includes('mode=hen');   // tin có nút ⏰ thì giữ
     const reply = (text, extra) => say(chatId, text, { reply_to_message_id: cq.message.message_id, allow_sending_without_reply: true, ...extra });
     const log = (viec, ok, loi) => addLog({ who, camp: id, ten: (k === 's' ? 'Nhóm ' : '') + obj.name, viec, ok, loi });
     try {
@@ -654,14 +659,14 @@ export function mountAdsAlert(app, {
         commit(s => { ((s.sent[vnDay()] ||= {})[id] ||= {}).cpaNext = v; });
         const txt = v ? `🔔 Sẽ báo lại khi CPA trung bình vượt ${fmt(v)} đ` : '🔕 Hôm nay không báo lại CPA trung bình';
         log(txt.slice(2), true);
-        await tg('editMessageReplyMarkup', { chat_id: chatId, message_id: cq.message.message_id, reply_markup: keyboard(k, acc, id, obj.effective_status === 'ACTIVE', cfg.step) });
+        await tg('editMessageReplyMarkup', { chat_id: chatId, message_id: cq.message.message_id, reply_markup: keyboard(k, acc, id, obj.effective_status === 'ACTIVE', cfg.step, null, hen) });
         await answer(txt);
         await reply(`${txt} — ${title}\n(${esc(who)} lúc ${hhmm()})`);
       } else if (act === 'off' || act === 'on') {
         await fbPost(id, { status: act === 'off' ? 'PAUSED' : 'ACTIVE' }, tk);
         const txt = act === 'off' ? `⏸ Đã TẮT ${nm}` : `▶️ Đã BẬT ${nm}`;
         log(txt.slice(2), true);
-        await tg('editMessageReplyMarkup', { chat_id: chatId, message_id: cq.message.message_id, reply_markup: keyboard(k, acc, id, act === 'on', cfg.step) });
+        await tg('editMessageReplyMarkup', { chat_id: chatId, message_id: cq.message.message_id, reply_markup: keyboard(k, acc, id, act === 'on', cfg.step, null, hen) });
         await answer(txt);
         await reply(`${txt} ${title}\n(${esc(who)} lúc ${hhmm()})`);
       } else if (act === 'dn' || act === 'up') {
@@ -682,7 +687,7 @@ export function mountAdsAlert(app, {
         const u = await unitStatus(k, acc, id);
         if (!u) return reply(`Hôm nay chưa có số liệu chi tiêu cho ${title}.`);
         u.on = obj.effective_status === 'ACTIVE';
-        await reply(alertText(u, cfg, '🔄 <b>Số mới nhất</b>'), { reply_markup: keyboard(k, acc, id, u.on, cfg.step) });
+        await reply(alertText(u, cfg, '🔄 <b>Số mới nhất</b>'), { reply_markup: keyboard(k, acc, id, u.on, cfg.step, null, hen) });
       } else return answer('Nút không hợp lệ.');
     } catch (e) {
       log(act, false, metaMsg(e));
@@ -821,6 +826,113 @@ export function mountAdsAlert(app, {
   app.get('/api/ads-alert/ctl', async (req, res) => res.json(await ctlInfo(user(req).user, req.query)));
   app.post('/api/ads-alert/ctl', express.json(), async (req, res) => res.json(await ctlDo(user(req).user, req.body || {}, 'web')));
 
+  /* ---------- Hẹn giờ thay đổi ngân sách (người dùng yêu cầu 13/11/2026) ----------
+     Người dùng chọn ngân sách/ngày mới + thời điểm (giờ VN) → tới giờ máy chủ đặt ngân sách đó qua ctlDo (đọc lại Meta,
+     kiểm tra quyền của người hẹn như lúc bấm tay) rồi nhắn kết quả vào Telegram của người hẹn (nếu đã kết nối).
+     Đặt từ trang Ads (hộp ✏️) hoặc Mini App Telegram (nút ⏰ trên tin "đang rẻ", hoặc ✏️ → Hẹn giờ).
+     Lưu STORE.sched[sid] = { sid, k, acc, id, ten, camp, nv, value, at (ms), login, src, status: cho | dang | xong | loi | huy, … }.
+     Chạy: mỗi phút, mục tới giờ được "giành" trong commit (cho → dang) nên nhiều tiến trình không chạy trùng.
+     Chỉ 1 ngân sách (camp CBO / nhóm có NS riêng / nhóm CBO → NS chiến dịch); camp ABO nhiều nhóm thì hẹn từng nhóm. */
+  const SCHED_MAX_DAYS = 7, SCHED_LATE_MIN = 60;
+  const parseVnTime = s => {
+    const m = String(s || '').match(/^(\d{4}-\d{2}-\d{2})[T ](\d{2}):(\d{2})/);
+    const t = m ? Date.parse(`${m[1]}T${m[2]}:${m[3]}:00+07:00`) : NaN;
+    return Number.isFinite(t) ? t : null;
+  };
+  const vnTime = ms => { const d = new Date(ms + 7 * 3600e3).toISOString(); return `${d.slice(11, 16)} ${d.slice(8, 10)}/${d.slice(5, 7)}`; };
+  function schedVisible(login, x) {
+    const who = employeesOfLogin(login);
+    if (!who || who.khongBoGhim) return false;
+    return who.role === 'admin' || x.login === login || (who.employees || []).includes(x.nv);
+  }
+  const schedOut = x => ({ sid: x.sid, k: x.k, acc: x.acc, id: x.id, ten: x.ten, camp: x.camp, nv: x.nv, value: x.value, at: x.at, gio: vnTime(x.at),
+    login: x.login, status: x.status, cu: x.cu, moi: x.moi, loi: x.loi, doneAt: x.doneAt, huyBy: x.huyBy });
+  async function schedAdd(login, b, src) {
+    const a = ctlArgs(b);
+    if (!a) return { ok: false, error: 'Sai tham số' };
+    const value = Math.round(Number(b.value)), at = parseVnTime(b.at), now = Date.now();
+    if (!(value > 0)) return { ok: false, error: 'Nhập ngân sách mới.' };
+    if (!at) return { ok: false, error: 'Chọn thời gian thay đổi.' };
+    if (at < now + 60e3) return { ok: false, error: 'Thời gian phải sau hiện tại ít nhất 1 phút.' };
+    if (at > now + SCHED_MAX_DAYS * 864e5) return { ok: false, error: `Chỉ hẹn trong vòng ${SCHED_MAX_DAYS} ngày.` };
+    try {
+      reload();
+      const ctx = await loadObjAs(login, a.k, a.acc, a.id);
+      const targets = await budgetTargets(ctx);
+      if (targets.length > 1) throw new Error(`Camp có ${targets.length} nhóm với ngân sách riêng — hẹn giờ cho từng nhóm.`);
+      if (value > STORE.cfg.maxBudget) throw new Error(`Ngân sách ${fmt(value)} đ vượt mức tối đa ${fmt(STORE.cfg.maxBudget)} đ/ngày.`);
+      const x = { sid: crypto.randomBytes(6).toString('hex'), ...a, ten: (a.k === 's' ? 'Nhóm ' : '') + ctx.obj.name, camp: ctx.campName,
+        nv: detectEmployee(ctx.campName || ''), muc: targets[0].ten, cuLucHen: targets[0].budget, value, at, login, src, status: 'cho', createdAt: now };
+      const r = commit(s => {
+        s.sched ||= {};
+        if (Object.values(s.sched).filter(y => y.status === 'cho' && y.id === a.id).length >= 10) return false;
+        s.sched[x.sid] = x;
+      });
+      if (r === false) throw new Error('Camp / nhóm này đã có 10 lịch đang chờ — huỷ bớt trước.');
+      addLog({ who: `${login} (${src})`, camp: a.id, ten: x.ten, viec: `Hẹn ${vnTime(at)} đổi NS → ${fmt(value)} đ`, ok: true });
+      return { ok: true, item: schedOut(x) };
+    } catch (e) { return { ok: false, error: metaMsg(e) }; }
+  }
+  // Lịch đang chờ + lịch đã chạy / huỷ trong 24 giờ qua mà người này được xem; q.id: chỉ của camp / nhóm đó
+  function schedList(login, q = {}) {
+    reload();
+    const now = Date.now();
+    const list = Object.values(STORE.sched || {})
+      .filter(x => (x.status === 'cho' || x.status === 'dang' || (x.doneAt || x.at) > now - 864e5) && (!q.id || x.id === String(q.id)) && schedVisible(login, x))
+      .sort((a, b) => a.at - b.at).map(schedOut);
+    return { ok: true, list };
+  }
+  function schedCancel(login, sid) {
+    const r = commit(s => {
+      const x = (s.sched || {})[String(sid || '')];
+      if (!x) return 'Không tìm thấy lịch.';
+      if (!schedVisible(login, x)) return 'Bạn không có quyền với lịch này.';
+      if (x.status !== 'cho') return 'Lịch đã chạy hoặc đã huỷ.';
+      x.status = 'huy'; x.huyBy = login; x.doneAt = Date.now();
+      return { ten: x.ten, at: x.at, value: x.value };
+    });
+    if (typeof r === 'string') return { ok: false, error: r };
+    addLog({ who: login, camp: '', ten: r.ten, viec: `Huỷ hẹn ${vnTime(r.at)} đổi NS → ${fmt(r.value)} đ`, ok: true });
+    return { ok: true };
+  }
+  async function schedRun() {
+    const now = Date.now();
+    const due = commit(s => {
+      const out = [];
+      let changed = false;
+      for (const [sid, x] of Object.entries(s.sched || {})) {
+        if (x.status === 'cho' && x.at <= now) {
+          if (now - x.at > SCHED_LATE_MIN * 60e3) { x.status = 'loi'; x.loi = `Máy chủ không chạy được đúng giờ (trễ quá ${SCHED_LATE_MIN} phút) — chưa đổi ngân sách.`; x.doneAt = now; out.push({ ...x, late: true }); }
+          else { x.status = 'dang'; x.pid = process.pid; x.claimAt = now; out.push({ ...x }); }
+          changed = true;
+        } else if (x.status === 'dang' && now - (x.claimAt || 0) > 10 * 60e3) { x.status = 'loi'; x.loi = 'Không rõ kết quả (tiến trình bị dừng giữa chừng) — kiểm tra lại trên Meta.'; x.doneAt = now; changed = true; }
+        else if (x.status !== 'cho' && x.status !== 'dang' && (x.doneAt || x.at) < now - 3 * 864e5) { delete s.sched[sid]; changed = true; }
+      }
+      return changed ? out : false;
+    }) || [];
+    for (const x of due) {
+      const r = x.late ? { ok: false, error: x.loi } : await ctlDo(x.login, { k: x.k, acc: x.acc, id: x.id, act: 'budget', value: x.value }, 'hẹn giờ');
+      const b = r.ok && r.budgets && r.budgets[0];
+      if (!x.late) commit(s => {
+        const y = (s.sched || {})[x.sid];
+        if (!y) return false;
+        Object.assign(y, r.ok ? { status: 'xong', cu: b ? b.cu : null, moi: b ? b.moi : x.value } : { status: 'loi', loi: r.error }, { doneAt: Date.now() });
+      });
+      const l = (STORE.links || {})[x.login];
+      if (!l || !l.chatId || !token) continue;
+      const head = `<b>${esc(x.ten)}</b>` + (x.k === 's' ? `\n<i>Chiến dịch ${esc(x.camp)}</i>` : '');
+      const text = r.ok
+        ? `⏰ <b>Đã đổi ngân sách theo hẹn giờ</b> (${vnTime(x.at)})\n${head}\n${r.html}`
+        : `⚠️ <b>Không đổi được ngân sách theo hẹn giờ</b> (${vnTime(x.at)} → ${fmt(x.value)} đ)\n${head}\n${esc(r.error)}`;
+      say(l.chatId, text).catch(() => {});
+    }
+  }
+  setInterval(() => schedRun().catch(e => console.error('[ADSALERT] hẹn giờ lỗi:', e.message)), 60e3).unref?.();
+
+  app.get('/api/ads-alert/sched', (req, res) => res.json(schedList(user(req).user, req.query)));
+  app.post('/api/ads-alert/sched', express.json(), async (req, res) => res.json(await schedAdd(user(req).user, req.body || {}, 'web')));
+  app.post('/api/ads-alert/sched/cancel', express.json(), (req, res) => res.json(schedCancel(user(req).user, (req.body || {}).sid)));
+
   /* ---------- Mini App Telegram: sửa ngân sách trong khung mở từ nút ✏️ (không cần đăng nhập dashboard) ----------
      Trang /tg-ads/app (tg-ads-app.html) gửi initData Telegram ở header X-Tg-Init; máy chủ kiểm chữ ký bằng token bot
      (HMAC "WebAppData") → user.id → tài khoản đã kết nối → cùng quyền như nút trên tin. /tg-ads/* loại trừ khỏi đăng nhập. */
@@ -858,6 +970,23 @@ export function mountAdsAlert(app, {
     // Ghi lại trong khung chat để còn dấu vết (khung Mini App đóng là mất)
     if (r.ok && r.html) say(t.chatId, `💰 <b>${esc(r.ten)}</b>\n${r.html}\n(${esc(r.who)} lúc ${hhmm()})`).catch(() => {});
     res.json(r);
+  });
+
+  // Hẹn giờ thay đổi ngân sách từ Mini App (nút ⏰ trên tin "đang rẻ" / ✏️ → Hẹn giờ)
+  app.get('/tg-ads/api/sched', (req, res) => {
+    const t = tgLogin(req);
+    res.json(t.error ? { ok: false, error: t.error } : schedList(t.login, req.query));
+  });
+  app.post('/tg-ads/api/sched', express.json(), async (req, res) => {
+    const t = tgLogin(req);
+    if (t.error) return res.json({ ok: false, error: t.error });
+    const r = await schedAdd(t.login, req.body || {}, 'tele');
+    if (r.ok) say(t.chatId, `⏰ <b>Đã hẹn giờ thay đổi ngân sách</b>\n<b>${esc(r.item.ten)}</b>\nLúc <b>${r.item.gio}</b> → <b>${fmt(r.item.value)} đ</b>/ngày\n(${esc(t.login)} đặt lúc ${hhmm()}; huỷ ở nút ⏰ hoặc trang Ads)`).catch(() => {});
+    res.json(r);
+  });
+  app.post('/tg-ads/api/sched/cancel', express.json(), (req, res) => {
+    const t = tgLogin(req);
+    res.json(t.error ? { ok: false, error: t.error } : schedCancel(t.login, (req.body || {}).sid));
   });
 
   app.post('/api/ads-alert/unlink', (req, res) => {

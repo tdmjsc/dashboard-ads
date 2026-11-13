@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1">
-<title>Sửa ngân sách</title>
+<title>Ngân sách</title>
 <!-- Mini App Telegram mở từ nút ✏️ trên tin bot cảnh báo (ads-alert.js). Màu theo giao diện Telegram (--tg-theme-*). -->
 <script src="https://telegram.org/js/telegram-web-app.js"></script>
 <style>
@@ -29,7 +29,16 @@
   .ok{font-size:18px;font-weight:600;text-align:center;padding:30px 0;}
   .save{border:none;border-radius:12px;padding:14px;font-size:16px;font-weight:600;background:var(--btn);color:var(--btn-text);}
   .save:disabled{opacity:.45;}
-  .in-tg .save{display:none;}   /* trong Telegram dùng nút chính (MainButton) ở đáy khung */
+  .in-tg .save{display:none;}
+  .mode{display:grid;grid-template-columns:1fr 1fr;gap:6px;background:var(--sec);border-radius:12px;padding:4px;}
+  .mode button{border:none;border-radius:9px;padding:9px 0;font-size:14px;font-weight:600;background:transparent;color:var(--text);}
+  .mode button.on{background:var(--bg);box-shadow:0 1px 3px rgba(0,0,0,.12);}
+  .when{display:flex;flex-direction:column;gap:8px;}
+  .when input{font-size:17px;padding:10px 12px;border-radius:10px;border:2px solid var(--sec);background:var(--sec);color:var(--text);width:100%;}
+  .chips{display:flex;gap:6px;flex-wrap:wrap;}
+  .chips button{border:none;border-radius:16px;padding:6px 12px;font-size:13px;background:var(--sec);color:var(--text);}
+  .sched div{align-items:center;}
+  .sched button{border:none;background:none;color:var(--red);font-size:13px;font-weight:600;padding:2px 4px;}   /* trong Telegram dùng nút chính (MainButton) ở đáy khung */
 </style>
 </head>
 <body>
@@ -39,13 +48,15 @@ const tg = window.Telegram && Telegram.WebApp;
 const $app = document.getElementById('app');
 const P = new URLSearchParams(location.search);
 const Q = { k: P.get('k'), acc: P.get('acc'), id: P.get('id') };
+// HEN: hẹn giờ thay đổi ngân sách (nút ⏰ trên tin "đang rẻ" mở với mode=hen; ✏️ chuyển được sang tab Hẹn giờ)
+let HEN = P.get('mode') === 'hen', SCHED = [];
 const fmt = n => Math.round(Number(n) || 0).toLocaleString('vi-VN');
 const esc = s => String(s == null ? '' : s).replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
 const digits = v => Number(String(v).replace(/\D/g, '')) || 0;
 let INFO = null, PCT = 0, busy = false;
 
-async function api(method, body) {
-  const url = '/tg-ads/api/ctl' + (method === 'GET' ? '?' + new URLSearchParams(Q) : '');
+async function api(method, body, path = 'ctl') {
+  const url = '/tg-ads/api/' + path + (method === 'GET' ? '?' + new URLSearchParams(Q) : '');
   const opt = { method, headers: { 'X-Tg-Init': (tg && tg.initData) || '' } };
   if (method === 'POST') { opt.headers['Content-Type'] = 'application/json'; opt.body = JSON.stringify({ ...Q, ...body }); }
   try { const r = await fetch(url, opt); return await r.json(); } catch (e) { return { ok: false, error: 'Không kết nối được máy chủ.' }; }
@@ -57,9 +68,44 @@ function want() {
   if (INFO.targets.length === 1) return { value: digits(document.getElementById('in').value) };
   return { pct: PCT };
 }
+// Giờ VN dạng "YYYY-MM-DDTHH:MM" cho ô datetime-local (máy chủ hiểu là giờ VN)
+const vnIso = ms => new Date(ms + 7 * 3600e3).toISOString().slice(0, 16);
+const whenMs = () => { const v = (document.getElementById('when') || {}).value; return v ? Date.parse(v + ':00+07:00') : NaN; };
+function chip(kind) {
+  const now = Date.now(), vn = new Date(now + 7 * 3600e3);
+  let t;
+  if (kind === 'h1') t = Math.ceil((now + 3600e3) / 900e3) * 900e3;            // +1 giờ, làm tròn 15 phút
+  else { const h = kind === 'd0' ? 0 : 6; t = Date.UTC(vn.getUTCFullYear(), vn.getUTCMonth(), vn.getUTCDate() + 1, h, kind === 'd0' ? 5 : 0) - 7 * 3600e3; }
+  document.getElementById('when').value = vnIso(t);
+  refresh();
+}
+const gioVn = ms => { const d = new Date(ms + 7 * 3600e3).toISOString(); return `${d.slice(11, 16)} ${d.slice(8, 10)}/${d.slice(5, 7)}`; };
+const ST = { cho: '⏳ chờ', dang: '⏳ đang chạy', xong: '✅ đã đổi', loi: '⚠️ lỗi', huy: '✖ đã huỷ' };
+function renderSched() {
+  const el = document.getElementById('sched'); if (!el) return;
+  el.innerHTML = SCHED.length ? '<div class="sub">Lịch hẹn của mục này</div>' + SCHED.map(x => `<div title="${esc(x.loi || '')}"><span>${x.gio} → <b>${fmt(x.value)} đ</b><br><span class="sub">${ST[x.status] || x.status} · ${esc(x.login)}${x.loi ? ' · ' + esc(x.loi) : ''}</span></span>`
+    + (x.status === 'cho' ? `<button type="button" onclick="cancelSched('${x.sid}')">Huỷ</button>` : '') + '</div>').join('') : '';
+}
+async function loadSched() { const r = await api('GET', null, 'sched'); if (r.ok) { SCHED = r.list; renderSched(); } }
+const ask = q => new Promise(ok => tg && tg.showConfirm ? tg.showConfirm(q, ok) : ok(confirm(q)));
+async function cancelSched(sid) {
+  if (!(await ask('Huỷ lịch hẹn này?'))) return;
+  const r = await api('POST', { sid }, 'sched/cancel');
+  if (!r.ok) { document.getElementById('msg') ? document.getElementById('msg').innerHTML = `<span class="err">❌ ${esc(r.error)}</span>` : 0; return; }
+  loadSched();
+}
+function setMode(h) { HEN = h; draw(); }
 function refresh() {
   let ok = false, label = 'Lưu';
-  if (INFO.targets.length === 1) {
+  if (HEN) {
+    const cur = INFO.targets[0].budget, v = want().value, t = whenMs();
+    const over = v > INFO.maxBudget, past = !(t > Date.now() + 60e3);
+    document.getElementById('diff').innerHTML = (v && v !== cur ? `${v > cur ? '▲ Tăng' : '▼ Giảm'} ${Math.round(Math.abs(v / cur - 1) * 100)}% so với hiện tại` : '')
+      + (over ? `<br><span class="err">Vượt mức tối đa ${fmt(INFO.maxBudget)} đ/ngày</span>` : '')
+      + (document.getElementById('when').value && past ? `<br><span class="err">Thời gian phải sau hiện tại</span>` : '');
+    ok = v > 0 && !over && !past;
+    label = ok ? `Hẹn ${gioVn(t)} → ${fmt(v)} đ` : 'Hẹn giờ';
+  } else if (INFO.targets.length === 1) {
     const cur = INFO.targets[0].budget, v = want().value;
     const over = v > INFO.maxBudget;
     document.getElementById('diff').innerHTML = v && v !== cur
@@ -85,10 +131,14 @@ function pct(p) {
 async function save() {
   if (busy || document.getElementById('save').disabled) return;
   busy = true; refresh();
-  const r = await api('POST', { act: 'budget', ...want() });
+  const r = HEN ? await api('POST', { value: want().value, at: document.getElementById('when').value }, 'sched') : await api('POST', { act: 'budget', ...want() });
   busy = false;
   if (!r.ok) { refresh(); document.getElementById('msg').innerHTML = `<span class="err">❌ ${esc(r.error)}</span>`; if (tg && tg.HapticFeedback) tg.HapticFeedback.notificationOccurred('error'); return; }
   if (tg) { tg.MainButton.hide(); if (tg.HapticFeedback) tg.HapticFeedback.notificationOccurred('success'); }
+  if (HEN) {
+    $app.innerHTML = `<div class="ok">⏰ Đã hẹn giờ</div><div class="sub" style="text-align:center">${esc(r.item.ten)}<br>Lúc <b>${r.item.gio}</b> → <b>${fmt(r.item.value)} đ</b>/ngày</div>`;
+    return setTimeout(() => tg && tg.close(), 1500);
+  }
   $app.innerHTML = `<div class="ok">✅ Đã lưu</div><div class="sub" style="text-align:center">${r.budgets.map(b => `${esc(b.ten)}: ${fmt(b.cu)} → <b>${fmt(b.moi)} đ</b>`).join('<br>')}</div>`;
   setTimeout(() => tg && tg.close(), 1200);
 }
@@ -100,26 +150,50 @@ async function save() {
   if (!r.ok) return fail(r.error);
   if (!r.targets.length) return fail(r.loiNS || 'Không có ngân sách ngày để sửa.');
   INFO = r;
+  draw();
+  loadSched();
+})();
+function draw() {
+  const r = INFO;
   const pcts = [-30, -20, -10, 10, 20, 30];
   const pctRow = `<div class="pct">${pcts.map(p => `<button type="button" data-p="${p}" onclick="pct(${p})">${p > 0 ? '+' : '−'}${Math.abs(p)}%</button>`).join('')}</div>`;
-  const head = `<h1>${esc(r.ten)}</h1>` + (r.k === 's' ? `<div class="sub">Nhóm quảng cáo · chiến dịch ${esc(r.camp)}</div>` : '');
+  const head = `<h1>${esc(r.ten)}</h1>` + (r.k === 's' ? `<div class="sub">Nhóm quảng cáo · chiến dịch ${esc(r.camp)}</div>` : '')
+    + `<div class="mode"><button type="button" class="${HEN ? '' : 'on'}" onclick="setMode(false)">✏️ Đổi ngay</button><button type="button" class="${HEN ? 'on' : ''}" onclick="setMode(true)">⏰ Hẹn giờ</button></div>`;
+  if (HEN && r.targets.length > 1) {
+    $app.innerHTML = head + `<div class="sub">Chiến dịch có ${r.targets.length} nhóm đang chạy với ngân sách riêng — hẹn giờ cho từng nhóm (nút ⏰ trên tin của nhóm hoặc trang Ads).</div><div class="list sched" id="sched"></div>`;
+    renderSched();
+    if (tg) tg.MainButton.hide();
+    return;
+  }
   if (r.targets.length === 1) {
     const t = r.targets[0];
+    const old = document.getElementById('in');
+    const val = old ? old.value : fmt(t.budget);
     $app.innerHTML = head + `<div class="sub">${esc(t.ten)}${t.cbo ? ' — ngân sách chung của cả chiến dịch' : ''} · hiện <b>${fmt(t.budget)} đ</b>/ngày</div>
-      <input class="in" id="in" inputmode="numeric" autocomplete="off" value="${fmt(t.budget)}">
-      ${pctRow}<div class="diff" id="diff"></div><div id="msg"></div>
-      <button class="save" id="save" type="button" onclick="save()">Lưu</button>`;
+      ${HEN ? '<div class="sub">Ngân sách/ngày mới</div>' : ''}
+      <input class="in" id="in" inputmode="numeric" autocomplete="off" value="${val}">
+      ${pctRow}
+      ${HEN ? `<div class="when"><div class="sub">Thời gian thay đổi (giờ Việt Nam)</div>
+        <input type="datetime-local" id="when" min="${vnIso(Date.now())}" max="${vnIso(Date.now() + 7 * 864e5)}">
+        <div class="chips"><button type="button" onclick="chip('h1')">+1 giờ</button><button type="button" onclick="chip('d0')">0h05 đêm nay</button><button type="button" onclick="chip('d6')">6h sáng mai</button></div></div>` : ''}
+      <div class="diff" id="diff"></div><div id="msg"></div>
+      <button class="save" id="save" type="button" onclick="save()">Lưu</button>
+      <div class="list sched" id="sched"></div>`;
     const inp = document.getElementById('in');
     inp.addEventListener('input', () => { const v = digits(inp.value); inp.value = v ? fmt(v) : ''; refresh(); });
-    inp.addEventListener('keydown', e => { if (e.key === 'Enter') { inp.blur(); save(); } });
+    inp.addEventListener('keydown', e => { if (e.key === 'Enter') { inp.blur(); if (!HEN) save(); } });
     inp.addEventListener('focus', () => setTimeout(() => inp.select(), 0));
+    if (HEN) { const w = document.getElementById('when'); w.addEventListener('input', refresh); w.addEventListener('change', refresh); }
   } else {
     $app.innerHTML = head + `<div class="sub">Chiến dịch có ${r.targets.length} nhóm đang chạy với ngân sách riêng — chọn % để đổi tất cả (sửa từng nhóm: dùng ✏️ trên tin của nhóm hoặc trang Ads).</div>
       ${pctRow}<div class="list" id="list"></div><div id="msg"></div>
-      <button class="save" id="save" type="button" onclick="save()">Lưu</button>`;
+      <button class="save" id="save" type="button" onclick="save()">Lưu</button>
+      <div class="list sched" id="sched"></div>`;
+    PCT = 0;
   }
+  renderSched();
   refresh();
-})();
+}
 </script>
 </body>
 </html>
