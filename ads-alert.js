@@ -171,11 +171,16 @@ export function mountAdsAlert(app, {
   const kindName = k => k === 's' ? 'nhóm' : 'camp';
 
   /* ---------- Ngưỡng riêng theo sản phẩm ----------
-     SP của camp / nhóm, lần lượt (nguồn đầu tiên ra SP thì dùng nguồn đó):
+     SP của camp / nhóm, lần lượt (nguồn đầu tiên ra SP có ngưỡng riêng thì dùng; không ra thì thử nguồn sau):
        1. trang đích các quảng cáo (adsets[].ads[].land) khớp bảng "Đăng ký link" OMS (link chứa url_pattern, pattern dài trước);
        2. SP nhiều đơn nhất của nhóm (camp) trong 7 ngày (đơn OMS đã ra nhóm / chiến dịch);
-       3. từ khoá đặt cho SP xuất hiện trong tên camp / nhóm (không dấu).
-     Ra nhiều SP thì chỉ dùng khi đúng 1 SP trong đó có ngưỡng riêng. SP không có ngưỡng riêng → cài đặt chung. */
+       3. từ khoá đặt cho SP (để trống = tên SP) xuất hiện trong tên camp / nhóm (không dấu).
+     Ra nhiều SP thì chỉ dùng khi đúng 1 SP trong đó có ngưỡng riêng. Không nguồn nào ra → cài đặt chung.
+     u.spTim (xem trước /api/ads-alert/check): SP từng nguồn tìm được, để biết vì sao không nhận ra. */
+  // So link không phân biệt http/https, www., chuỗi ?query / #, / cuối (link quảng cáo đọc từ Meta luôn có
+  // https://, link đăng ký OMS có thể ghi http:// / www. / thiếu tiền tố → trước đây không khớp)
+  const linkNorm = u => String(u || '').trim().toLowerCase().replace(/^[a-z]+:\/\//, '').replace(/^www\./, '')
+    .replace(/[?#].*$/, '').replace(/\/+$/, '');
   const callG = async (fn, ...a) => {
     if (typeof fn !== 'function') return [];
     try { return (await fn(...a)) || []; } catch (e) { console.error('[ADSALERT] đọc SP OMS lỗi:', e.message); return []; }
@@ -194,9 +199,12 @@ export function mountAdsAlert(app, {
       add(ordS, String(r.fb_adset_id || ''), id, +r.n || 0);
       add(ordC, String(r.fb_campaign_id || ''), id, +r.n || 0);
     }
-    const lk = links.map(l => ({ pat: String(l.url_pattern || '').trim().toLowerCase(),
-      id: l.product_id ? String(l.product_id) : idByName.get(normTxt(l.ten_sp)) })).filter(l => l.pat && l.id);
-    const kws = Object.entries(ov).map(([id, o]) => [id, String(o.kw || '').split(/[,;]/).map(normTxt).filter(Boolean)]).filter(x => x[1].length);
+    const lk = links.map(l => ({ pat: linkNorm(l.url_pattern),
+      id: l.product_id ? String(l.product_id) : idByName.get(normTxt(l.ten_sp)) })).filter(l => l.pat && l.id)
+      .sort((a, b) => b.pat.length - a.pat.length);
+    // Từ khoá: ô "từ khoá" của SP; để trống thì dùng chính tên SP (camp thường đặt tên theo SP)
+    const kws = Object.entries(ov).map(([id, o]) => [id, String(o.kw || '').split(/[,;]/).map(normTxt).filter(Boolean)])
+      .map(([id, ks]) => [id, ks.length ? ks : [normTxt(ov[id].ten)].filter(k => k.length >= 4)]).filter(x => x[1].length);
     return { ov, lk, ordS, ordC, kws };
   }
   function productOf(ctx, c, u) {
@@ -208,14 +216,19 @@ export function mountAdsAlert(app, {
     const adsets = u.k === 's' ? (c.adsets || []).filter(a => String(a.id) === u.id) : (c.adsets || []);
     const fromLand = [];
     for (const a of adsets) for (const ad of a.ads || []) for (const l of ad.land || []) {
-      const L = String(l).toLowerCase(), m = ctx.lk.find(x => L.includes(x.pat));
+      const L = linkNorm(l), m = ctx.lk.find(x => L === x.pat) || ctx.lk.find(x => L.includes(x.pat));
       if (m) fromLand.push(m.id);
     }
-    if (fromLand.length) return pick(fromLand, 'trang đích');
+    // Nguồn nào không ra SP có ngưỡng riêng thì thử nguồn sau (vd link đăng ký gắn nhầm SP / SP trùng tên khác id)
+    u.spTim = { trangDich: [...new Set(fromLand)], link: [...new Set(adsets.flatMap(a => (a.ads || []).flatMap(ad => ad.land || [])))].slice(0, 5) };
+    const r1 = fromLand.length ? pick(fromLand, 'trang đích') : null;
+    if (r1) return r1;
     const o = (u.k === 's' && (c.adsets || []).length > 1) ? ctx.ordS[u.id] : (ctx.ordC[String(c.id)] || (u.k === 's' ? ctx.ordS[u.id] : null));
     if (o) {
       const top = Object.entries(o).sort((x, y) => y[1] - x[1])[0][0];
-      return pick([top], 'đơn OMS');
+      u.spTim.donOms = top;
+      const r2 = pick([top], 'đơn OMS');
+      if (r2) return r2;
     }
     const name = normTxt(c.name + ' ' + (u.k === 's' ? u.name : ''));
     const hit = ctx.kws.filter(([, ks]) => ks.some(k => name.includes(k))).map(x => x[0]);
@@ -417,7 +430,7 @@ export function mountAdsAlert(app, {
     if (!send) {
       const r = run(JSON.parse(JSON.stringify({ sent: STORE.sent || {} })));
       const row = (u, lyDo, nguoiNhan) => ({ id: u.id, loai: kindName(u.k), ten: u.name, camp: u.campName, nv: u.employee,
-        sp: u.sp ? `${u.sp.ten} (theo ${u.sp.src})` : '',
+        sp: u.sp ? `${u.sp.ten} (theo ${u.sp.src})` : '', spTim: u.sp ? undefined : u.spTim,
         ...u.st, nhip: everyOf(u, cfg), lyDo, nguoiNhan });
       return { day, oms: !!oms, list: [
         ...r.offed.map(u => row(u, ['SẼ TỰ TẮT: ' + offReason(u).text], recipients(u, cfg).length)),
