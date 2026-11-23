@@ -181,6 +181,8 @@ export function mountAdsAlert(app, {
   // https://, link đăng ký OMS có thể ghi http:// / www. / thiếu tiền tố → trước đây không khớp)
   const linkNorm = u => String(u || '').trim().toLowerCase().replace(/^[a-z]+:\/\//, '').replace(/^www\./, '')
     .replace(/[?#].*$/, '').replace(/\/+$/, '');
+  // Đường dẫn của link đã linkNorm (bỏ tên miền), '' nếu là trang chủ / không có đường dẫn
+  const pathOf = L => { const i = L.indexOf('/'); return i > 0 && /\./.test(L.slice(0, i)) ? L.slice(i) : (L.startsWith('/') ? L : ''); };
   const callG = async (fn, ...a) => {
     if (typeof fn !== 'function') return [];
     try { return (await fn(...a)) || []; } catch (e) { console.error('[ADSALERT] đọc SP OMS lỗi:', e.message); return []; }
@@ -199,7 +201,7 @@ export function mountAdsAlert(app, {
       add(ordS, String(r.fb_adset_id || ''), id, +r.n || 0);
       add(ordC, String(r.fb_campaign_id || ''), id, +r.n || 0);
     }
-    const lk = links.map(l => ({ pat: linkNorm(l.url_pattern),
+    const lk = links.map(l => ({ pat: linkNorm(l.url_pattern), path: pathOf(linkNorm(l.url_pattern)),
       id: l.product_id ? String(l.product_id) : idByName.get(normTxt(l.ten_sp)) })).filter(l => l.pat && l.id)
       .sort((a, b) => b.pat.length - a.pat.length);
     // Từ khoá: ô "từ khoá" của SP; để trống thì dùng chính tên SP (camp thường đặt tên theo SP)
@@ -216,7 +218,11 @@ export function mountAdsAlert(app, {
     const adsets = u.k === 's' ? (c.adsets || []).filter(a => String(a.id) === u.id) : (c.adsets || []);
     const fromLand = [];
     for (const a of adsets) for (const ad of a.ads || []) for (const l of ad.land || []) {
-      const L = linkNorm(l), m = ctx.lk.find(x => L === x.pat) || ctx.lk.find(x => L.includes(x.pat));
+      const L = linkNorm(l), P = pathOf(L);
+      // Khớp đủ tên miền + đường dẫn; không được thì chỉ so đường dẫn (link quảng cáo và link đăng ký có thể
+      // khác tên miền: tên miền riêng / tên miền Ladipage / www.)
+      const m = ctx.lk.find(x => L === x.pat) || ctx.lk.find(x => L.includes(x.pat))
+        || (P && ctx.lk.find(x => x.path && (P === x.path || P.startsWith(x.path + '/'))));
       if (m) fromLand.push(m.id);
     }
     // Nguồn nào không ra SP có ngưỡng riêng thì thử nguồn sau (vd link đăng ký gắn nhầm SP / SP trùng tên khác id)
@@ -432,7 +438,9 @@ export function mountAdsAlert(app, {
       const row = (u, lyDo, nguoiNhan) => ({ id: u.id, loai: kindName(u.k), ten: u.name, camp: u.campName, nv: u.employee,
         sp: u.sp ? `${u.sp.ten} (theo ${u.sp.src})` : '', spTim: u.sp ? undefined : u.spTim,
         ...u.st, nhip: everyOf(u, cfg), lyDo, nguoiNhan });
-      return { day, oms: !!oms, list: [
+      // Link đăng ký OMS của các SP có ngưỡng riêng (so với spTim.link của camp không nhận ra SP)
+      const linkNguongRieng = spc ? spc.lk.filter(x => spc.ov[x.id]).map(x => ({ sp: spc.ov[x.id].ten, link: x.pat })) : [];
+      return { day, oms: !!oms, linkNguongRieng, list: [
         ...r.offed.map(u => row(u, ['SẼ TỰ TẮT: ' + offReason(u).text], recipients(u, cfg).length)),
         ...r.list.map(({ u, R }) => row(u, R.map(r => r.text.replace(/<[^>]+>/g, '')), recipients(u, cfg).length)),
         ...r.adid.map(({ u, ads }) => row(u, ['Chưa có adid: ' + ads.map(a => a.name).join(', ')], recipients(u, cfg, { admin: false }).length)),
