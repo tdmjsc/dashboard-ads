@@ -3096,8 +3096,9 @@ async function productSpend(since, until, sbNames) {
 app.get('/api/products/spend-map', async (req, res) => {
   const me = req.session.user || {};
   if (me.role !== 'admin') return res.status(403).json({ ok: false, message: 'Chỉ admin' });
-  const today = new Date().toISOString().slice(0, 10);
-  const since = req.query.since || today, until = req.query.until || since;
+  const today = new Date(Date.now() + 7 * 3600e3).toISOString().slice(0, 10);
+  const okD = d => /^\d{4}-\d{2}-\d{2}$/.test(d || '') ? d : '';
+  const since = okD(req.query.since) || today, until = okD(req.query.until) || since;
   try {
     const rp = await sandboxProductReport(since, until);
     const names = mapProductReport(rp.json, {}).map(r => r.product);
