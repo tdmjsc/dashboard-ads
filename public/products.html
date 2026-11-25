@@ -199,7 +199,7 @@ async function load(){
       else note+='  ·  '+d.ownersCount+' SP có người quản lý';
       if(d.omsErr||!d.oms) note+='  ·  ⚠ chưa đọc được contact OMS'+(d.omsErr?': '+d.omsErr:'')+' → CPA tính theo contact Sandbox';
       if(d.qcErr) note+='  ·  ⚠ chưa đọc được chi tiêu QC: '+d.qcErr;
-      else if(d.qc) note+='  ·  Chi tiêu QC (sau thuế) '+vnd(d.qc.tong)+(d.qc.chuaRo?(', chưa rõ SP '+vnd(d.qc.chuaRo)):'');
+      else if(d.qc) note+='  ·  Chi tiêu QC (sau thuế) '+vnd(d.qc.tong)+(d.qc.chuaRo?(', chưa rõ SP '+vnd(d.qc.chuaRo)):'')+(d.qc.thai?(' · camp Thái '+vnd(d.qc.thai)+' (không tính)'):'');
       $('status').textContent=note;
     }
   }catch(e){ $('status').innerHTML='<span class="err">Không kết nối được máy chủ: '+esc(e.message)+'</span>'; }

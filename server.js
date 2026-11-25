@@ -3046,11 +3046,48 @@ async function productSpend(since, until, sbNames) {
   for (const r of orders) { add(ordS, String(r.fb_adset_id || ''), r.san_pham, +r.n || 0); add(ordC, String(r.fb_campaign_id || ''), r.san_pham, +r.n || 0); }
   const lk = links.map(l => ({ pat: _linkNorm(l.url_pattern), ten: l.ten_sp || '' })).filter(l => l.pat && l.ten)
     .map(l => ({ ...l, path: _pathOf(l.pat) })).sort((a, b) => b.pat.length - a.pat.length);
-  const nameKeys = [...sb.map(o => ({ k: o.k, n: o.n })), ...omsProds.map(p => ({ k: _nt(p.ten_sp), n: matchName(p.ten_sp) }))]
-    .filter(o => o.n && o.k.length >= 4).sort((a, b) => b.k.length - a.k.length);
+  // Tên camp / nhóm → SP (người dùng 25/11/2026 sau khi xem spend-map: camp HUD bị gán Gel theo đơn OMS,
+  // camp ghép "MĐNĐC-Gel…" bán 2 SP, camp Thái "TL" không có contact ở Sandbox / OMS VN).
+  // So không dấu, "oto" = "o to", vài cách viết tắt quen dùng; SP khớp khi tên camp chứa 4 chữ đầu tên SP
+  // (SP ngắn hơn thì cả tên), đọc tiếp được càng nhiều chữ càng ưu tiên.
+  const ALIAS = [[/\bmdndc\b/g, 'may do nong do con'], [/\bmay do con\b/g, 'may do nong do con'],
+    [/\bvong dinh vi\b/g, 'vong tay dinh vi'], [/\boto\b/g, 'o to']];
+  const nrm = t => { let x = ' ' + _nt(t) + ' '; for (const [re, to] of ALIAS) x = x.replace(re, to); return x.replace(/\s+/g, ' '); };
+  const keys = [];
+  const seenK = new Set();
+  for (const [raw, n] of [...sb.map(o => [o.n, o.n]), ...omsProds.map(p => [p.ten_sp, matchName(p.ten_sp)])]) {
+    const w = nrm(raw).trim().split(' ').filter(Boolean);
+    if (!n || !w.length || w.join(' ').length < 6) continue;
+    const id = n + '|' + w.join(' ');
+    if (seenK.has(id)) continue; seenK.add(id);
+    keys.push({ n, w });
+  }
+  const isThai = t => /(^| )(tl|thai|thailan|thailand)( |$)/.test(_nt(t));
+  // SP trong tên: mỗi vị trí khớp trong tên = 1 SP (nhiều SP cùng vị trí, vd 2 SP HUD trùng tên đầu: chọn SP có
+  // nhiều đơn OMS của nhóm hơn → đọc được nhiều chữ hơn). Nhiều vị trí = camp ghép nhiều SP.
+  function nameProducts(text, ord) {
+    const tw = nrm(text).trim().split(' ');
+    const groups = new Map();
+    for (const k of keys) {
+      const K = Math.min(4, k.w.length);
+      for (let i = 0; i + K <= tw.length; i++) {
+        let m = 0;
+        while (m < k.w.length && i + m < tw.length && tw[i + m] === k.w[m]) m++;
+        if (m < K) continue;
+        const g = groups.get(i) || []; g.push({ n: k.n, m }); groups.set(i, g);
+        break;
+      }
+    }
+    const out = [];
+    for (const g of groups.values()) {
+      g.sort((x, y) => ((ord[y.n] || 0) - (ord[x.n] || 0)) || (y.m - x.m));
+      if (!out.includes(g[0].n)) out.push(g[0].n);
+    }
+    return out;
+  }
   const TAX = 1 + QC_TAX;
   const spend = {}, units = [];
-  let chuaRo = 0, tong = 0;
+  let chuaRo = 0, tong = 0, thai = 0;
   for (const c of camps || []) {
     const sets = (c.adsets || []).filter(a => +a.spent > 0);
     const list = sets.length ? sets.map(a => ({ a, spent: +a.spent }))
@@ -3058,17 +3095,29 @@ async function productSpend(since, until, sbNames) {
     for (const { a, spent } of list) {
       if (!(spent > 0)) continue;
       const v = spent * TAX;
+      const text = c.name + ' ' + (a ? a.name : '');
+      const row = { camp: c.name, nhom: a ? a.name : '', nv: c.employee, chiTieu: Math.round(v), sp: '', theo: '' };
+      units.push(row);
+      if (isThai(text)) { thai += v; row.theo = 'camp Thái (không tính)'; continue; }
       tong += v;
-      let sp = null, src = '';
-      const fromOrd = o => {
-        if (sp || !o) return;
-        const top = Object.entries(o).sort((x, y) => y[1] - x[1])[0][0];
-        sp = matchName(top); if (sp) src = 'đơn OMS: ' + top;
-      };
-      // Camp nhiều nhóm: đơn của chính nhóm → trang đích của nhóm → đơn cả camp
       const multi = a && sets.length > 1;
-      fromOrd(multi ? ordS[a.id] : (ordC[String(c.id)] || (a && ordS[a.id])));
-      if (!sp) {
+      // Đơn OMS của nhóm (camp 1 nhóm: của camp), đổi sang tên SP Sandbox
+      const toSb = o => { const r = {}; for (const [k, n] of Object.entries(o || {})) { const m = matchName(k); if (m) r[m] = (r[m] || 0) + n; } return r; };
+      const ordU = toSb(multi ? ordS[a.id] : (ordC[String(c.id)] || (a && ordS[a.id])));
+      let parts = null;
+      const inName = nameProducts(text, ordU);
+      if (inName.length) {
+        const sum = inName.reduce((t, n) => t + (ordU[n] || 0), 0);
+        parts = inName.map(n => [n, sum ? (ordU[n] || 0) / sum : 1 / inName.length]).filter(x => x[1] > 0);
+        row.theo = 'tên camp' + (inName.length > 1 ? (sum ? ' (chia theo đơn OMS)' : ' (chia đều)') : '');
+      }
+      const fromOrd = o => {
+        if (parts || !Object.keys(o).length) return;
+        const top = Object.entries(o).sort((x, y) => y[1] - x[1])[0][0];
+        parts = [[top, 1]]; row.theo = 'đơn OMS';
+      };
+      fromOrd(ordU);
+      if (!parts) {
         const ads = a ? (a.ads || []) : (c.adsets || []).flatMap(x => x.ads || []);
         const hits = new Set();
         for (const ad of ads) for (const l of ad.land || []) {
@@ -3077,19 +3126,15 @@ async function productSpend(since, until, sbNames) {
           const n = m && matchName(m.ten);
           if (n) hits.add(n);
         }
-        if (hits.size === 1) { sp = [...hits][0]; src = 'trang đích'; }
+        if (hits.size === 1) { parts = [[[...hits][0], 1]]; row.theo = 'trang đích'; }
       }
-      if (multi) fromOrd(ordC[String(c.id)]);
-      if (!sp) {
-        const nm = ' ' + _nt(c.name + ' ' + (a ? a.name : '')) + ' ';
-        const h = nameKeys.find(x => nm.includes(' ' + x.k + ' '));
-        if (h) { sp = h.n; src = 'tên camp'; }
-      }
-      if (sp) spend[sp] = (spend[sp] || 0) + v; else chuaRo += v;
-      units.push({ camp: c.name, nhom: a ? a.name : '', nv: c.employee, chiTieu: Math.round(v), sp: sp || '', theo: src });
+      if (!parts && multi) fromOrd(toSb(ordC[String(c.id)]));
+      if (!parts) { chuaRo += v; continue; }
+      for (const [n, f] of parts) spend[n] = (spend[n] || 0) + v * f;
+      row.sp = parts.map(([n, f]) => parts.length > 1 ? `${n} (${Math.round(f * 100)}%)` : n).join(' + ');
     }
   }
-  return { spend, chuaRo, tong, units };
+  return { spend, chuaRo, tong, thai, units };
 }
 
 // Xem camp / nhóm được gán cho SP nào (admin): /api/products/spend-map?since=&until=
@@ -3104,7 +3149,7 @@ app.get('/api/products/spend-map', async (req, res) => {
     const names = mapProductReport(rp.json, {}).map(r => r.product);
     const r = await productSpend(since, until, names);
     r.units.sort((x, y) => (!!x.sp - !!y.sp) || y.chiTieu - x.chiTieu);
-    res.json({ ok: true, since, until, tong: Math.round(r.tong), chuaRo: Math.round(r.chuaRo), units: r.units });
+    res.json({ ok: true, since, until, tong: Math.round(r.tong), chuaRo: Math.round(r.chuaRo), thai: Math.round(r.thai), units: r.units });
   } catch (e) { res.json({ ok: false, message: e.message }); }
 });
 
@@ -3184,7 +3229,7 @@ app.get('/api/products/report', async (req, res) => {
       managers = me.manager ? [me.manager] : [];
     }
     res.json({ ok: true, ver: 'prod-2026-06-15-v2', since, until, rows, managers, me: { role: me.role, manager: me.manager || '' }, ownersCount: Object.keys(owners).length,
-      oms: !!oms, omsErr, qc: qc && me.role !== 'product' ? { tong: Math.round(qc.tong), chuaRo: Math.round(qc.chuaRo) } : null, qcErr, lastUpdated: new Date().toISOString() });
+      oms: !!oms, omsErr, qc: qc && me.role !== 'product' ? { tong: Math.round(qc.tong), chuaRo: Math.round(qc.chuaRo), thai: Math.round(qc.thai) } : null, qcErr, lastUpdated: new Date().toISOString() });
   } catch (e) { res.json({ ok: false, since, until, message: e.message }); }
 });
 
