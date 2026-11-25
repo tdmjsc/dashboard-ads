@@ -608,6 +608,13 @@ export function mountOMS(app, { mysql, express, getTeamLead = () => ({}) }) {
       GROUP BY fb_campaign_id, fb_adset_id, san_pham`, [omsDateBoundary(since), omsDateBoundary(until, true)]);
   };
 
+  // Cho trang Sản phẩm: số contact (đơn về OMS) theo SP trong khoảng ngày (đơn đẩy cả về Sandbox lẫn OMS)
+  global.__omsContactsByProduct = async (since, until) => {
+    if (!getPool()) return null;
+    return db(`SELECT san_pham, COUNT(*) AS n FROM oms_orders WHERE ngay_ve >= ? AND ngay_ve < ?
+      GROUP BY san_pham`, [omsDateBoundary(since), omsDateBoundary(until, true)]);
+  };
+
   // Cho module Tồn kho đọc số lượng đã bán theo sản phẩm (tính số ngày đủ bán)
   global.__omsSalesByProduct = (days, trangThai) => db(
     `SELECT san_pham, SUM(so_luong) AS qty, COUNT(*) AS don FROM oms_orders

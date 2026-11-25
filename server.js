@@ -2991,7 +2991,7 @@ function mapProductReport(j, owners) {
 }
 
 /* Chi tiêu quảng cáo theo sản phẩm Sandbox (cột CPA trang Sản phẩm, người dùng yêu cầu 25/11/2026).
-   CPA = chi tiêu (sau thuế, × 1 + QC_TAX như trang Ads) / số contact của SP.
+   CPA = chi tiêu (sau thuế, × 1 + QC_TAX như trang Ads) / số contact OMS của SP (omsContacts; không đọc được OMS thì contact Sandbox).
    Mỗi nhóm quảng cáo (camp không đọc được nhóm thì cả camp) gán cho 1 SP, lần lượt:
      1. SP nhiều đơn OMS nhất của nhóm (camp 1 nhóm: của camp) trong khoảng ngày (đơn đã ra nhóm / chiến dịch);
      2. trang đích quảng cáo (ads[].land) khớp bảng "Đăng ký link" OMS; camp nhiều nhóm: tiếp theo SP nhiều đơn nhất của camp;
@@ -3003,14 +3003,8 @@ const _nt = s => String(s == null ? '' : s).replace(/[đĐ]/g, 'd').normalize('N
 const _linkNorm = u => String(u || '').trim().toLowerCase().replace(/^[a-z]+:\/\//, '').replace(/^www\./, '')
   .replace(/[?#].*$/, '').replace(/\/+$/, '');
 const _pathOf = L => { const i = L.indexOf('/'); return i > 0 && /\./.test(L.slice(0, i)) ? L.slice(i) : (L.startsWith('/') ? L : ''); };
-async function productSpend(since, until, sbNames) {
-  const callG = async (fn, ...a) => { if (typeof fn !== 'function') return []; try { return (await fn(...a)) || []; } catch (e) { console.error('[SP-CPA]', e.message); return []; } };
-  const [camps, orders, links, omsProds] = await Promise.all([
-    getCampaigns(since, until),
-    callG(global.__omsAdsetProductsRange, since, until),
-    callG(global.__omsLinkProducts),
-    callG(global.__omsProductList),
-  ]);
+// Tên SP (OMS / bảng link) → tên SP Sandbox: trùng tên không dấu, không thì tên này chứa tên kia (chỉ khi ra đúng 1 SP)
+function sbMatcher(sbNames) {
   const sb = [...new Set(sbNames.filter(Boolean))].map(n => ({ n, k: _nt(n) })).filter(x => x.k.length >= 3);
   const byKey = new Map(sb.map(x => [x.k, x.n]));
   const matchName = x => {
@@ -3020,6 +3014,33 @@ async function productSpend(since, until, sbNames) {
     const c = sb.filter(o => (k.length >= 4 && (' ' + o.k + ' ').includes(' ' + k + ' ')) || (o.k.length >= 4 && (' ' + k + ' ').includes(' ' + o.k + ' ')));
     return c.length === 1 ? c[0].n : null;
   };
+  return { sb, matchName };
+}
+// Số contact OMS theo SP Sandbox (người dùng 25/11/2026: đơn đẩy cả về Sandbox và OMS → dùng số OMS cho CPA).
+// SP OMS không ghép được tên Sandbox thì giữ tên OMS (thêm thành dòng riêng). null = không đọc được OMS.
+async function omsContacts(since, until, sbNames) {
+  if (typeof global.__omsContactsByProduct !== 'function') return null;
+  const rows = await global.__omsContactsByProduct(since, until);
+  if (!rows) return null;
+  const { matchName } = sbMatcher(sbNames);
+  const by = {}, extra = {};
+  for (const r of rows) {
+    const n = +r.n || 0, name = String(r.san_pham || '').trim();
+    const sp = matchName(name);
+    if (sp) by[sp] = (by[sp] || 0) + n;
+    else { const k = name || '(không ghi SP)'; extra[k] = (extra[k] || 0) + n; }
+  }
+  return { by, extra };
+}
+async function productSpend(since, until, sbNames) {
+  const callG = async (fn, ...a) => { if (typeof fn !== 'function') return []; try { return (await fn(...a)) || []; } catch (e) { console.error('[SP-CPA]', e.message); return []; } };
+  const [camps, orders, links, omsProds] = await Promise.all([
+    getCampaigns(since, until),
+    callG(global.__omsAdsetProductsRange, since, until),
+    callG(global.__omsLinkProducts),
+    callG(global.__omsProductList),
+  ]);
+  const { sb, matchName } = sbMatcher(sbNames);
   const ordS = {}, ordC = {};
   const add = (m, k, v, n) => { if (k) ((m[k] ||= {})[v] = (m[k][v] || 0) + n); };
   for (const r of orders) { add(ordS, String(r.fb_adset_id || ''), r.san_pham, +r.n || 0); add(ordC, String(r.fb_campaign_id || ''), r.san_pham, +r.n || 0); }
@@ -3135,6 +3156,17 @@ app.get('/api/products/report', async (req, res) => {
     if (!(rp.json && (rp.json.success ?? rp.json.Success)))
       return res.json({ ok: false, since, until, httpStatus: rp.httpStatus, message: (rp.json && (rp.json.message || rp.json.Message)) || 'Lỗi gọi báo cáo sản phẩm. Kiểm tra SANDBOX_PRODUCT_REPORT_URL bằng /api/products/probe' });
     let rows = mapProductReport(rp.json, owners);
+    const sbNames = rows.map(r => r.product);
+    // Contact OMS theo SP (CPA tính trên số này; đọc được OMS mới có)
+    let oms = null, omsErr = '';
+    try { oms = await omsContacts(since, until, sbNames); } catch (e) { omsErr = e.message; }
+    if (oms) {
+      for (const r of rows) r.contactOms = oms.by[r.product] || 0;
+      for (const [name, n] of Object.entries(oms.extra)) {
+        const own = owners[normProd(name)];
+        rows.push({ product: name, manager: own ? own.manager : '', contact: 0, chot: 0, soSP: 0, contactOms: n, chiOms: true });
+      }
+    }
     // Chi tiêu QC theo SP (cho cột CPA). Meta chậm / lỗi thì vẫn trả số contact, kèm cảnh báo.
     let qc = null, qcErr = '';
     try {
@@ -3151,7 +3183,7 @@ app.get('/api/products/report', async (req, res) => {
       managers = me.manager ? [me.manager] : [];
     }
     res.json({ ok: true, ver: 'prod-2026-06-15-v2', since, until, rows, managers, me: { role: me.role, manager: me.manager || '' }, ownersCount: Object.keys(owners).length,
-      qc: qc && me.role !== 'product' ? { tong: Math.round(qc.tong), chuaRo: Math.round(qc.chuaRo) } : null, qcErr, lastUpdated: new Date().toISOString() });
+      oms: !!oms, omsErr, qc: qc && me.role !== 'product' ? { tong: Math.round(qc.tong), chuaRo: Math.round(qc.chuaRo) } : null, qcErr, lastUpdated: new Date().toISOString() });
   } catch (e) { res.json({ ok: false, since, until, message: e.message }); }
 });
 
