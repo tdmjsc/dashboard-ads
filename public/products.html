@@ -87,6 +87,9 @@
       <option value="chot_asc">Đơn chốt: thấp → cao</option>
       <option value="sp_desc">SL sản phẩm chốt: cao → thấp</option>
       <option value="sp_asc">SL sản phẩm chốt: thấp → cao</option>
+      <option value="qc_desc">Chi tiêu QC: cao → thấp</option>
+      <option value="cpa_desc">CPA: cao → thấp</option>
+      <option value="cpa_asc">CPA: thấp → cao</option>
       <option value="name_asc">Tên A → Z</option>
     </select>
     <label class="chk"><input type="checkbox" id="hidezero" checked> Ẩn SP không có contact &amp; đơn chốt</label>
@@ -101,6 +104,8 @@
         <th class="num" data-sort="chot_desc">Số đơn chốt</th>
         <th class="num" data-sort="sp_desc">SL sản phẩm chốt</th>
         <th class="num">Tỷ lệ chốt</th>
+        <th class="num" data-sort="qc_desc" title="Chi tiêu quảng cáo sau thuế của các camp / nhóm gán cho SP">Chi tiêu QC</th>
+        <th class="num" data-sort="cpa_desc" title="Chi tiêu QC / số contact">CPA</th>
       </tr>
     </thead>
     <tbody id="rows"></tbody>
@@ -113,6 +118,8 @@ const $=id=>document.getElementById(id);
 const fmt=d=>`${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`;
 const esc=s=>String(s==null?'':s).replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
 const pct=(c,t)=>t?Math.round(c/t*1000)/10+'%':'–';
+const cpaOf=(q,c)=>q&&c?q/c:null;
+const cpaTxt=(q,c)=>!q?'<span class="muted">–</span>':(!c?'<span class="muted" title="Có chi tiêu, chưa có contact">∞</span>':vnd(Math.round(q/c)));
 let DATA={rows:[],managers:[]};
 let st={mgr:'all',q:'',sort:'contact_desc',hidezero:true};
 
@@ -141,15 +148,18 @@ function render(){
   if(st.mgr==='__none__') rows=rows.filter(r=>!r.manager);
   else if(st.mgr!=='all') rows=rows.filter(r=>r.manager===st.mgr);
   if(st.q) rows=rows.filter(r=>(r.product||'').toLowerCase().includes(st.q));
-  if(st.hidezero) rows=rows.filter(r=>(r.contact||0)>0 || (r.chot||0)>0);
+  if(st.hidezero) rows=rows.filter(r=>(r.contact||0)>0 || (r.chot||0)>0 || (r.chiTieu||0)>0);
   const dir=st.sort.endsWith('asc')?1:-1;
   if(st.sort.startsWith('name')) rows.sort((a,b)=>(a.product||'').localeCompare(b.product||'','vi')*dir);
   else if(st.sort.startsWith('chot')) rows.sort((a,b)=>((a.chot||0)-(b.chot||0))*dir);
   else if(st.sort.startsWith('sp')) rows.sort((a,b)=>((a.soSP||0)-(b.soSP||0))*dir);
+  else if(st.sort.startsWith('qc')) rows.sort((a,b)=>((a.chiTieu||0)-(b.chiTieu||0))*dir);
+  else if(st.sort.startsWith('cpa')){ const v=r=>cpaOf(r.chiTieu,r.contact); rows.sort((a,b)=>{ const x=v(a),y=v(b);
+    if(x==null||y==null) return (x==null)-(y==null); return (x-y)*dir; }); }
   else rows.sort((a,b)=>((a.contact||0)-(b.contact||0))*dir);
-  if(!rows.length){ tb.innerHTML='<tr><td colspan="6" class="empty">Không có sản phẩm phù hợp.</td></tr>'; return; }
-  let C=0,K=0,S=0;
-  let html=rows.map(r=>{ C+=r.contact||0; K+=r.chot||0; S+=r.soSP||0;
+  if(!rows.length){ tb.innerHTML='<tr><td colspan="8" class="empty">Không có sản phẩm phù hợp.</td></tr>'; return; }
+  let C=0,K=0,S=0,Q=0;
+  let html=rows.map(r=>{ C+=r.contact||0; K+=r.chot||0; S+=r.soSP||0; Q+=r.chiTieu||0;
     return `<tr>
       <td>${esc(r.product)||'<span class="muted">(không tên)</span>'}</td>
       <td>${r.manager?`<span class="chip">${esc(r.manager)}</span>`:'<span class="chip none">chưa gán</span>'}</td>
@@ -157,8 +167,10 @@ function render(){
       <td class="num ok">${vnd(r.chot)}</td>
       <td class="num">${vnd(r.soSP)}</td>
       <td class="num">${pct(r.chot,r.contact)}</td>
+      <td class="num">${r.chiTieu?vnd(r.chiTieu):'<span class="muted">–</span>'}</td>
+      <td class="num">${cpaTxt(r.chiTieu,r.contact)}</td>
     </tr>`; }).join('');
-  html+=`<tr class="total"><td>Tổng (${rows.length} SP)</td><td></td><td class="num">${vnd(C)}</td><td class="num">${vnd(K)}</td><td class="num">${vnd(S)}</td><td class="num">${pct(K,C)}</td></tr>`;
+  html+=`<tr class="total"><td>Tổng (${rows.length} SP)</td><td></td><td class="num">${vnd(C)}</td><td class="num">${vnd(K)}</td><td class="num">${vnd(S)}</td><td class="num">${pct(K,C)}</td><td class="num">${vnd(Q)}</td><td class="num">${cpaTxt(Q,C)}</td></tr>`;
   tb.innerHTML=html;
 }
 
@@ -179,6 +191,8 @@ async function load(){
       let note='Cập nhật '+t.toLocaleString('vi-VN')+'  ·  '+(same?('ngày '+since):(since+' → '+until));
       if(!d.ownersCount) note+='  ·  ⚠ chưa đọc được Google Sheet (kiểm tra SHEET_CSV_URL)';
       else note+='  ·  '+d.ownersCount+' SP có người quản lý';
+      if(d.qcErr) note+='  ·  ⚠ chưa đọc được chi tiêu QC: '+d.qcErr;
+      else if(d.qc) note+='  ·  Chi tiêu QC (sau thuế) '+vnd(d.qc.tong)+(d.qc.chuaRo?(', chưa rõ SP '+vnd(d.qc.chuaRo)):'');
       $('status').textContent=note;
     }
   }catch(e){ $('status').innerHTML='<span class="err">Không kết nối được máy chủ: '+esc(e.message)+'</span>'; }

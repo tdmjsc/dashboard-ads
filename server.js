@@ -2990,6 +2990,102 @@ function mapProductReport(j, owners) {
   });
 }
 
+/* Chi tiêu quảng cáo theo sản phẩm Sandbox (cột CPA trang Sản phẩm, người dùng yêu cầu 25/11/2026).
+   CPA = chi tiêu (sau thuế, × 1 + QC_TAX như trang Ads) / số contact của SP.
+   Mỗi nhóm quảng cáo (camp không đọc được nhóm thì cả camp) gán cho 1 SP, lần lượt:
+     1. SP nhiều đơn OMS nhất của nhóm (camp 1 nhóm: của camp) trong khoảng ngày (đơn đã ra nhóm / chiến dịch);
+     2. trang đích quảng cáo (ads[].land) khớp bảng "Đăng ký link" OMS; camp nhiều nhóm: tiếp theo SP nhiều đơn nhất của camp;
+     3. tên SP Sandbox (hoặc tên SP OMS) nằm trong tên camp / nhóm (không dấu, tên dài nhất).
+   Tên SP OMS → SP Sandbox: trùng tên (không dấu), không thì tên này chứa tên kia (chỉ khi ra đúng 1 SP).
+   Nhóm không ra SP → "chưa rõ SP" (xem /api/products/spend-map để biết vì sao). */
+const _nt = s => String(s == null ? '' : s).replace(/[đĐ]/g, 'd').normalize('NFD').replace(/[\u0300-\u036f]/g, '')
+  .toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim();
+const _linkNorm = u => String(u || '').trim().toLowerCase().replace(/^[a-z]+:\/\//, '').replace(/^www\./, '')
+  .replace(/[?#].*$/, '').replace(/\/+$/, '');
+const _pathOf = L => { const i = L.indexOf('/'); return i > 0 && /\./.test(L.slice(0, i)) ? L.slice(i) : (L.startsWith('/') ? L : ''); };
+async function productSpend(since, until, sbNames) {
+  const callG = async (fn, ...a) => { if (typeof fn !== 'function') return []; try { return (await fn(...a)) || []; } catch (e) { console.error('[SP-CPA]', e.message); return []; } };
+  const [camps, orders, links, omsProds] = await Promise.all([
+    getCampaigns(since, until),
+    callG(global.__omsAdsetProductsRange, since, until),
+    callG(global.__omsLinkProducts),
+    callG(global.__omsProductList),
+  ]);
+  const sb = [...new Set(sbNames.filter(Boolean))].map(n => ({ n, k: _nt(n) })).filter(x => x.k.length >= 3);
+  const byKey = new Map(sb.map(x => [x.k, x.n]));
+  const matchName = x => {
+    const k = _nt(x);
+    if (!k) return null;
+    if (byKey.has(k)) return byKey.get(k);
+    const c = sb.filter(o => (k.length >= 4 && (' ' + o.k + ' ').includes(' ' + k + ' ')) || (o.k.length >= 4 && (' ' + k + ' ').includes(' ' + o.k + ' ')));
+    return c.length === 1 ? c[0].n : null;
+  };
+  const ordS = {}, ordC = {};
+  const add = (m, k, v, n) => { if (k) ((m[k] ||= {})[v] = (m[k][v] || 0) + n); };
+  for (const r of orders) { add(ordS, String(r.fb_adset_id || ''), r.san_pham, +r.n || 0); add(ordC, String(r.fb_campaign_id || ''), r.san_pham, +r.n || 0); }
+  const lk = links.map(l => ({ pat: _linkNorm(l.url_pattern), ten: l.ten_sp || '' })).filter(l => l.pat && l.ten)
+    .map(l => ({ ...l, path: _pathOf(l.pat) })).sort((a, b) => b.pat.length - a.pat.length);
+  const nameKeys = [...sb.map(o => ({ k: o.k, n: o.n })), ...omsProds.map(p => ({ k: _nt(p.ten_sp), n: matchName(p.ten_sp) }))]
+    .filter(o => o.n && o.k.length >= 4).sort((a, b) => b.k.length - a.k.length);
+  const TAX = 1 + QC_TAX;
+  const spend = {}, units = [];
+  let chuaRo = 0, tong = 0;
+  for (const c of camps || []) {
+    const sets = (c.adsets || []).filter(a => +a.spent > 0);
+    const list = sets.length ? sets.map(a => ({ a, spent: +a.spent }))
+      : [{ a: null, spent: (c.daily || []).reduce((t, d) => t + (+d.spent || 0), 0) }];
+    for (const { a, spent } of list) {
+      if (!(spent > 0)) continue;
+      const v = spent * TAX;
+      tong += v;
+      let sp = null, src = '';
+      const fromOrd = o => {
+        if (sp || !o) return;
+        const top = Object.entries(o).sort((x, y) => y[1] - x[1])[0][0];
+        sp = matchName(top); if (sp) src = 'đơn OMS: ' + top;
+      };
+      // Camp nhiều nhóm: đơn của chính nhóm → trang đích của nhóm → đơn cả camp
+      const multi = a && sets.length > 1;
+      fromOrd(multi ? ordS[a.id] : (ordC[String(c.id)] || (a && ordS[a.id])));
+      if (!sp) {
+        const ads = a ? (a.ads || []) : (c.adsets || []).flatMap(x => x.ads || []);
+        const hits = new Set();
+        for (const ad of ads) for (const l of ad.land || []) {
+          const L = _linkNorm(l), P = _pathOf(L);
+          const m = lk.find(x => L === x.pat) || lk.find(x => L.includes(x.pat)) || (P && lk.find(x => x.path && (P === x.path || P.startsWith(x.path + '/'))));
+          const n = m && matchName(m.ten);
+          if (n) hits.add(n);
+        }
+        if (hits.size === 1) { sp = [...hits][0]; src = 'trang đích'; }
+      }
+      if (multi) fromOrd(ordC[String(c.id)]);
+      if (!sp) {
+        const nm = ' ' + _nt(c.name + ' ' + (a ? a.name : '')) + ' ';
+        const h = nameKeys.find(x => nm.includes(' ' + x.k + ' '));
+        if (h) { sp = h.n; src = 'tên camp'; }
+      }
+      if (sp) spend[sp] = (spend[sp] || 0) + v; else chuaRo += v;
+      units.push({ camp: c.name, nhom: a ? a.name : '', nv: c.employee, chiTieu: Math.round(v), sp: sp || '', theo: src });
+    }
+  }
+  return { spend, chuaRo, tong, units };
+}
+
+// Xem camp / nhóm được gán cho SP nào (admin): /api/products/spend-map?since=&until=
+app.get('/api/products/spend-map', async (req, res) => {
+  const me = req.session.user || {};
+  if (me.role !== 'admin') return res.status(403).json({ ok: false, message: 'Chỉ admin' });
+  const today = new Date().toISOString().slice(0, 10);
+  const since = req.query.since || today, until = req.query.until || since;
+  try {
+    const rp = await sandboxProductReport(since, until);
+    const names = mapProductReport(rp.json, {}).map(r => r.product);
+    const r = await productSpend(since, until, names);
+    r.units.sort((x, y) => (!!x.sp - !!y.sp) || y.chiTieu - x.chiTieu);
+    res.json({ ok: true, since, until, tong: Math.round(r.tong), chuaRo: Math.round(r.chuaRo), units: r.units });
+  } catch (e) { res.json({ ok: false, message: e.message }); }
+});
+
 // Soi cấu trúc báo cáo sản phẩm (từ máy chủ). Mở:
 //  /api/products/probe?since=2026-06-01&until=2026-06-17
 // Trả về tên các lưới + tên cột + 1 dòng mẫu để chốt cột contact/đơn chốt.
@@ -3039,6 +3135,13 @@ app.get('/api/products/report', async (req, res) => {
     if (!(rp.json && (rp.json.success ?? rp.json.Success)))
       return res.json({ ok: false, since, until, httpStatus: rp.httpStatus, message: (rp.json && (rp.json.message || rp.json.Message)) || 'Lỗi gọi báo cáo sản phẩm. Kiểm tra SANDBOX_PRODUCT_REPORT_URL bằng /api/products/probe' });
     let rows = mapProductReport(rp.json, owners);
+    // Chi tiêu QC theo SP (cho cột CPA). Meta chậm / lỗi thì vẫn trả số contact, kèm cảnh báo.
+    let qc = null, qcErr = '';
+    try {
+      qc = await Promise.race([productSpend(since, until, rows.map(r => r.product)),
+        new Promise((_, rej) => setTimeout(() => rej(new Error('Meta đang tải chậm, mở lại sau ít phút')), 25000))]);
+      for (const r of rows) r.chiTieu = Math.round(qc.spend[r.product] || 0);
+    } catch (e) { qcErr = e.message; }
     let managers = [...new Set(Object.values(owners).map(o => o.manager))].sort();
     // Quyền "product": chỉ thấy sản phẩm do chính mình quản lý
     const me = req.session.user || {};
@@ -3047,7 +3150,8 @@ app.get('/api/products/report', async (req, res) => {
       rows = rows.filter(r => normProd(r.manager) === mine && mine);
       managers = me.manager ? [me.manager] : [];
     }
-    res.json({ ok: true, ver: 'prod-2026-06-15-v2', since, until, rows, managers, me: { role: me.role, manager: me.manager || '' }, ownersCount: Object.keys(owners).length, lastUpdated: new Date().toISOString() });
+    res.json({ ok: true, ver: 'prod-2026-06-15-v2', since, until, rows, managers, me: { role: me.role, manager: me.manager || '' }, ownersCount: Object.keys(owners).length,
+      qc: qc && me.role !== 'product' ? { tong: Math.round(qc.tong), chuaRo: Math.round(qc.chuaRo) } : null, qcErr, lastUpdated: new Date().toISOString() });
   } catch (e) { res.json({ ok: false, since, until, message: e.message }); }
 });
 

@@ -600,6 +600,14 @@ export function mountOMS(app, { mysql, express, getTeamLead = () => ({}) }) {
       GROUP BY fb_campaign_id, fb_adset_id, san_pham`, [omsDateBoundary(from), omsDateBoundary(day, true)]);
   };
 
+  // Cho trang Sản phẩm (CPA theo SP, server.js productSpend): SP của đơn đã ra chiến dịch / nhóm trong khoảng ngày
+  global.__omsAdsetProductsRange = async (since, until) => {
+    if (!getPool()) return [];
+    return db(`SELECT fb_campaign_id, fb_adset_id, san_pham, COUNT(*) AS n FROM oms_orders
+      WHERE ngay_ve >= ? AND ngay_ve < ? AND fb_campaign_id<>'' AND san_pham<>''
+      GROUP BY fb_campaign_id, fb_adset_id, san_pham`, [omsDateBoundary(since), omsDateBoundary(until, true)]);
+  };
+
   // Cho module Tồn kho đọc số lượng đã bán theo sản phẩm (tính số ngày đủ bán)
   global.__omsSalesByProduct = (days, trangThai) => db(
     `SELECT san_pham, SUM(so_luong) AS qty, COUNT(*) AS don FROM oms_orders
