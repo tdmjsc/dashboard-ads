@@ -1112,6 +1112,13 @@ const cnName = id => (BRANCHES.find(b => b.id === (Number(id)||1)) || {}).ten ||
 function cnAllowed(){ if(!cnLocked()) return null; return currentUser.cn_xem === undefined ? [Number(currentUser.chi_nhanh_id)||1] : currentUser.cn_xem; }
 function cnMulti(){ const a=cnAllowed(); return !a || a.length>1; }
 function cnSel(){ const f=document.getElementById('cnFilter'); return (f && !f.classList.contains('hidden')) ? f.value : ''; }
+// localStorage có thể lỗi (trình duyệt trong app / chế độ riêng tư): đừng để lỗi đó chặn việc tải lại đơn
+function lsGet(k){ try { return localStorage.getItem(k); } catch(e) { return null; } }
+function lsSet(k,v){ try { localStorage.setItem(k,v); } catch(e) {} }
+// Mỗi danh sách chỉ nhận kết quả của lần tải mới nhất (đổi chi nhánh khi lần tải trước chưa xong → kết quả cũ không ghi đè)
+const LOAD_SEQ = {};
+const loadSeq = k => (LOAD_SEQ[k] = (LOAD_SEQ[k] || 0) + 1);
+const stale = (k, n) => LOAD_SEQ[k] !== n;
 function cnParam(params){ const c = cnSel(); if(c) params.set('cn', c); return params; }
 function cnTag(o){ return (cnMulti() && BRANCHES.length > 1) ? `<span class="text-[10px] px-1.5 py-0.5 rounded bg-indigo-50 text-indigo-700 whitespace-nowrap">${esc(cnName(o.chi_nhanh_id))}</span>` : ''; }
 function fillCnSelects(){
@@ -1132,18 +1139,19 @@ async function loadBranches(){
   } else if (BRANCHES.length > 1) {
     const list = BRANCHES.filter(x => !allow || allow.includes(x.id));
     f.innerHTML = `<option value="">🏢 ${allow ? 'Các chi nhánh được xem' : 'Mọi chi nhánh'}</option>` + list.map(x => `<option value="${x.id}">🏢 ${esc(x.ten)}</option>`).join('');
-    f.value = localStorage.getItem('omsCN') || '';
-    if (f.value !== (localStorage.getItem('omsCN') || '')) f.value = '';
+    f.value = lsGet('omsCN') || '';
+    if (f.value !== (lsGet('omsCN') || '')) f.value = '';
     f.classList.remove('hidden'); b.classList.add('hidden');
   }
   if (currentUser?.role !== 'admin') document.querySelectorAll('.cn-admin-only').forEach(el => el.classList.add('hidden'));
   renderBranchList();
 }
 function onCnFilterChange(){
-  localStorage.setItem('omsCN', cnSel());
+  lsSet('omsCN', cnSel());
   loadStats();
   const tab = currentTab;
-  if (tab === 'orders') loadOrders();
+  // Tab Đơn hàng không tự tải lại khi mở → đổi chi nhánh ở tab khác cũng phải tải lại danh sách đơn
+  if (NAV_ALLOWED.includes('orders')) loadOrders();
   if (tab === 'sale') loadSaleView();
   if (tab === 'marketing') loadMktView();
   if (tab === 'warehouse') loadWhView();
@@ -1336,8 +1344,9 @@ async function loadEmployeeLists() {
 async function loadStats() {
   const tu = document.getElementById('statTu').value, den = document.getElementById('statDen').value;
   const params = cnParam(new URLSearchParams()); if(tu) params.set('tu',tu); if(den) params.set('den',den);
+  const seq = loadSeq('stats');
   const r = await fetch(API + '/stats?' + params);
-  const d = await r.json(); const o = d.overview || {};
+  const d = await r.json(); if (stale('stats', seq)) return; const o = d.overview || {};
   // Thẻ số liệu: ô icon màu nhạt + số lớn (màu theo ý nghĩa, không dùng viền trái đậm)
   const KPI_BG = {blue:'#eef2ff',green:'#ecfdf5',sky:'#f0f9ff',emerald:'#ecfdf5',amber:'#fffbeb',teal:'#f0fdfa',red:'#fef2f2',gray:'#f1f5f9'};
   document.getElementById('overviewCards').innerHTML = [
@@ -1366,7 +1375,10 @@ async function loadOrders(page) {
   const dk=document.getElementById('fDangKy')?.value||'';
   if(q)params.set('q',q); if(tt)params.set('trang_thai',tt); if(tu)params.set('tu',tu); if(den)params.set('den',den);
   if(dk)params.set('dang_ky',dk);
-  const r = await fetch(API+'/orders?'+params); const d = await r.json(); allOrders = d.orders||[];
+  const seq = loadSeq('orders');
+  const r = await fetch(API+'/orders?'+params); const d = await r.json();
+  if (stale('orders', seq)) return;
+  allOrders = d.orders||[];
 
   // Client-side filter đăng VC (backup nếu backend chưa hỗ trợ)
   let displayOrders = allOrders;
@@ -1402,6 +1414,7 @@ async function loadSaleView() {
   const saleDen = document.getElementById('saleDen').value;
 
   // 1) Fetch ALL orders (không filter trạng thái) để đếm stats
+  const seq = loadSeq('sale');
   const allParams = cnParam(new URLSearchParams({limit:1000}));
   if(sale) allParams.set('sale', sale);
   if(q) allParams.set('q', q);
@@ -1424,8 +1437,9 @@ async function loadSaleView() {
   try {
     const r = await fetch(API+'/orders?'+params);
     const d = await r.json();
+    if (stale('sale', seq)) return;
     saleOrders = d.orders || [];
-  } catch(e) { saleOrders = []; }
+  } catch(e) { if (stale('sale', seq)) return; saleOrders = []; }
   // Đơn tới giờ hẹn gọi lên đầu (giờ hẹn sớm trước), rồi các đơn còn lại theo thứ tự cũ
   const henDue = o => o.hen_goi_lai && new Date(o.hen_goi_lai) <= new Date();
   saleOrders = saleOrders.map((o,i)=>({o,i})).sort((a,b)=>(henDue(b.o)-henDue(a.o)) || (henDue(a.o)&&henDue(b.o) ? new Date(a.o.hen_goi_lai)-new Date(b.o.hen_goi_lai) : a.i-b.i)).map(x=>x.o);
@@ -1900,7 +1914,7 @@ async function openChotDon(id){
   if (cdKho.value === '') cdKho.value = '0';
   if (cdKho.value === '0' && khoList.length === 1) cdKho.value = String(khoList[0].id); // 1 kho thì chọn sẵn
   // Phương án vận chuyển: đơn đã có thì giữ, chưa có thì lấy lựa chọn lần trước của trình duyệt (mặc định GHTK)
-  const plan = o.dvvc_chon || localStorage.getItem('omsDvvc') || 'ghtk';
+  const plan = o.dvvc_chon || lsGet('omsDvvc') || 'ghtk';
   document.getElementById('cdDvvc').value = ['ship_ngoai','khach_lay'].includes(plan) ? 'thu_cong' : plan;
   document.getElementById('cdHinhThuc').value = plan === 'khach_lay' ? 'khach_lay' : 'ship_ngoai';
   document.getElementById('cdPtGiao').value = o.pt_giao === 'fly' ? 'fly' : 'road';
@@ -2012,7 +2026,7 @@ async function submitChotDon(trangThai){
     kho_id: parseInt(document.getElementById('cdKho').value)||0,
     ...cdShipPlan(),
   };
-  localStorage.setItem('omsDvvc', body.dvvc_chon);
+  lsSet('omsDvvc', body.dvvc_chon);
   const r = await fetch(API+'/orders/'+chotDonId,{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});
   const d = await r.json();
   if(d.ok){
@@ -2286,6 +2300,7 @@ async function loadWhView() {
 
   // Lấy tất cả đơn từ Đã chốt trở đi
   const statuses = ['Đã chốt','Đang ship','Ship thành công','Hoàn thành công'];
+  const seq = loadSeq('wh');
   const promises = statuses.map(tt => {
     const p = cnParam(new URLSearchParams({limit:500, trang_thai:tt}));
     if(whTu) p.set('tu', whTu);
@@ -2293,6 +2308,7 @@ async function loadWhView() {
     return fetch(API+'/orders?'+p).then(r=>r.json());
   });
   const [results, ops] = await Promise.all([Promise.all(promises), fetch(API+'/ops-config').then(r=>r.ok?r.json():null).catch(()=>null)]);
+  if (stale('wh', seq)) return;
   if (ops) OPS = ops;
   document.getElementById('whHanGio').textContent = OPS.han_gui_gio;
   whOrders = results.flatMap(d => d.orders || []);
