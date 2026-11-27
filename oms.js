@@ -126,6 +126,10 @@ export function normXemCn(v) {
   return [...new Set(ids)].sort((a, b) => a - b).join(',');
 }
 
+// Phải thu COD = tổng tiền (đã trừ giảm giá) + phí vận chuyển − đặt cọc (như "Phải thu" ở hộp chốt đơn).
+// Trước 27/11/2026 GHTK thu tong_tien − dat_coc (không cộng phí ship), VTP thu tong_tien.
+export const codOf = o => Math.max(0, (Number(o.tong_tien) || 0) + (Number(o.phi_ship) || 0) - (Number(o.dat_coc) || 0));
+
 // Số điện thoại chuẩn để so trùng: chỉ chữ số, 84xxxxxxxxx → 0xxxxxxxxx, 9 số thiếu 0 đầu → thêm 0
 export function normPhone(v) {
   let s = String(v || '').replace(/\D/g, '');
@@ -262,6 +266,7 @@ async function ensureTablesNow(pool) {
     "ly_do_hoan VARCHAR(255) DEFAULT ''",
     "nguoi_giao VARCHAR(120) DEFAULT ''",    // giao thủ công: shipper ngoài / người giao
     "dia_chi_cap TINYINT DEFAULT 3",
+    "giam_gia BIGINT DEFAULT 0",             // giảm giá lúc chốt; tong_tien = gia_ban × so_luong − giam_gia
     // ---- Phương án vận chuyển chọn lúc chốt (mục "Vận chuyển" như Sandbox); kho bấm "Đăng đơn" là đẩy theo phương án này ----
     "dvvc_chon VARCHAR(20) DEFAULT ''",      // ghtk | vtp | ship_ngoai | khach_lay ('' = chưa chọn)
     "pt_giao VARCHAR(10) DEFAULT 'road'",    // GHTK transport: road = Giao thường (bộ), fly = Giao nhanh (bay)
@@ -1104,6 +1109,14 @@ export function mountOMS(app, { mysql, express, getTeamLead = () => ({}) }) {
     res.json({ ketqua: await fixAdRefs(req.query.all === '1') });
   }));
 
+  // Phiên bản trang OMS = giờ sửa file oms-admin.html (giống nhau ở mọi tiến trình). Trang so định kỳ, khác thì
+  // hiện thanh "Đã có bản mới — Tải lại" (người dùng để tab mở cả ngày nên không thấy bản vừa deploy).
+  app.get('/oms/api/version', (req, res) => {
+    let v = '';
+    try { v = String(fs.statSync(new URL('./public/oms-admin.html', import.meta.url)).mtimeMs); } catch (e) {}
+    res.set('Cache-Control', 'no-store').json({ v });
+  });
+
   app.get('/oms/api/me', omsAuth, wrap(async (req, res) => {
     res.json(req.session.omsUser);
   }));
@@ -1371,7 +1384,7 @@ export function mountOMS(app, { mysql, express, getTeamLead = () => ({}) }) {
   const SHIP_PLAN = ['dvvc_chon', 'pt_giao', 'bao_hiem', 'ca_lay_hang', 'nhan_dh', 'nguoi_giao'];
   const DVVC_TEN = { ghtk: 'GHTK', vtp: 'ViettelPost', ship_ngoai: 'Ship ngoài', khach_lay: 'Khách đến lấy' };
   const INFO_FIELDS = { dvvc_chon: 'ĐVVC dự kiến', pt_giao: 'phương thức giao', bao_hiem: 'bảo hiểm', ca_lay_hang: 'ca lấy hàng', nhan_dh: 'nhãn đơn', nguoi_giao: 'người giao', ten_kh: 'tên KH', sdt: 'SĐT', dia_chi_full: 'địa chỉ', san_pham: 'SP', so_luong: 'SL', gia_ban: 'giá',
-    tong_tien: 'tổng tiền', phi_ship: 'phí ship', dat_coc: 'đặt cọc', kho_id: 'kho', nv_marketing: 'NV MKT',
+    tong_tien: 'tổng tiền', giam_gia: 'giảm giá', phi_ship: 'phí ship', dat_coc: 'đặt cọc', kho_id: 'kho', nv_marketing: 'NV MKT',
     don_vi_vc: 'ĐVVC', ma_van_don: 'mã vận đơn', trang_thai_vc: 'TT vận chuyển', da_thanh_toan: 'đã thanh toán' };
   const same = (a, b) => String(a ?? '') === String(b ?? '');
 
@@ -1389,7 +1402,7 @@ export function mountOMS(app, { mysql, express, getTeamLead = () => ({}) }) {
     if (user.role === 'sale') {
       // Sale: sửa được thông tin đơn + chốt/huỷ chốt/không mua/quay lại đơn mới
       allowed = ['trang_thai','ghi_chu','sale_phu_trach','ten_kh','sdt',
-        'dia_chi_full','san_pham','so_luong','gia_ban','tong_tien','phi_ship','dat_coc','kho_id', ...SHIP_PLAN];
+        'dia_chi_full','san_pham','so_luong','gia_ban','tong_tien','giam_gia','phi_ship','dat_coc','kho_id', ...SHIP_PLAN];
       const saleStatuses = ['Đơn mới','Đã chốt','Không mua','KNM lần 1','KNM lần 2','KNM lần 3','KNM lần 4','KNM lần 5','KNM lần 6'];
       if (d.trang_thai && !saleStatuses.includes(d.trang_thai)) {
         return res.status(403).json({ error: 'Sale không được đổi sang trạng thái này' });
@@ -1398,12 +1411,13 @@ export function mountOMS(app, { mysql, express, getTeamLead = () => ({}) }) {
       // Admin/Warehouse có thể cập nhật hầu hết trường
       allowed = ['trang_thai','ghi_chu','sale_phu_trach','don_vi_vc','ma_van_don',
         'trang_thai_vc','nv_marketing','ten_kh','sdt','dia_chi_full','san_pham',
-        'so_luong','gia_ban','tong_tien','phi_ship','dat_coc','da_thanh_toan','kho_id', ...SHIP_PLAN];
+        'so_luong','gia_ban','tong_tien','giam_gia','phi_ship','dat_coc','da_thanh_toan','kho_id', ...SHIP_PLAN];
     }
     // Phương án vận chuyển: kiểm giá trị
     if (d.dvvc_chon !== undefined && !['', 'ghtk', 'vtp', 'ship_ngoai', 'khach_lay'].includes(d.dvvc_chon)) return res.status(400).json({ error: 'Đơn vị giao hàng không hợp lệ' });
     if (d.pt_giao !== undefined && !['road', 'fly'].includes(d.pt_giao)) return res.status(400).json({ error: 'Phương thức giao không hợp lệ' });
     if (d.bao_hiem !== undefined) d.bao_hiem = d.bao_hiem ? 1 : 0;
+    if (d.giam_gia !== undefined) d.giam_gia = Math.max(0, Math.round(Number(d.giam_gia) || 0));
     if (d.ca_lay_hang !== undefined) d.ca_lay_hang = [0, 1, 2, 3].includes(Number(d.ca_lay_hang)) ? Number(d.ca_lay_hang) : 0;
     if (d.nhan_dh !== undefined) d.nhan_dh = String(d.nhan_dh || '').trim().slice(0, 120);
     if (d.nguoi_giao !== undefined) d.nguoi_giao = String(d.nguoi_giao || '').trim().slice(0, 120);
@@ -1774,7 +1788,7 @@ export function mountOMS(app, { mysql, express, getTeamLead = () => ({}) }) {
           await db('UPDATE oms_orders SET ma_don_hang=? WHERE id=?', [maDonHang, o.id]);
         }
 
-        const codAmount = Math.max(0, (o.tong_tien || 0) - (o.dat_coc || 0));
+        const codAmount = codOf(o);
 
         const body = {
           products: [{ name: o.san_pham || 'Sản phẩm', weight: 0.5, quantity: o.so_luong || 1, product_code: '' }],
@@ -1887,7 +1901,7 @@ export function mountOMS(app, { mysql, express, getTeamLead = () => ({}) }) {
           PRODUCT_NAME: o.san_pham || 'Sản phẩm',
           PRODUCT_QUANTITY: o.so_luong || 1,
           PRODUCT_WEIGHT: 500,
-          MONEY_COLLECTION: o.tong_tien || 0,
+          MONEY_COLLECTION: codOf(o),
           ORDER_PAYMENT: 3, // Người nhận trả phí
           PRODUCT_TYPE: 'HH', // Hàng hóa
           NOTE: o.ghi_chu || '',

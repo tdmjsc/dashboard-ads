@@ -28,3 +28,10 @@ test('chuẩn hoá SĐT để báo trùng số / khách cũ', () => {
   assert.equal(normPhone('abc'), '');
   assert.equal(normPhone(null), '');
 });
+
+import { codOf } from '../oms.js';
+test('phải thu COD = tổng tiền (đã giảm giá) + phí ship − đặt cọc, không âm', () => {
+  assert.equal(codOf({ tong_tien: 450000, phi_ship: 30000, dat_coc: 100000 }), 380000);
+  assert.equal(codOf({ tong_tien: 500000 }), 500000);
+  assert.equal(codOf({ tong_tien: 100000, dat_coc: 200000 }), 0);
+});

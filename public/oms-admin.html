@@ -246,6 +246,11 @@
 })();
 </script>
 
+<!-- Thanh báo có bản OMS mới -->
+<div id="newVersionBar" class="hidden fixed left-1/2 -translate-x-1/2 z-[9998] bg-indigo-600 text-white rounded-full shadow-lg px-4 py-2 text-sm flex items-center gap-3" style="top:68px">
+  <span>🔄 Đã có bản OMS mới</span>
+  <button onclick="location.reload()" class="bg-white text-indigo-700 font-semibold rounded-full px-3 py-1 text-xs">Tải lại</button>
+</div>
 <!-- Toast container -->
 <div id="omsToastContainer"></div>
 
@@ -946,13 +951,21 @@
       <!-- Bảng tổng -->
       <div class="mt-3 bg-white rounded p-3 text-sm">
         <div class="flex justify-between"><span>Thành tiền:</span><span id="cdThanhTien" class="font-medium">0đ</span></div>
+        <div class="flex justify-between items-center mt-1">
+          <span>Giảm giá:</span>
+          <span class="flex items-center gap-1">
+            <button type="button" onclick="cdGiamPct()" class="text-[11px] px-2 py-1 rounded bg-gray-100 text-gray-600" title="Nhập giảm theo %">%</button>
+            <input type="number" min="0" id="cdGiamGia" class="w-24 text-right text-sm" value="0" oninput="cdCalc()" onchange="cdCalc()">
+          </span>
+        </div>
+        <div class="flex justify-between text-xs text-gray-500 mt-1" id="cdSauGiamRow"><span>Tổng tiền hàng sau giảm:</span><span id="cdSauGiam">0đ</span></div>
         <div class="flex justify-between mt-1">
           <span>Phí vận chuyển:</span>
-          <input type="number" id="cdPhiShip" class="w-24 text-right text-sm" value="0" onchange="cdCalc()">
+          <input type="number" id="cdPhiShip" class="w-24 text-right text-sm" value="0" oninput="cdCalc()" onchange="cdCalc()">
         </div>
         <div class="flex justify-between mt-1">
           <span>Khách đặt cọc:</span>
-          <input type="number" id="cdDatCoc" class="w-24 text-right text-sm" value="0" onchange="cdCalc()">
+          <input type="number" id="cdDatCoc" class="w-24 text-right text-sm" value="0" oninput="cdCalc()" onchange="cdCalc()">
         </div>
         <div class="flex justify-between mt-2 pt-2 border-t border-gray-200 font-bold text-base">
           <span>Phải thu (COD):</span><span id="cdTongTien" class="text-red-600">0đ</span>
@@ -1224,6 +1237,21 @@ function onLoggedIn() {
   };
   brReady.then(firstLoad);
 }
+
+// ========== BÁO BẢN MỚI ==========
+// So phiên bản trang với máy chủ mỗi 3 phút và khi quay lại tab; khác → hiện thanh "Tải lại"
+let PAGE_VER = null;
+async function checkVersion(){
+  try {
+    const v = (await (await fetch('/oms/api/version', { cache: 'no-store' })).json()).v;
+    if (!v) return;
+    if (PAGE_VER === null) PAGE_VER = v;
+    else if (v !== PAGE_VER) document.getElementById('newVersionBar').classList.remove('hidden');
+  } catch (e) {}
+}
+checkVersion();
+setInterval(checkVersion, 3 * 60 * 1000);
+document.addEventListener('visibilitychange', () => { if (!document.hidden) checkVersion(); });
 
 // ========== ĐIỀU HƯỚNG (thanh bên máy tính + thanh dưới điện thoại) ==========
 const NAV_ICO = {
@@ -1855,6 +1883,7 @@ async function openChotDon(id){
   document.getElementById('cdSoLuong').value = o.so_luong||1;
   document.getElementById('cdPhiShip').value = o.phi_ship||0;
   document.getElementById('cdDatCoc').value = o.dat_coc||0;
+  document.getElementById('cdGiamGia').value = o.giam_gia||0;
   const defaultNote = 'Cho xem hàng cho thử hàng, khách không nghe máy gọi điện cho shop không tự ý huỷ đơn';
   const existingNote = (o.ghi_chu||'').startsWith('http') ? '' : (o.ghi_chu||'');
   document.getElementById('cdGhiChu').value = existingNote || defaultNote;
@@ -1926,16 +1955,32 @@ function cdSelectProduct(){
     cdCalc();
   }
 }
+// Tiền đơn: tổng tiền (tong_tien) = đơn giá × SL − giảm giá; phải thu COD = tổng tiền + phí VC − đặt cọc (như codOf máy chủ)
 function cdCalc(){
   const gia = parseInt(document.getElementById('cdDonGia').value)||0;
   const sl = parseInt(document.getElementById('cdSoLuong').value)||1;
   const ship = parseInt(document.getElementById('cdPhiShip').value)||0;
   const coc = parseInt(document.getElementById('cdDatCoc').value)||0;
   const thanhTien = gia * sl;
-  const cod = thanhTien + ship - coc;
+  const giamEl = document.getElementById('cdGiamGia');
+  let giam = Math.max(0, parseInt(giamEl.value)||0);
+  if (giam > thanhTien) { giam = thanhTien; giamEl.value = giam; }
+  const cod = Math.max(0, thanhTien - giam + ship - coc);
   document.getElementById('cdThanhTien').textContent = fmt(thanhTien);
+  document.getElementById('cdSauGiam').textContent = fmt(thanhTien - giam);
+  document.getElementById('cdSauGiamRow').classList.toggle('hidden', !giam);
   document.getElementById('cdTongTien').textContent = fmt(cod);
 }
+function cdGiamPct(){
+  const tt = (parseInt(document.getElementById('cdDonGia').value)||0) * (parseInt(document.getElementById('cdSoLuong').value)||1);
+  const p = prompt('Giảm bao nhiêu % trên thành tiền ' + fmt(tt) + '?');
+  if (p === null) return;
+  const n = Math.min(100, Math.max(0, parseFloat(String(p).replace(',', '.'))||0));
+  document.getElementById('cdGiamGia').value = Math.round(tt * n / 100);
+  cdCalc();
+}
+// Phải thu COD của đơn đã lưu
+const codOf = o => Math.max(0, (Number(o.tong_tien)||0) + (Number(o.phi_ship)||0) - (Number(o.dat_coc)||0));
 async function submitChotDon(trangThai){
   if(!chotDonId) return;
   const tt = trangThai || 'Đã chốt';
@@ -1959,7 +2004,8 @@ async function submitChotDon(trangThai){
     san_pham: document.getElementById('cdSanPham').value,
     gia_ban: gia,
     so_luong: sl,
-    tong_tien: gia * sl,
+    giam_gia: Math.min(gia * sl, Math.max(0, parseInt(document.getElementById('cdGiamGia').value)||0)),
+    tong_tien: gia * sl - Math.min(gia * sl, Math.max(0, parseInt(document.getElementById('cdGiamGia').value)||0)),
     phi_ship: parseInt(document.getElementById('cdPhiShip').value)||0,
     dat_coc: parseInt(document.getElementById('cdDatCoc').value)||0,
     ghi_chu: document.getElementById('cdGhiChu').value,
@@ -2315,7 +2361,7 @@ async function loadWhView() {
           <div class="mt-2 space-y-1 text-sm">
             <div class="font-medium">👤 ${esc(o.ten_kh)} — 📞 ${esc(o.sdt)}</div>
             <div class="text-gray-600">📍 ${esc(o.dia_chi_full||'')}</div>
-            <div class="flex gap-4"><span>📦 ${esc(o.san_pham||'SP')} × ${o.so_luong||1}</span><span class="font-medium">💰 ${fmt(o.tong_tien)} COD</span></div>
+            <div class="flex gap-4"><span>📦 ${esc(o.san_pham||'SP')} × ${o.so_luong||1}</span><span class="font-medium">💰 ${fmt(codOf(o))} COD</span>${Number(o.giam_gia)?`<span class="text-xs text-gray-500">(đã giảm ${fmt(o.giam_gia)})</span>`:''}</div>
             ${o.tinh?`<div class="text-xs text-gray-400">🏘️ ${[o.phuong,o.quan,o.tinh].filter(Boolean).join(', ')}</div>`:''}
           </div>
           ${whOpsLine(o)}
@@ -2489,7 +2535,8 @@ async function submitEdit(){
   const body={ten_kh:document.getElementById('editTen').value,sdt:document.getElementById('editSdt').value,
     dia_chi_full:document.getElementById('editDiaChi').value,san_pham:document.getElementById('editSP').value,
     so_luong:parseInt(document.getElementById('editSL').value)||1,gia_ban:parseInt(document.getElementById('editGia').value)||0,
-    tong_tien:(parseInt(document.getElementById('editGia').value)||0)*(parseInt(document.getElementById('editSL').value)||1),
+    // giữ giảm giá đã chốt (tong_tien = giá × SL − giảm giá)
+    tong_tien:Math.max(0,(parseInt(document.getElementById('editGia').value)||0)*(parseInt(document.getElementById('editSL').value)||1)-(Number(allOrders.find(x=>String(x.id)===String(document.getElementById('editId').textContent))?.giam_gia)||0)),
     trang_thai:document.getElementById('editTT').value,sale_phu_trach:document.getElementById('editSale').value,
     ghi_chu:document.getElementById('editNote').value};
   // Chỉ gửi chi nhánh khi admin đổi (máy chủ bỏ sale / kho không thuộc chi nhánh mới)
@@ -2643,7 +2690,7 @@ function printShipLabel(orders){
         <tr><td style="padding:8px 0;font-weight:bold;vertical-align:top;">Địa chỉ:</td><td>${esc(o.dia_chi_full||'')}</td></tr>
         <tr><td colspan="2" style="border-top:1px dashed #999;padding-top:10px;"></td></tr>
         <tr><td style="padding:8px 0;font-weight:bold;">Sản phẩm:</td><td>${esc(o.san_pham||'SP')} × ${o.so_luong||1}</td></tr>
-        <tr><td style="padding:8px 0;font-weight:bold;">Thu COD:</td><td style="font-size:20px;font-weight:bold;color:#d00;">${fmt(o.tong_tien)}</td></tr>
+        <tr><td style="padding:8px 0;font-weight:bold;">Thu COD:</td><td style="font-size:20px;font-weight:bold;color:#d00;">${fmt(codOf(o))}</td></tr>
         ${o.ma_van_don?`<tr><td style="padding:8px 0;font-weight:bold;">Mã vận đơn:</td><td style="font-family:monospace;font-size:18px;">${esc(o.ma_van_don)}</td></tr>`:''}
         <tr><td colspan="2" style="text-align:center;padding-top:6px;"><svg class="ship-bc" data-code="${esc(o.ma_van_don||String(o.id))}"></svg></td></tr>
         ${o.ghi_chu?`<tr><td style="padding:8px 0;font-weight:bold;">Ghi chú:</td><td>${esc(o.ghi_chu)}</td></tr>`:''}
