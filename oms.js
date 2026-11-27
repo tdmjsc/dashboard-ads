@@ -259,6 +259,7 @@ async function ensureTablesNow(pool) {
     "da_nhan_hoan TINYINT DEFAULT 0",
     "nhan_hoan_at DATETIME NULL",
     "ly_do_hoan VARCHAR(255) DEFAULT ''",
+    "nguoi_giao VARCHAR(120) DEFAULT ''",    // giao thủ công: shipper ngoài / người giao
   ];
   for (const col of addCols) {
     try { await pool.query(`ALTER TABLE oms_orders ADD COLUMN ${col}`); } catch(e) {}
@@ -2226,6 +2227,73 @@ export function mountOMS(app, { mysql, express, getTeamLead = () => ({}) }) {
     await db(`UPDATE oms_orders SET da_nhan_hoan=1, nhan_hoan_at=?, ly_do_hoan=?${phiHoan !== null ? ', phi_hoan=?' : ''} WHERE id=?`,
       phiHoan !== null ? [utcStr(), lyDo, phiHoan, id] : [utcStr(), lyDo, id]);
     await logOrder(id, req.session.omsUser, 'Nhận hàng hoàn', [lyDo, phiHoan !== null && `phí hoàn ${phiHoan}`].filter(Boolean).join(' · '));
+    res.json({ ok: true });
+  }));
+
+  // ===================== GIAO HÀNG THỦ CÔNG (không qua GHTK / VTP) =====================
+  // Như "Giao hàng thủ công" của Sandbox: don_vi_vc = 'Ship ngoài' (shipper riêng / xe nhà → Đang ship, kho tự báo
+  // đã giao / hoàn) hoặc 'Khách lấy' (khách đến lấy → Ship thành công ngay). Không có mã vận đơn thì tự sinh TC<id>.
+  // Đồng bộ VC (syncShippingStatus) chỉ hỏi GHTK / VTP nên không đụng các đơn này.
+  const GIAO_TC = { ship_ngoai: 'Ship ngoài', khach_lay: 'Khách lấy' };
+  const isThuCong = vc => Object.values(GIAO_TC).includes(vc);
+  app.get('/oms/api/kho/nguoi-giao', requireRole('admin', 'warehouse'), wrap(async (req, res) => {
+    const rows = await db(`SELECT nguoi_giao, COUNT(*) AS n FROM oms_orders WHERE nguoi_giao<>''
+      GROUP BY nguoi_giao ORDER BY n DESC LIMIT 30`);
+    res.json(rows.map(r => r.nguoi_giao));
+  }));
+  app.post('/oms/api/kho/giao-thu-cong', requireRole('admin', 'warehouse'), jsonParser, wrap(async (req, res) => {
+    const d = req.body || {};
+    const ids = (d.ids || []).map(Number).filter(Boolean);
+    const vc = GIAO_TC[d.hinh_thuc];
+    if (!ids.length) return res.status(400).json({ error: 'Chưa chọn đơn' });
+    if (!vc) return res.status(400).json({ error: 'Chọn hình thức giao' });
+    if (d.ma_van_don && ids.length > 1) return res.status(400).json({ error: 'Mã vận đơn tự nhập chỉ dùng khi giao 1 đơn' });
+    const nguoi = String(d.nguoi_giao || '').trim().slice(0, 120);
+    const phi = Math.max(0, Math.round(Number(d.phi) || 0));
+    const note = String(d.ghi_chu || '').trim().slice(0, 300);
+    const lk = lockSql(req);
+    const orders = await db(`SELECT id, ma_van_don FROM oms_orders WHERE id IN (${ids.map(() => '?').join(',')})${lk.sql}
+      AND trang_thai='Đã chốt'`, [...ids, ...lk.params]);
+    const results = [];
+    for (const o of orders) {
+      if (o.ma_van_don) { results.push({ id: o.id, ok: false, error: 'Đơn đã có mã vận đơn' }); continue; }
+      const ma = String(d.ma_van_don || '').trim().slice(0, 100) || `TC${o.id}`;
+      const xong = d.hinh_thuc === 'khach_lay';
+      const now = utcStr();
+      const r = await db(`UPDATE oms_orders SET don_vi_vc=?, ma_van_don=?, nguoi_giao=?, phi_vc_dv=?, dang_vc_at=?,
+        trang_thai=?, trang_thai_vc=? WHERE id=? AND trang_thai='Đã chốt' AND ma_van_don=''`,
+        [vc, ma, nguoi, phi, now, xong ? 'Ship thành công' : 'Đang ship', xong ? 'Khách đã nhận hàng' : 'Đang giao (thủ công)', o.id]);
+      if (!r.affectedRows) { results.push({ id: o.id, ok: false, error: 'Đơn vừa được cập nhật ở nơi khác' }); continue; }
+      await logOrder(o.id, req.session.omsUser, 'Giao thủ công', [vc, nguoi && `người giao: ${nguoi}`, phi && `phí ${phi}`, note].filter(Boolean).join(' · '));
+      if (xong) { try { await pushToMisa(o.id); } catch (e) { console.error('[OMS] Misa push error:', e.message); } }
+      results.push({ id: o.id, ok: true, label: ma });
+    }
+    for (const id of ids) if (!orders.some(o => o.id === id)) results.push({ id, ok: false, error: 'Đơn không ở trạng thái Đã chốt (hoặc thuộc chi nhánh khác)' });
+    res.json({ ok: true, results });
+  }));
+  // Kết quả đơn giao thủ công: giao = Ship thành công, hoan = Hoàn thành công, huy = về Đã chốt (bỏ mã)
+  app.post('/oms/api/kho/ket-qua-thu-cong', requireRole('admin', 'warehouse'), jsonParser, wrap(async (req, res) => {
+    const id = Number(req.body?.id), kq = req.body?.ket_qua;
+    const lk = lockSql(req);
+    const [o] = await db(`SELECT id, don_vi_vc, trang_thai FROM oms_orders WHERE id=?${lk.sql}`, [id, ...lk.params]);
+    if (!o || !isThuCong(o.don_vi_vc)) return res.status(404).json({ error: 'Không phải đơn giao thủ công (hoặc thuộc chi nhánh khác)' });
+    const MAP = {
+      giao: ['Ship thành công', 'Đã giao (thủ công)', 'Đã giao'],
+      hoan: ['Hoàn thành công', 'Hoàn (thủ công)', 'Hoàn hàng'],
+    };
+    if (kq === 'huy') {
+      if (o.trang_thai !== 'Đang ship') return res.status(400).json({ error: 'Chỉ huỷ được đơn đang giao' });
+      await db(`UPDATE oms_orders SET don_vi_vc='', ma_van_don='', nguoi_giao='', trang_thai='Đã chốt', trang_thai_vc='Huỷ giao thủ công',
+        da_dong_goi=0, dang_vc_at=NULL WHERE id=?`, [id]);
+      await logOrder(id, req.session.omsUser, 'Huỷ giao thủ công', o.don_vi_vc);
+      return res.json({ ok: true });
+    }
+    const m = MAP[kq];
+    if (!m) return res.status(400).json({ error: 'Kết quả không hợp lệ' });
+    if (o.trang_thai !== 'Đang ship') return res.status(400).json({ error: 'Đơn không ở trạng thái Đang ship' });
+    await db('UPDATE oms_orders SET trang_thai=?, trang_thai_vc=? WHERE id=?', [m[0], m[1], id]);
+    await logOrder(id, req.session.omsUser, 'Đổi trạng thái', `Đang ship → ${m[0]} (${m[2]}, thủ công)`);
+    if (kq === 'giao') { try { await pushToMisa(id); } catch (e) { console.error('[OMS] Misa push error:', e.message); } }
     res.json({ ok: true });
   }));
 

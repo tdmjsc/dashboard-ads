@@ -182,6 +182,10 @@
     html body .tab-content > .flex.justify-between { flex-wrap: wrap; gap: 8px; }
     html body #omsToastContainer { left: 12px; right: 12px; max-width: none; top: 64px; }
   }
+  .tc-opt { display: flex; gap: 8px; align-items: flex-start; border: 1.5px solid var(--line); border-radius: 12px; padding: 10px; cursor: pointer; transition: border-color .15s, background .15s; }
+  .tc-opt:has(input:checked) { border-color: var(--brand); background: var(--brand-50); }
+  .tc-opt input { margin-top: 3px; accent-color: var(--brand); }
+  .tc-opt b { display: block; font-size: 14px; } .tc-opt small { display: block; color: var(--muted); font-size: 11.5px; line-height: 1.35; margin-top: 2px; }
   @keyframes sheetUp { from { transform: translateY(24px); opacity: .4; } to { transform: none; opacity: 1; } }
   .no-scrollbar::-webkit-scrollbar { display: none; }
 
@@ -358,6 +362,7 @@
     <button onclick="autoAssign()" class="bg-indigo-600 text-white px-3 py-1 rounded text-sm">🔄 Tự động chia đều</button>
     <button onclick="bulkPushGHTK()" class="bg-orange-500 text-white px-3 py-1 rounded text-sm">🚚 Đẩy GHTK</button>
     <button onclick="bulkPushVTP()" class="bg-red-500 text-white px-3 py-1 rounded text-sm">🚚 Đẩy VTP</button>
+    <button onclick="openGiaoTC(getSelectedIds())" class="bg-indigo-600 text-white px-3 py-1 rounded text-sm">🛵 Giao thủ công</button>
     <button onclick="syncShipping()" class="bg-teal-600 text-white px-3 py-1 rounded text-sm">🔄 Đồng bộ VC</button>
     <span id="selectedCount" class="text-sm text-gray-500 leading-8"></span>
   </div>
@@ -547,6 +552,7 @@
     <button onclick="whSelectAll()" class="bg-gray-200 px-3 py-1.5 rounded text-sm font-medium">☑️ Chọn tất cả</button>
     <button onclick="whBulkPush('ghtk')" class="bg-green-600 text-white px-4 py-1.5 rounded text-sm font-medium">🚚 Đẩy GHTK</button>
     <button onclick="whBulkPush('vtp')" class="bg-red-500 text-white px-4 py-1.5 rounded text-sm font-medium">🚚 Đẩy VTP</button>
+    <button onclick="openGiaoTC(getWhSelectedIds())" class="bg-indigo-600 text-white px-4 py-1.5 rounded text-sm font-medium">🛵 Giao thủ công</button>
     <button onclick="whBulkCancel()" class="bg-red-100 text-red-700 px-4 py-1.5 rounded text-sm font-medium">❌ Huỷ đăng</button>
     <button onclick="whPrintSelected()" class="bg-blue-600 text-white px-4 py-1.5 rounded text-sm font-medium">🖨️ In phiếu giao</button>
     <button onclick="whBulkDoiSoat()" class="bg-emerald-600 text-white px-4 py-1.5 rounded text-sm font-medium">💰 Đối soát đã chọn</button>
@@ -986,6 +992,30 @@
       <button onclick="submitHen()" class="flex-1 bg-amber-500 text-white py-2 rounded-lg font-medium">Lưu hẹn</button>
       <button onclick="submitHen(true)" class="bg-gray-100 px-3 py-2 rounded-lg text-sm">Bỏ hẹn</button>
       <button onclick="closeModal('henModal')" class="bg-gray-200 px-3 py-2 rounded-lg text-sm">Đóng</button>
+    </div>
+  </div>
+</div>
+
+<!-- Modal: Giao hàng thủ công -->
+<div id="giaoTCModal" class="fixed inset-0 modal-bg flex items-center justify-center z-50 hidden">
+  <div class="bg-white rounded-xl shadow-2xl p-6 w-full max-w-md mx-4">
+    <h2 class="text-lg font-bold mb-1">🛵 Giao hàng thủ công</h2>
+    <p class="text-sm text-gray-500 mb-4" id="tcInfo"></p>
+    <div class="grid grid-cols-2 gap-2 mb-3">
+      <label class="tc-opt"><input type="radio" name="tcHinhThuc" value="ship_ngoai" checked onchange="tcToggle()"><span><b>🛵 Ship ngoài</b><small>Shipper riêng, xe nhà… Đơn chuyển "Đang ship", giao xong bấm "Đã giao".</small></span></label>
+      <label class="tc-opt"><input type="radio" name="tcHinhThuc" value="khach_lay" onchange="tcToggle()"><span><b>🏬 Khách đến lấy</b><small>Khách nhận tại cửa hàng. Đơn chuyển "Ship thành công" ngay.</small></span></label>
+    </div>
+    <div class="grid gap-3">
+      <div id="tcNguoiWrap"><label class="text-xs text-gray-500">Người giao / SĐT shipper</label><input type="text" id="tcNguoi" list="tcNguoiList" class="w-full text-sm" placeholder="VD: Anh Tuấn 0912…"><datalist id="tcNguoiList"></datalist></div>
+      <div class="grid grid-cols-2 gap-3">
+        <div id="tcMaWrap"><label class="text-xs text-gray-500">Mã vận đơn (không bắt buộc)</label><input type="text" id="tcMa" class="w-full text-sm" placeholder="Tự sinh TC + số đơn"></div>
+        <div><label class="text-xs text-gray-500">Phí giao (shop trả)</label><input type="number" min="0" id="tcPhi" class="w-full text-sm" placeholder="0"></div>
+      </div>
+      <div><label class="text-xs text-gray-500">Ghi chú</label><input type="text" id="tcNote" class="w-full text-sm" placeholder="Giờ hẹn giao, nơi lấy hàng…"></div>
+    </div>
+    <div class="flex gap-2 mt-5">
+      <button onclick="submitGiaoTC()" id="tcBtn" class="flex-1 bg-indigo-600 text-white py-2.5 rounded-lg font-medium">Xác nhận giao</button>
+      <button onclick="closeModal('giaoTCModal')" class="bg-gray-200 px-4 py-2.5 rounded-lg font-medium">Huỷ</button>
     </div>
   </div>
 </div>
@@ -1997,6 +2027,49 @@ function whBulkDoiSoat(){
   if(!confirm(`Đánh dấu đã đối soát COD ${ids.length} đơn?`)) return;
   whDoiSoat(ids);
 }
+// ---- Giao hàng thủ công (ship ngoài / khách đến lấy) ----
+const isTC = o => ['Ship ngoài','Khách lấy'].includes(o.don_vi_vc);
+let tcIds = [];
+function tcToggle(){
+  const lay = document.querySelector('input[name=tcHinhThuc]:checked').value === 'khach_lay';
+  document.getElementById('tcNguoiWrap').classList.toggle('hidden', lay);
+  document.getElementById('tcBtn').textContent = lay ? 'Xác nhận khách đã nhận' : 'Xác nhận giao';
+}
+async function openGiaoTC(ids){
+  const pool = [...whOrders, ...allOrders];
+  tcIds = (ids||[]).filter(id => { const o = pool.find(x=>x.id===id); return o && o.trang_thai==='Đã chốt' && !o.ma_van_don; });
+  if (!tcIds.length) return alert('Chọn đơn đã chốt chưa có vận đơn');
+  document.getElementById('tcInfo').textContent = tcIds.length === 1 ? `Đơn #${tcIds[0]} — không qua GHTK / VTP` : `${tcIds.length} đơn — không qua GHTK / VTP`;
+  document.getElementById('tcMaWrap').classList.toggle('hidden', tcIds.length > 1);
+  ['tcNguoi','tcMa','tcPhi','tcNote'].forEach(i => document.getElementById(i).value = '');
+  document.querySelector('input[name=tcHinhThuc][value=ship_ngoai]').checked = true; tcToggle();
+  document.getElementById('giaoTCModal').classList.remove('hidden');
+  try { const r = await fetch(API+'/kho/nguoi-giao'); if (r.ok) document.getElementById('tcNguoiList').innerHTML = (await r.json()).map(n=>`<option value="${esc(n)}">`).join(''); } catch(e) {}
+}
+async function submitGiaoTC(){
+  const btn = document.getElementById('tcBtn'); if (btn.disabled) return;
+  const hinh = document.querySelector('input[name=tcHinhThuc]:checked').value;
+  const body = { ids: tcIds, hinh_thuc: hinh, nguoi_giao: hinh==='khach_lay' ? '' : document.getElementById('tcNguoi').value,
+    ma_van_don: tcIds.length===1 ? document.getElementById('tcMa').value : '', phi: document.getElementById('tcPhi').value, ghi_chu: document.getElementById('tcNote').value };
+  btn.disabled = true; btn.classList.add('opacity-50');
+  let d = {};
+  try { const r = await fetch(API+'/kho/giao-thu-cong',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)}); d = await r.json().catch(()=>({error:'Lỗi '+r.status})); }
+  catch(e) { d = { error: e.message }; }
+  finally { btn.disabled = false; btn.classList.remove('opacity-50'); }
+  if (d.error) return alert('❌ ' + d.error);
+  const ok = (d.results||[]).filter(x=>x.ok), fail = (d.results||[]).filter(x=>!x.ok);
+  closeModal('giaoTCModal');
+  if (fail.length) alert(`✅ ${ok.length} đơn\n❌ Lỗi:\n` + fail.map(f=>`#${f.id}: ${f.error}`).join('\n'));
+  try { if (currentTab === 'orders') loadOrders(currentPage); else loadWhView(); } catch(e) {}
+}
+async function whKetQuaTC(id, kq){
+  const ten = { giao: 'đã giao thành công', hoan: 'bị hoàn', huy: 'huỷ giao (về Đã chốt)' }[kq];
+  if (!confirm(`Đơn #${id} ${ten}?`)) return;
+  const r = await fetch(API+'/kho/ket-qua-thu-cong',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({id, ket_qua:kq})});
+  const d = await r.json().catch(()=>({}));
+  if (!r.ok) return alert('❌ ' + (d.error||'Lỗi'));
+  loadWhView();
+}
 async function whNhanHoan(id){
   const o=whOrders.find(x=>x.id===id);
   const ly=prompt(`Đã nhận lại hàng hoàn đơn #${id}.\nLý do hoàn / tình trạng hàng:`, o?.ly_do_hoan||o?.trang_thai_vc||'');
@@ -2105,9 +2178,14 @@ async function loadWhView() {
                 <code class="text-[10px] font-mono text-gray-500">${esc(o.ma_don_hang||'')}</code>
               </div>
               ${o.trang_thai_vc?`<div class="text-xs text-gray-500 mt-1">📋 ${esc(o.trang_thai_vc)}</div>`:''}
+              ${o.nguoi_giao?`<div class="text-xs text-gray-500 mt-1">🛵 ${esc(o.nguoi_giao)}</div>`:''}
               <div class="flex gap-2 mt-2 flex-wrap">
                 ${o.don_vi_vc==='GHTK' && o.trang_thai==='Đang ship'?`<button onclick="whCancelGHTK(${o.id},this)" class="bg-red-100 text-red-700 px-3 py-1 rounded text-xs font-medium hover:bg-red-200">❌ Huỷ đăng</button>`:''}
-                <button onclick="whSyncSingle(${o.id},this)" class="bg-yellow-100 text-yellow-700 px-3 py-1 rounded text-xs font-medium hover:bg-yellow-200">🔄 TT</button>
+                ${isTC(o) && o.trang_thai==='Đang ship'?`
+                  <button onclick="whKetQuaTC(${o.id},'giao')" class="bg-green-600 text-white px-3 py-1 rounded text-xs font-medium">✅ Đã giao</button>
+                  <button onclick="whKetQuaTC(${o.id},'hoan')" class="bg-purple-100 text-purple-700 px-3 py-1 rounded text-xs font-medium">↩ Hoàn</button>
+                  <button onclick="whKetQuaTC(${o.id},'huy')" class="bg-gray-100 text-gray-600 px-3 py-1 rounded text-xs font-medium">✖ Huỷ giao</button>`:''}
+                ${isTC(o)?'':`<button onclick="whSyncSingle(${o.id},this)" class="bg-yellow-100 text-yellow-700 px-3 py-1 rounded text-xs font-medium hover:bg-yellow-200">🔄 TT</button>`}
                 <button onclick="whPrintOne(${o.id})" class="bg-gray-100 text-gray-700 px-3 py-1 rounded text-xs font-medium hover:bg-gray-200">🖨️</button>
               </div>
             </div>`:`
@@ -2120,6 +2198,7 @@ async function loadWhView() {
               <div class="flex gap-2 flex-wrap">
                 <button onclick="whPushSingle(${o.id},'ghtk',this)" class="bg-green-100 text-green-700 px-3 py-1 rounded text-xs font-medium hover:bg-green-200">🚚 GHTK</button>
                 <button onclick="whPushSingle(${o.id},'vtp',this)" class="bg-red-100 text-red-700 px-3 py-1 rounded text-xs font-medium hover:bg-red-200">🚚 VTP</button>
+                <button onclick="openGiaoTC([${o.id}])" class="bg-indigo-100 text-indigo-700 px-3 py-1 rounded text-xs font-medium hover:bg-indigo-200">🛵 Thủ công</button>
                 <button onclick="whPrintOne(${o.id})" class="bg-gray-100 text-gray-700 px-3 py-1 rounded text-xs font-medium hover:bg-gray-200">🖨️ In</button>
                 <button onclick="openChotDon(${o.id})" class="bg-blue-100 text-blue-700 px-3 py-1 rounded text-xs font-medium hover:bg-blue-200">✏️ Sửa</button>
               </div>
