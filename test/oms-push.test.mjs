@@ -33,3 +33,21 @@ test('thiếu đơn hoặc id không phát tán thông báo', async () => {
   assert.equal((await filter(null)(1)).size, 0);
   assert.equal((await filter({})(undefined)).size, 0);
 });
+test('chi nhánh: sale / kho chi nhánh khác không nhận thông báo đơn', async () => {
+  const withCn = [...users, { username: 'sale-a-thang', role: 'sale', ho_ten: 'Sale A', chi_nhanh_id: 2 },
+    { username: 'kho-thang', role: 'warehouse', chi_nhanh_id: 2 }];
+  const f = order => factory(async sql => sql.includes('FROM oms_orders') ? [order] : withCn, u => [u.ho_ten]);
+  const td = await f({ sale_phu_trach: 'Sale A', trang_thai: 'Đã chốt' })(1); // đơn cũ không có cột → HKD TD
+  assert.ok(td.has('sale-a') && td.has('kho'));
+  assert.ok(!td.has('sale-a-thang') && !td.has('kho-thang'));
+  const thang = await f({ sale_phu_trach: 'Sale A', trang_thai: 'Đã chốt', chi_nhanh_id: 2 })(1);
+  assert.ok(thang.has('sale-a-thang') && thang.has('kho-thang'));
+  assert.ok(!thang.has('sale-a') && !thang.has('kho'));
+});
+test('chi nhánh: sale được xem mọi chi nhánh / thêm chi nhánh nhận thông báo đơn chi nhánh khác', async () => {
+  const withXem = [...users, { username: 'kho-all', role: 'warehouse', chi_nhanh_id: 1, xem_chi_nhanh: '*' },
+    { username: 'kho-them', role: 'warehouse', chi_nhanh_id: 1, xem_chi_nhanh: '2' }];
+  const f = order => factory(async sql => sql.includes('FROM oms_orders') ? [order] : withXem, u => [u.ho_ten]);
+  const r = await f({ trang_thai: 'Đã chốt', chi_nhanh_id: 2 })(1);
+  assert.ok(r.has('kho-all') && r.has('kho-them') && !r.has('kho'));
+});

@@ -108,8 +108,39 @@ function parseAddress(raw) {
   };
 }
 
+// ---- Quyền xem chi nhánh của sale / kho (oms_users.xem_chi_nhanh) ----
+// '' = chỉ chi nhánh chính, '*' = mọi chi nhánh, '2,3' = chi nhánh chính + các chi nhánh này.
+// Trả mảng id được xem (luôn có chi nhánh chính) hoặc null = mọi chi nhánh.
+export function parseXemCn(chinh, xem) {
+  const c = Number(chinh) || 1, v = String(xem || '').trim();
+  if (v === '*') return null;
+  return [...new Set([c, ...v.split(',').map(Number).filter(n => Number.isInteger(n) && n > 0)])];
+}
+// Chuẩn hoá giá trị gửi lên (mảng id, chuỗi '1,2' hoặc '*'); null = không hợp lệ
+export function normXemCn(v) {
+  if (v === undefined || v === null || v === '') return '';
+  if (v === '*' || v === 'all') return '*';
+  const ids = (Array.isArray(v) ? v : String(v).split(',')).map(x => Number(String(x).trim()));
+  if (ids.some(n => !Number.isInteger(n) || n <= 0)) return null;
+  return [...new Set(ids)].sort((a, b) => a - b).join(',');
+}
+
+// Số điện thoại chuẩn để so trùng: chỉ chữ số, 84xxxxxxxxx → 0xxxxxxxxx, 9 số thiếu 0 đầu → thêm 0
+export function normPhone(v) {
+  let s = String(v || '').replace(/\D/g, '');
+  if (s.startsWith('84') && s.length >= 11) s = '0' + s.slice(2);
+  else if (s.length === 9 && !s.startsWith('0')) s = '0' + s;
+  return s.slice(0, 20);
+}
+
 // ---- Tạo bảng nếu chưa có ----
-async function ensureTables(pool) {
+// Chạy 1 lần mỗi tiến trình (trước đây chạy lại ~60 câu CREATE/ALTER mỗi lần tải đơn); lỗi thì lần sau thử lại
+let tablesReady = null;
+function ensureTables(pool) {
+  if (!tablesReady) tablesReady = ensureTablesNow(pool).catch(e => { tablesReady = null; throw e; });
+  return tablesReady;
+}
+async function ensureTablesNow(pool) {
   // Bảng đơn hàng chính
   await pool.query(`
     CREATE TABLE IF NOT EXISTS oms_orders (
@@ -210,12 +241,45 @@ async function ensureTables(pool) {
     "fb_adid VARCHAR(32) DEFAULT ''",
     // 'trang' = chiến dịch / nhóm ghép dự phòng theo trang đích + NV (guessByLanding), '' = ghép chắc chắn / chưa ra
     "fb_ref_src VARCHAR(8) DEFAULT ''",
+    // ---- Tác nghiệp sale (giờ UTC như ngay_ve) ----
+    "hen_goi_lai DATETIME NULL",            // hẹn gọi lại; tới giờ nhắc sale phụ trách (hen_goi_bao = đã nhắc)
+    "hen_goi_bao TINYINT DEFAULT 0",
+    "sale_nhan_at DATETIME NULL",           // lúc sale hiện tại nhận đơn (chia / chuyển)
+    "sale_tac_nghiep_at DATETIME NULL",     // lần tác nghiệp đầu của sale hiện tại (NULL quá hạn → thu hồi)
+    "tac_nghiep_dau_at DATETIME NULL",      // lần tác nghiệp đầu tiên của đơn (thời gian phản hồi = từ ngay_ve)
+    "sdt_norm VARCHAR(20) DEFAULT ''",      // SĐT chuẩn để báo trùng số / khách cũ
+    // ---- Kho ----
+    "chot_at DATETIME NULL",                // lúc chốt → hạn gửi hàng
+    "dang_vc_at DATETIME NULL",
+    "da_dong_goi TINYINT DEFAULT 0",        // quét mã khi đóng gói
+    "da_doi_soat TINYINT DEFAULT 0",
+    "doi_soat_at DATETIME NULL",
+    "phi_vc_dv BIGINT DEFAULT 0",           // phí vận chuyển dịch vụ (shop trả hãng VC)
+    "phi_hoan BIGINT DEFAULT 0",
+    "da_nhan_hoan TINYINT DEFAULT 0",
+    "nhan_hoan_at DATETIME NULL",
+    "ly_do_hoan VARCHAR(255) DEFAULT ''",
   ];
   for (const col of addCols) {
     try { await pool.query(`ALTER TABLE oms_orders ADD COLUMN ${col}`); } catch(e) {}
   }
   try { await pool.query('ALTER TABLE oms_orders ADD INDEX idx_fb_camp (fb_campaign_id)'); } catch(e) {}
   try { await pool.query('ALTER TABLE oms_orders ADD INDEX idx_fb_adid (fb_adid)'); } catch(e) {}
+  try { await pool.query('ALTER TABLE oms_orders ADD INDEX idx_hen (hen_goi_bao, hen_goi_lai)'); } catch(e) {}
+  try { await pool.query('ALTER TABLE oms_orders ADD INDEX idx_sdtn (sdt_norm)'); } catch(e) {}
+
+  // Lịch sử tác nghiệp từng đơn (ai làm gì, lúc nào) — không ghi đè như ô ghi chú
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS oms_order_logs (
+      id INT AUTO_INCREMENT PRIMARY KEY,
+      order_id INT NOT NULL,
+      at DATETIME NOT NULL,
+      nguoi VARCHAR(120) DEFAULT '',
+      hanh_dong VARCHAR(60) DEFAULT '',
+      chi_tiet TEXT,
+      INDEX idx_order (order_id)
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+  `);
 
   // Thư viện adid → quảng cáo (oms-ad-ref.js). nguon: utm (học từ lượt bấm nút có {{ad.id}}), admin
   // (thêm tay), seed (cặp đã đối chiếu 30/10/2026). xung_dot = ID quảng cáo khác mà UTM từng báo cho
@@ -309,6 +373,36 @@ async function ensureTables(pool) {
       INDEX idx_nv (nv_marketing)
     ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
   `);
+
+  // Chi nhánh (cơ sở): 1 = HKD TD (có sẵn), 2 = HKD Thắng. Mỗi chi nhánh xuất HĐ điện tử bằng MST + tài khoản
+  // MISA riêng. Sale / kho thuộc 1 chi nhánh, chỉ thấy đơn chi nhánh đó; admin / marketing thấy cả hai.
+  // Đơn, link, tài khoản cũ mặc định chi nhánh 1. Kho hàng chi_nhanh_id 0 = dùng chung.
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS oms_branches (
+      id INT AUTO_INCREMENT PRIMARY KEY,
+      ten VARCHAR(120) NOT NULL,
+      ma_so_thue VARCHAR(30) DEFAULT '',
+      misa_app_id VARCHAR(255) DEFAULT '',
+      misa_access_token TEXT,
+      active TINYINT DEFAULT 1,
+      created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+  `);
+  // HKD TD nhận cấu hình MISA chung đang có (oms_config) ở lần tạo đầu tiên
+  await pool.query(`INSERT IGNORE INTO oms_branches (id, ten, ma_so_thue, misa_app_id, misa_access_token) VALUES (1, 'HKD TD',
+    IFNULL((SELECT config_value FROM oms_config WHERE config_key='misa_tax_code'), ''),
+    IFNULL((SELECT config_value FROM oms_config WHERE config_key='misa_app_id'), ''),
+    IFNULL((SELECT config_value FROM oms_config WHERE config_key='misa_access_token'), ''))`);
+  await pool.query(`INSERT IGNORE INTO oms_branches (id, ten, misa_access_token) VALUES (2, 'HKD Thắng', '')`);
+  for (const t of ['oms_orders', 'oms_users', 'oms_link_registry']) {
+    try { await pool.query(`ALTER TABLE ${t} ADD COLUMN chi_nhanh_id INT NOT NULL DEFAULT 1`); } catch(e) {}
+  }
+  try { await pool.query('ALTER TABLE oms_warehouses ADD COLUMN chi_nhanh_id INT NOT NULL DEFAULT 0'); } catch(e) {}
+  // Quyền xem đơn của sale / kho: '' = chỉ chi nhánh chính (chi_nhanh_id), '*' = mọi chi nhánh, '2,3' = thêm các chi nhánh này
+  try { await pool.query("ALTER TABLE oms_users ADD COLUMN xem_chi_nhanh VARCHAR(100) NOT NULL DEFAULT ''"); } catch(e) {}
+  // Sale đang nhận đơn tự chia (0 = tạm ngừng: nghỉ, hết ca)
+  try { await pool.query('ALTER TABLE oms_users ADD COLUMN nhan_don TINYINT NOT NULL DEFAULT 1'); } catch(e) {}
+  try { await pool.query('ALTER TABLE oms_orders ADD INDEX idx_cn (chi_nhanh_id)'); } catch(e) {}
 }
 
 // =====================================================================
@@ -663,9 +757,79 @@ export function mountOMS(app, { mysql, express, getTeamLead = () => ({}) }) {
     } catch(e) { /* DB chưa sẵn sàng */ }
   }
 
+  // ---- Chi nhánh ----
+  // Sale / kho: chi nhánh chính (oms_users.chi_nhanh_id: đơn tự chia, đơn tạo tay) + quyền xem (xem_chi_nhanh: chỉ
+  // chi nhánh chính / thêm chi nhánh khác / mọi chi nhánh). Đọc lại mỗi request nên admin đổi là có hiệu lực ngay.
+  // Admin / marketing xem mọi chi nhánh. Ai xem được nhiều chi nhánh thì lọc bằng ?cn=<id>.
+  const branchLocked = role => role === 'sale' || role === 'warehouse';
+  async function loadBranch(req) {
+    const u = req.session?.omsUser;
+    if (!u || !(u.id > 0)) return;
+    try {
+      const [r] = await db('SELECT chi_nhanh_id, xem_chi_nhanh FROM oms_users WHERE id=?', [u.id]);
+      u.chi_nhanh_id = Number(r?.chi_nhanh_id) || 1;
+      u.cn_xem = parseXemCn(u.chi_nhanh_id, r?.xem_chi_nhanh);
+    } catch(e) { u.chi_nhanh_id = u.chi_nhanh_id || 1; }
+  }
+  // Chi nhánh tài khoản được xem; null = mọi chi nhánh
+  function viewCns(u) {
+    if (!branchLocked(u.role)) return null;
+    return u.cn_xem === undefined ? [Number(u.chi_nhanh_id) || 1] : u.cn_xem;
+  }
+  // Điều kiện lọc đơn của request: quyền xem + ô lọc ?cn (chi nhánh ngoài quyền → không ra đơn nào)
+  function cnWhere(req, col = 'chi_nhanh_id') {
+    const allow = viewCns(req.session.omsUser);
+    const q = Number(req.query?.cn) || 0;
+    const ids = q ? (!allow || allow.includes(q) ? [q] : []) : allow;
+    if (!ids) return { sql: '', params: [] };
+    if (!ids.length) return { sql: '0=1', params: [] };
+    return { sql: `${col} IN (${ids.map(() => '?').join(',')})`, params: ids };
+  }
+  // Điều kiện SQL chặn sale / kho đụng đơn chi nhánh ngoài quyền (admin / marketing: không chặn)
+  function lockSql(req, col = 'chi_nhanh_id') {
+    const allow = viewCns(req.session.omsUser);
+    return allow ? { sql: ` AND ${col} IN (${allow.map(() => '?').join(',')})`, params: allow } : { sql: '', params: [] };
+  }
+
+  // ---- Tác nghiệp ----
+  // Giờ lưu DB = UTC dạng 'YYYY-MM-DD HH:MM:SS' như ngay_ve (đừng dùng NOW() của MySQL: múi giờ máy DB có thể khác)
+  const utcStr = (d = new Date()) => new Date(d).toISOString().slice(0, 19).replace('T', ' ');
+  const vnTime = v => new Date(String(v).replace(' ', 'T') + (String(v).includes('Z') ? '' : 'Z'))
+    .toLocaleString('vi-VN', { timeZone: 'Asia/Ho_Chi_Minh', hour: '2-digit', minute: '2-digit', day: '2-digit', month: '2-digit' });
+  const actorName = u => typeof u === 'string' ? u : (u?.ho_ten || u?.username || 'Hệ thống');
+  async function logOrder(orderId, user, hanhDong, chiTiet = '') {
+    try {
+      await db('INSERT INTO oms_order_logs (order_id, at, nguoi, hanh_dong, chi_tiet) VALUES (?,?,?,?,?)',
+        [orderId, utcStr(), actorName(user).slice(0, 120), hanhDong.slice(0, 60), String(chiTiet || '').slice(0, 2000)]);
+    } catch (e) { console.error('[OMS] Ghi lịch sử đơn lỗi:', e.message); }
+  }
+  async function cfgNum(key, def) {
+    try {
+      const [r] = await db('SELECT config_value FROM oms_config WHERE config_key=?', [key]);
+      const n = Number(r?.config_value);
+      return r && r.config_value !== '' && Number.isFinite(n) ? n : def;
+    } catch (e) { return def; }
+  }
+  // Sale nhận đơn tự chia: đang bật nhận đơn, chi nhánh chính = chi nhánh đơn, ít đơn nhận hôm nay (giờ VN) nhất
+  async function pickSale(cn, exclude = '') {
+    const sales = (await db("SELECT ho_ten FROM oms_users WHERE role='sale' AND active=1 AND nhan_don=1 AND chi_nhanh_id=? ORDER BY ho_ten", [cn]))
+      .map(s => s.ho_ten).filter(n => n && n !== exclude);
+    if (!sales.length) return '';
+    const vnDay = new Date(Date.now() + 7 * 3600000).toISOString().slice(0, 10);
+    const counts = await db(`SELECT sale_phu_trach, COUNT(*) AS cnt FROM oms_orders
+      WHERE sale_phu_trach IN (${sales.map(() => '?').join(',')}) AND ngay_ve >= ? GROUP BY sale_phu_trach`, [...sales, omsDateBoundary(vnDay)]);
+    const cnt = Object.fromEntries(counts.map(c => [c.sale_phu_trach, Number(c.cnt)]));
+    return sales.reduce((best, n) => (cnt[n] || 0) < (cnt[best] || 0) ? n : best, sales[0]);
+  }
+  // Tài khoản đăng nhập của sale (để gửi thông báo riêng)
+  async function usernamesOf(hoTen) {
+    if (!hoTen) return new Set();
+    return new Set((await db("SELECT username FROM oms_users WHERE ho_ten=? AND active=1", [hoTen])).map(r => r.username));
+  }
+
   function omsAuth(req, res, next) {
     // Phải gọi async
-    autoSetOmsUser(req).then(() => {
+    autoSetOmsUser(req).then(() => loadBranch(req)).then(() => {
       if (req.session?.omsUser) return next();
       res.status(401).json({ error: 'Chưa đăng nhập OMS' });
     }).catch(() => res.status(401).json({ error: 'Chưa đăng nhập OMS' }));
@@ -673,7 +837,7 @@ export function mountOMS(app, { mysql, express, getTeamLead = () => ({}) }) {
 
   function requireRole(...roles) {
     return (req, res, next) => {
-      autoSetOmsUser(req).then(() => {
+      autoSetOmsUser(req).then(() => loadBranch(req)).then(() => {
         if (!req.session?.omsUser) return res.status(401).json({ error: 'Chưa đăng nhập' });
         if (roles.includes(req.session.omsUser.role)) return next();
         res.status(403).json({ error: 'Không đủ quyền' });
@@ -716,7 +880,7 @@ export function mountOMS(app, { mysql, express, getTeamLead = () => ({}) }) {
     if (rows.length === 0) return res.status(401).json({ error: 'Sai tài khoản hoặc mật khẩu' });
 
     const u = rows[0];
-    req.session.omsUser = { id: u.id, username: u.username, ho_ten: u.ho_ten, role: u.role };
+    req.session.omsUser = { id: u.id, username: u.username, ho_ten: u.ho_ten, role: u.role, chi_nhanh_id: Number(u.chi_nhanh_id) || 1 };
     req.session.save(() => res.json({ ok: true, user: req.session.omsUser }));
   }));
 
@@ -973,6 +1137,7 @@ export function mountOMS(app, { mysql, express, getTeamLead = () => ({}) }) {
     // ---- TỰ NHẬN DIỆN từ Link Registry ----
     // Ladipage gửi kèm url_page (URL trang gửi form)
     const urlPage = d.url_page || d.page_url || d.referer || d.referrer || '';
+    let chiNhanh = 1; // link không khớp → HKD TD
     if (urlPage) {
       try {
         const links = await db('SELECT * FROM oms_link_registry WHERE active=1 ORDER BY CHAR_LENGTH(url_pattern) DESC, id DESC');
@@ -982,6 +1147,7 @@ export function mountOMS(app, { mysql, express, getTeamLead = () => ({}) }) {
             // Link đã đăng ký quyết định NV; UTM có thể còn ID quảng cáo của NV khác.
             // Ưu tiên pattern cụ thể hơn khi nhiều link cùng khớp.
             if (link.nv_marketing?.trim()) nvMarketing = link.nv_marketing.trim();
+            chiNhanh = Number(link.chi_nhanh_id) || 1; // link chọn chi nhánh nhận đơn
             // Auto-fill sản phẩm nếu chưa có
             if (!sanPham && link.ten_sp) sanPham = link.ten_sp;
             // Auto-fill nguồn dữ liệu
@@ -1038,13 +1204,14 @@ export function mountOMS(app, { mysql, express, getTeamLead = () => ({}) }) {
       (ngay_ve, nv_marketing, ten_kh, sdt, dia_chi_full, tinh, quan, phuong, dia_chi,
        trang_thai, san_pham, so_luong, gia_ban, tong_tien,
        utm_source, utm_medium, utm_campaign, utm_content, utm_term, ghi_chu, tin_nhan_goc, nguon_du_lieu,
-       fbclid, url_page, fb_adid)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'Đơn mới', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+       fbclid, url_page, fb_adid, chi_nhanh_id, sdt_norm)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'Đơn mới', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       [now, nvMarketing, ten, sdt, diaChiFull, addr.tinh, addr.quan, addr.phuong, addr.diaChi,
        sanPham, soLuong, gia, gia * soLuong,
        utmSource, utmMedium, utmCampaign, utmContent, utmTerm,
        d.ghi_chu || '', tinNhanGoc, orderNguon,
-       fbclid.slice(0, 512), String(urlPage).slice(0, 1000), fbAdidOf(fbclid)]);
+       fbclid.slice(0, 512), String(urlPage).slice(0, 1000), fbAdidOf(fbclid), chiNhanh, normPhone(sdt)]);
+    logOrder(createdOrder.insertId, 'Webhook', 'Đơn về', urlPage ? String(urlPage).slice(0, 300) : '');
 
     // Tra chiến dịch / nhóm quảng cáo (gọi Graph API) sau khi đã ghi đơn → Ladipage không phải chờ.
     // Lỗi thì fb_ref_at còn trống, fixAdRefs tra lại.
@@ -1054,27 +1221,12 @@ export function mountOMS(app, { mysql, express, getTeamLead = () => ({}) }) {
         .catch(e => console.error('[OMS] Tra chiến dịch Meta của đơn lỗi:', e.message));
     }
 
-    // Auto-assign Sale round-robin
+    // Tự chia sale: chi nhánh nhận đơn, sale đang bật nhận đơn, ít đơn hôm nay nhất
     try {
-      const inserted = { id: createdOrder.insertId };
-      if (inserted) {
-        const sales = await db("SELECT ho_ten FROM oms_users WHERE role='sale' AND active=1 ORDER BY ho_ten");
-        if (sales.length) {
-          // Đếm số đơn mỗi sale hiện có (hôm nay) để chia đều
-          const today = now.slice(0, 10);
-          const counts = await db(`SELECT sale_phu_trach, COUNT(*) as cnt FROM oms_orders 
-            WHERE sale_phu_trach != '' AND DATE(ngay_ve) = ? GROUP BY sale_phu_trach`, [today]);
-          const countMap = {};
-          counts.forEach(c => { countMap[c.sale_phu_trach] = c.cnt; });
-          // Chọn sale có ít đơn nhất
-          let minSale = sales[0].ho_ten;
-          let minCount = countMap[minSale] || 0;
-          for (const s of sales) {
-            const cnt = countMap[s.ho_ten] || 0;
-            if (cnt < minCount) { minCount = cnt; minSale = s.ho_ten; }
-          }
-          await db('UPDATE oms_orders SET sale_phu_trach=? WHERE id=?', [minSale, inserted.id]);
-        }
+      const minSale = await pickSale(chiNhanh);
+      if (minSale) {
+        await db('UPDATE oms_orders SET sale_phu_trach=?, sale_nhan_at=? WHERE id=?', [minSale, utcStr(), createdOrder.insertId]);
+        logOrder(createdOrder.insertId, 'Hệ thống', 'Chia sale', minSale);
       }
     } catch(e) { console.error('[OMS] Auto-assign sale error:', e.message); }
 
@@ -1112,6 +1264,10 @@ export function mountOMS(app, { mysql, express, getTeamLead = () => ({}) }) {
     let where = ['1=1'];
     let params = [];
 
+    // Chi nhánh: sale / kho trong quyền xem, lọc thêm theo ?cn
+    const cw = cnWhere(req);
+    if (cw.sql) { where.push(cw.sql); params.push(...cw.params); }
+
     // Phân quyền
     if (user.role === 'sale') {
       // Sale chỉ thấy đơn được phân công hoặc đơn mới
@@ -1123,8 +1279,8 @@ export function mountOMS(app, { mysql, express, getTeamLead = () => ({}) }) {
       where.push(`nv_marketing IN (${team.map(()=>'?').join(',')})`);
       params.push(...team);
     } else if (user.role === 'warehouse') {
-      // Kho chỉ thấy đơn đã chốt
-      where.push(`trang_thai IN ('Đã chốt', 'Đang ship')`);
+      // Kho: đơn đã chốt trở đi (gồm đã giao / hoàn để đối soát COD và nhận hàng hoàn)
+      where.push(`trang_thai IN ('Đã chốt', 'Đang ship', 'Ship thành công', 'Hoàn thành công')`);
     }
     // Admin thấy tất cả
 
@@ -1143,6 +1299,26 @@ export function mountOMS(app, { mysql, express, getTeamLead = () => ({}) }) {
       [...params, parseInt(limit), offset]
     );
 
+    // Trùng số / khách cũ: đếm đơn khác cùng SĐT (mọi chi nhánh), khách cũ = có đơn khác đã chốt trở đi
+    try {
+      const keyOf = r => (r.sdt_norm && r.sdt_norm !== '-') ? r.sdt_norm : normPhone(r.sdt);
+      const keys = [...new Set(rows.map(keyOf).filter(Boolean))];
+      if (keys.length) {
+        const agg = await db(`SELECT sdt_norm, COUNT(*) AS n,
+          SUM(trang_thai IN ('Đã chốt','Đang ship','Ship thành công')) AS mua
+          FROM oms_orders WHERE sdt_norm IN (${keys.map(() => '?').join(',')}) GROUP BY sdt_norm`, keys);
+        const m = Object.fromEntries(agg.map(a => [a.sdt_norm, a]));
+        const MUA = ['Đã chốt', 'Đang ship', 'Ship thành công'];
+        for (const r of rows) {
+          const a = m[keyOf(r)];
+          if (!a) continue;
+          const self = r.sdt_norm && r.sdt_norm !== '-' ? 1 : 0; // đơn chưa có sdt_norm không nằm trong số đếm
+          r.trung_so = Math.max(0, Number(a.n) - self);
+          r.khach_cu = Number(a.mua) - (self && MUA.includes(r.trang_thai) ? 1 : 0) > 0;
+        }
+      }
+    } catch (e) { console.error('[OMS] Đếm trùng số lỗi:', e.message); }
+
     res.json({ orders: rows, total: countRows[0].total, page: parseInt(page), limit: parseInt(limit) });
   }));
 
@@ -1153,15 +1329,20 @@ export function mountOMS(app, { mysql, express, getTeamLead = () => ({}) }) {
     const now = new Date().toISOString().slice(0, 19).replace('T', ' ');
 
     await ensureTables(getPool());
+    const u = req.session.omsUser;
+    // Sale / kho: chi nhánh chọn trong quyền xem, không chọn thì chi nhánh chính
+    const allow = viewCns(u), want = Number(d.chi_nhanh_id) || 0;
+    const chiNhanh = allow ? (want && allow.includes(want) ? want : (Number(u.chi_nhanh_id) || 1)) : (want || 1);
     const result = await db(`INSERT INTO oms_orders
       (ngay_ve, nv_marketing, ten_kh, sdt, dia_chi_full, tinh, quan, phuong, dia_chi,
-       trang_thai, san_pham, so_luong, gia_ban, tong_tien, ghi_chu, sale_phu_trach)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+       trang_thai, san_pham, so_luong, gia_ban, tong_tien, ghi_chu, sale_phu_trach, chi_nhanh_id, sdt_norm, sale_nhan_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       [d.ngay_ve || now, d.nv_marketing || '', d.ten_kh || '', d.sdt || '',
        d.dia_chi_full || '', addr.tinh, addr.quan, addr.phuong, addr.diaChi,
        d.trang_thai || 'Đơn mới', d.san_pham || '', d.so_luong || 1,
        d.gia_ban || 0, (d.gia_ban || 0) * (d.so_luong || 1),
-       d.ghi_chu || '', d.sale_phu_trach || '']);
+       d.ghi_chu || '', d.sale_phu_trach || '', chiNhanh, normPhone(d.sdt), d.sale_phu_trach ? utcStr() : null]);
+    logOrder(result.insertId, u, 'Tạo đơn tay', d.sale_phu_trach ? 'Sale: ' + d.sale_phu_trach : '');
 
     // Push notification (giống đơn về từ webhook)
     try {
@@ -1178,66 +1359,142 @@ export function mountOMS(app, { mysql, express, getTeamLead = () => ({}) }) {
   }));
 
   // ===================== CẬP NHẬT ĐƠN =====================
+  const INFO_FIELDS = { ten_kh: 'tên KH', sdt: 'SĐT', dia_chi_full: 'địa chỉ', san_pham: 'SP', so_luong: 'SL', gia_ban: 'giá',
+    tong_tien: 'tổng tiền', phi_ship: 'phí ship', dat_coc: 'đặt cọc', kho_id: 'kho', nv_marketing: 'NV MKT',
+    don_vi_vc: 'ĐVVC', ma_van_don: 'mã vận đơn', trang_thai_vc: 'TT vận chuyển', da_thanh_toan: 'đã thanh toán' };
+  const same = (a, b) => String(a ?? '') === String(b ?? '');
+
   app.put('/oms/api/orders/:id', omsAuth, jsonParser, wrap(async (req, res) => {
     const { id } = req.params;
-    const d = req.body;
+    const d = req.body || {};
     const user = req.session.omsUser;
 
-    // Sale: sửa được thông tin đơn + chốt/huỷ chốt/không mua/quay lại đơn mới
+    // Sale / kho không sửa đơn của chi nhánh ngoài quyền
+    const lk = lockSql(req);
+    const [old] = await db(`SELECT * FROM oms_orders WHERE id=?${lk.sql}`, [id, ...lk.params]);
+    if (!old) return res.status(branchLocked(user.role) ? 403 : 404).json({ error: branchLocked(user.role) ? 'Đơn thuộc chi nhánh khác' : 'Không có đơn' });
+
+    let allowed;
     if (user.role === 'sale') {
-      const saleAllowed = ['trang_thai','ghi_chu','sale_phu_trach','ten_kh','sdt',
+      // Sale: sửa được thông tin đơn + chốt/huỷ chốt/không mua/quay lại đơn mới
+      allowed = ['trang_thai','ghi_chu','sale_phu_trach','ten_kh','sdt',
         'dia_chi_full','san_pham','so_luong','gia_ban','tong_tien','phi_ship','dat_coc','kho_id'];
-      // Sale được phép: Đơn mới, Đã chốt, Không mua, KNM lần 1-6
       const saleStatuses = ['Đơn mới','Đã chốt','Không mua','KNM lần 1','KNM lần 2','KNM lần 3','KNM lần 4','KNM lần 5','KNM lần 6'];
       if (d.trang_thai && !saleStatuses.includes(d.trang_thai)) {
         return res.status(403).json({ error: 'Sale không được đổi sang trạng thái này' });
       }
-      const sets = []; const vals = [];
-      for (const f of saleAllowed) {
-        if (d[f] !== undefined) {
-          sets.push(`${f}=?`); vals.push(d[f]);
-          if (f === 'dia_chi_full') {
-            const addr = parseAddress(d[f]);
-            sets.push('tinh=?','quan=?','phuong=?','dia_chi=?');
-            vals.push(addr.tinh, addr.quan, addr.phuong, addr.diaChi);
-          }
-        }
-      }
-      if (!sets.length) return res.status(400).json({ error: 'Không có gì để cập nhật' });
-      vals.push(id);
-      await db(`UPDATE oms_orders SET ${sets.join(',')} WHERE id=?`, vals);
-      return res.json({ ok: true });
+    } else {
+      // Admin/Warehouse có thể cập nhật hầu hết trường
+      allowed = ['trang_thai','ghi_chu','sale_phu_trach','don_vi_vc','ma_van_don',
+        'trang_thai_vc','nv_marketing','ten_kh','sdt','dia_chi_full','san_pham',
+        'so_luong','gia_ban','tong_tien','phi_ship','dat_coc','da_thanh_toan','kho_id'];
     }
 
-    // Admin/Warehouse có thể cập nhật hầu hết trường
-    const allowedFields = ['trang_thai','ghi_chu','sale_phu_trach','don_vi_vc','ma_van_don',
-      'trang_thai_vc','nv_marketing','ten_kh','sdt','dia_chi_full','san_pham',
-      'so_luong','gia_ban','tong_tien','phi_ship','dat_coc','da_thanh_toan','kho_id'];
+    const sets = []; const vals = [];
+    const set = (f, v) => { sets.push(`${f}=?`); vals.push(v); };
+    for (const f of allowed) {
+      if (d[f] === undefined) continue;
+      set(f, d[f]);
+      if (f === 'dia_chi_full') {
+        const addr = parseAddress(d[f]);
+        sets.push('tinh=?', 'quan=?', 'phuong=?', 'dia_chi=?');
+        vals.push(addr.tinh, addr.quan, addr.phuong, addr.diaChi);
+      }
+      if (f === 'sdt') set('sdt_norm', normPhone(d[f]));
+    }
 
-    const sets = [];
-    const vals = [];
-    for (const f of allowedFields) {
-      if (d[f] !== undefined) {
-        sets.push(`${f}=?`);
-        vals.push(d[f]);
-        // Nếu cập nhật địa chỉ đầy đủ → tách lại
-        if (f === 'dia_chi_full') {
-          const addr = parseAddress(d[f]);
-          sets.push('tinh=?', 'quan=?', 'phuong=?', 'dia_chi=?');
-          vals.push(addr.tinh, addr.quan, addr.phuong, addr.diaChi);
-        }
+    // Admin chuyển đơn sang chi nhánh khác: bỏ sale / kho không thuộc chi nhánh mới
+    let cnMoi = null;
+    if (user.role === 'admin' && d.chi_nhanh_id !== undefined && Number(d.chi_nhanh_id) !== (Number(old.chi_nhanh_id) || 1)) {
+      const cn = Number(d.chi_nhanh_id) || 1;
+      const [br] = await db('SELECT id, ten FROM oms_branches WHERE id=?', [cn]);
+      if (!br) return res.status(400).json({ error: 'Chi nhánh không tồn tại' });
+      set('chi_nhanh_id', cn); cnMoi = br.ten;
+      if (d.sale_phu_trach === undefined && old.sale_phu_trach) {
+        const [s2] = await db("SELECT id FROM oms_users WHERE ho_ten=? AND role='sale' AND chi_nhanh_id=?", [old.sale_phu_trach, cn]);
+        if (!s2) { set('sale_phu_trach', ''); d.sale_phu_trach = ''; }
+      }
+      if (d.kho_id === undefined && old.kho_id) {
+        const [k] = await db('SELECT id FROM oms_warehouses WHERE id=? AND chi_nhanh_id IN (0, ?)', [old.kho_id, cn]);
+        if (!k) set('kho_id', 0);
       }
     }
 
-    if (sets.length === 0) return res.status(400).json({ error: 'Không có gì để cập nhật' });
-    await db(`UPDATE oms_orders SET ${sets.join(', ')} WHERE id=?`, [...vals, id]);
+    // Hẹn gọi lại (sale / admin): giờ ISO từ trình duyệt → UTC; '' / null = bỏ hẹn
+    let henMoi;
+    if (d.hen_goi_lai !== undefined && ['sale', 'admin'].includes(user.role)) {
+      if (d.hen_goi_lai) {
+        const t = new Date(d.hen_goi_lai);
+        if (isNaN(t)) return res.status(400).json({ error: 'Giờ hẹn không hợp lệ' });
+        henMoi = utcStr(t);
+      } else henMoi = null;
+      set('hen_goi_lai', henMoi); set('hen_goi_bao', 0);
+    }
 
-    // Auto-push Misa nếu trạng thái = Ship thành công
-    if (d.trang_thai === 'Ship thành công') {
+    if (!sets.length) return res.status(400).json({ error: 'Không có gì để cập nhật' });
+
+    // ---- Mốc thời gian + lịch sử ----
+    const now = utcStr();
+    const logs = [];
+    const doiTT = d.trang_thai !== undefined && !same(d.trang_thai, old.trang_thai);
+    const doiSale = d.sale_phu_trach !== undefined && !same(d.sale_phu_trach, old.sale_phu_trach);
+    const doiNote = d.ghi_chu !== undefined && !same(d.ghi_chu, old.ghi_chu) && String(d.ghi_chu || '').trim();
+    if (doiTT) {
+      logs.push(['Đổi trạng thái', `${old.trang_thai} → ${d.trang_thai}`]);
+      if (d.trang_thai === 'Đã chốt' && !old.chot_at) set('chot_at', now);
+      // Chốt / không mua / giao vận → hết hẹn gọi lại
+      if (henMoi === undefined && !(d.trang_thai === 'Đơn mới' || d.trang_thai.startsWith('KNM')) && old.hen_goi_lai) set('hen_goi_lai', null);
+    }
+    if (doiSale) {
+      logs.push(['Chuyển sale', `${old.sale_phu_trach || '(trống)'} → ${d.sale_phu_trach || '(trống)'}`]);
+      set('sale_nhan_at', d.sale_phu_trach ? now : null); set('sale_tac_nghiep_at', null);
+    }
+    if (doiNote) logs.push(['Ghi chú', String(d.ghi_chu).trim()]);
+    if (henMoi !== undefined && !same(henMoi, old.hen_goi_lai && utcStr(old.hen_goi_lai))) {
+      logs.push(['Hẹn gọi lại', henMoi ? vnTime(henMoi) : 'Bỏ hẹn']);
+    }
+    if (cnMoi) logs.push(['Chuyển chi nhánh', cnMoi]);
+    const doiInfo = Object.keys(INFO_FIELDS).filter(f => allowed.includes(f) && d[f] !== undefined && !same(d[f], old[f]));
+    if (doiInfo.length) logs.push(['Sửa thông tin', doiInfo.map(f => INFO_FIELDS[f]).join(', ')]);
+    // Tác nghiệp = đổi trạng thái / ghi chú / hẹn gọi (thời gian phản hồi + chặn thu hồi đơn)
+    if ((doiTT || doiNote || henMoi) && ['sale', 'admin'].includes(user.role)) {
+      if (!old.tac_nghiep_dau_at) set('tac_nghiep_dau_at', now);
+      if (!doiSale && !old.sale_tac_nghiep_at) set('sale_tac_nghiep_at', now);
+    }
+
+    vals.push(id);
+    await db(`UPDATE oms_orders SET ${sets.join(', ')} WHERE id=?`, vals);
+    for (const [h, c] of logs) await logOrder(id, user, h, c);
+
+    // Auto-push Misa nếu trạng thái = Ship thành công (admin / kho)
+    if (user.role !== 'sale' && d.trang_thai === 'Ship thành công') {
       try { await pushToMisa(id); } catch(e) { console.error('[OMS] Misa push error:', e.message); }
+    }
+    // Chuyển sale → báo riêng sale mới
+    if (doiSale && d.sale_phu_trach && app._omsPush) {
+      usernamesOf(d.sale_phu_trach).then(u => app._omsPush('Bạn được giao đơn #' + id, `${old.ten_kh || ''} — ${old.san_pham || ''}`, id, u)).catch(() => {});
     }
 
     res.json({ ok: true });
+  }));
+
+  // Lịch sử tác nghiệp + các đơn cùng SĐT (khách cũ / trùng số)
+  app.get('/oms/api/orders/:id/history', omsAuth, wrap(async (req, res) => {
+    const user = req.session.omsUser;
+    const lk = lockSql(req);
+    const [o] = await db(`SELECT id, sdt, sdt_norm, nv_marketing FROM oms_orders WHERE id=?${lk.sql}`, [req.params.id, ...lk.params]);
+    if (!o) return res.status(404).json({ error: 'Không có đơn hoặc đơn thuộc chi nhánh khác' });
+    if (user.role === 'marketing' && !getMktTeam(user).includes(o.nv_marketing)) return res.status(403).json({ error: 'Không phải đơn của bạn' });
+    const logs = await db('SELECT at, nguoi, hanh_dong, chi_tiet FROM oms_order_logs WHERE order_id=? ORDER BY id DESC LIMIT 200', [o.id]);
+    const key = (o.sdt_norm && o.sdt_norm !== '-') ? o.sdt_norm : normPhone(o.sdt);
+    let cungSdt = [], tongCungSdt = 0;
+    if (key) {
+      const [c] = await db('SELECT COUNT(*) AS n FROM oms_orders WHERE sdt_norm=? AND id<>?', [key, o.id]);
+      tongCungSdt = Number(c?.n) || 0;
+      cungSdt = await db(`SELECT id, ngay_ve, trang_thai, san_pham, tong_tien, sale_phu_trach, chi_nhanh_id FROM oms_orders
+        WHERE sdt_norm=? AND id<>?${lk.sql} ORDER BY id DESC LIMIT 30`, [key, o.id, ...lk.params]);
+    }
+    res.json({ logs, cungSdt, tongCungSdt });
   }));
 
   // ===================== XÓA ĐƠN (chỉ admin) =====================
@@ -1261,7 +1518,9 @@ export function mountOMS(app, { mysql, express, getTeamLead = () => ({}) }) {
       where.push(`nv_marketing IN (${team.map(()=>'?').join(',')})`);
       params.push(...team);
     }
-    // warehouse + admin: thấy tất cả
+    // warehouse + admin: thấy tất cả (sale / kho: trong chi nhánh mình)
+    const lk = lockSql(req);
+    if (lk.sql) { where.push('chi_nhanh_id = ?'); params.push(...lk.params); }
 
     // max_id: id lớn nhất của mọi đơn (không lọc quyền) → trang dùng làm mốc lúc mở,
     // kể cả khi tài khoản chưa có đơn nào (trước đây mốc = 0 thì không bao giờ báo).
@@ -1293,6 +1552,8 @@ export function mountOMS(app, { mysql, express, getTeamLead = () => ({}) }) {
     } else if (user.role === 'sale') {
       userFilter = ' AND sale_phu_trach = ?'; params.push(user.ho_ten);
     }
+    const cw = cnWhere(req);
+    if (cw.sql) { userFilter += ' AND ' + cw.sql; params.push(...cw.params); }
     if (tu) { dateFilter += ' AND ngay_ve >= ?'; params.push(omsDateBoundary(tu)); }
     if (den) { dateFilter += ' AND ngay_ve < ?'; params.push(omsDateBoundary(den, true)); }
 
@@ -1312,7 +1573,9 @@ export function mountOMS(app, { mysql, express, getTeamLead = () => ({}) }) {
     const bySale = await db(`SELECT sale_phu_trach as ten,
       COUNT(*) as tongDon,
       SUM(CASE WHEN trang_thai IN ('Đã chốt','Đang ship','Ship thành công') THEN 1 ELSE 0 END) as daChot,
-      ROUND(SUM(CASE WHEN trang_thai IN ('Đã chốt','Đang ship','Ship thành công') THEN 1 ELSE 0 END)*100/COUNT(*),1) as tyLeChot
+      ROUND(SUM(CASE WHEN trang_thai IN ('Đã chốt','Đang ship','Ship thành công') THEN 1 ELSE 0 END)*100/COUNT(*),1) as tyLeChot,
+      ROUND(AVG(CASE WHEN tac_nghiep_dau_at IS NOT NULL THEN TIMESTAMPDIFF(MINUTE, ngay_ve, tac_nghiep_dau_at) END)) as phanHoiPhut,
+      SUM(CASE WHEN tac_nghiep_dau_at IS NOT NULL THEN 1 ELSE 0 END) as soPhanHoi
       FROM oms_orders WHERE sale_phu_trach != '' ${userFilter} ${dateFilter}
       GROUP BY sale_phu_trach ORDER BY daChot DESC`, params);
 
@@ -1334,23 +1597,32 @@ export function mountOMS(app, { mysql, express, getTeamLead = () => ({}) }) {
 
   // ===================== QUẢN LÝ TÀI KHOẢN (Admin) =====================
   app.get('/oms/api/users', requireRole('admin'), wrap(async (req, res) => {
-    const rows = await db('SELECT id, username, ho_ten, role, active FROM oms_users ORDER BY role, ho_ten');
+    const rows = await db('SELECT id, username, ho_ten, role, active, chi_nhanh_id, xem_chi_nhanh, nhan_don FROM oms_users ORDER BY role, ho_ten');
     res.json(rows);
   }));
 
   app.post('/oms/api/users', requireRole('admin'), jsonParser, wrap(async (req, res) => {
-    const { username, password, ho_ten, role } = req.body;
+    const { username, password, ho_ten, role, chi_nhanh_id } = req.body;
     if (!username || !password) return res.status(400).json({ error: 'Thiếu username/password' });
     await ensureTables(getPool());
-    await db('INSERT INTO oms_users (username, password, ho_ten, role) VALUES (?,?,?,?)',
-      [username, password, ho_ten || username, role || 'sale']);
+    const xem = normXemCn(req.body.xem_chi_nhanh);
+    if (xem === null) return res.status(400).json({ error: 'Quyền xem chi nhánh không hợp lệ' });
+    await db('INSERT INTO oms_users (username, password, ho_ten, role, chi_nhanh_id, xem_chi_nhanh) VALUES (?,?,?,?,?,?)',
+      [username, password, ho_ten || username, role || 'sale', Number(chi_nhanh_id) || 1, xem]);
     res.json({ ok: true });
   }));
 
   app.put('/oms/api/users/:id', requireRole('admin'), jsonParser, wrap(async (req, res) => {
-    const { ho_ten, role, active, password } = req.body;
+    const { ho_ten, role, active, password, chi_nhanh_id } = req.body;
     const sets = [];
     const vals = [];
+    if (chi_nhanh_id !== undefined) { sets.push('chi_nhanh_id=?'); vals.push(Number(chi_nhanh_id) || 1); }
+    if (req.body.nhan_don !== undefined) { sets.push('nhan_don=?'); vals.push(req.body.nhan_don ? 1 : 0); }
+    if (req.body.xem_chi_nhanh !== undefined) {
+      const xem = normXemCn(req.body.xem_chi_nhanh);
+      if (xem === null) return res.status(400).json({ error: 'Quyền xem chi nhánh không hợp lệ' });
+      sets.push('xem_chi_nhanh=?'); vals.push(xem);
+    }
     if (ho_ten !== undefined) { sets.push('ho_ten=?'); vals.push(ho_ten); }
     if (role !== undefined) { sets.push('role=?'); vals.push(role); }
     if (active !== undefined) { sets.push('active=?'); vals.push(active); }
@@ -1434,7 +1706,8 @@ export function mountOMS(app, { mysql, express, getTeamLead = () => ({}) }) {
     const { ids } = req.body;
     if (!ids?.length) return res.status(400).json({ error: 'Chưa chọn đơn' });
 
-    const orders = await db(`SELECT * FROM oms_orders WHERE id IN (${ids.map(()=>'?').join(',')})`, ids);
+    const lk = lockSql(req);
+    const orders = await db(`SELECT * FROM oms_orders WHERE id IN (${ids.map(()=>'?').join(',')})${lk.sql}`, [...ids, ...lk.params]);
     const results = [];
     const apiUrl = 'https://services.giaohangtietkiem.vn';
 
@@ -1511,8 +1784,11 @@ export function mountOMS(app, { mysql, express, getTeamLead = () => ({}) }) {
         const data = await resp.json();
 
         if (data.success) {
-          await db(`UPDATE oms_orders SET don_vi_vc='GHTK', ma_van_don=?, trang_thai='Đang ship' WHERE id=?`,
-            [data.order?.label || '', o.id]);
+          // Phí VC dịch vụ: trường fee của GHTK (chưa đối chiếu với đơn thật; không có thì để 0, kho sửa lúc đối soát)
+          const fee = Math.round(Number(data.order?.fee) || 0);
+          logOrder(o.id, req.session.omsUser, 'Đăng vận đơn', 'GHTK ' + (data.order?.label || '') + (fee ? ` · phí ${fee}` : ''));
+          await db(`UPDATE oms_orders SET don_vi_vc='GHTK', ma_van_don=?, trang_thai='Đang ship', dang_vc_at=?, phi_vc_dv=IF(?>0, ?, phi_vc_dv) WHERE id=?`,
+            [data.order?.label || '', utcStr(), fee, fee, o.id]);
           results.push({ id: o.id, ok: true, label: data.order?.label });
         } else {
           results.push({ id: o.id, ok: false, error: data.message });
@@ -1559,7 +1835,8 @@ export function mountOMS(app, { mysql, express, getTeamLead = () => ({}) }) {
 
     if (!token) return res.status(400).json({ error: 'Chưa cấu hình Viettel Post' });
 
-    const orders = await db(`SELECT * FROM oms_orders WHERE id IN (${ids.map(()=>'?').join(',')})`, ids);
+    const lk = lockSql(req);
+    const orders = await db(`SELECT * FROM oms_orders WHERE id IN (${ids.map(()=>'?').join(',')})${lk.sql}`, [...ids, ...lk.params]);
     const results = [];
 
     for (const o of orders) {
@@ -1595,8 +1872,11 @@ export function mountOMS(app, { mysql, express, getTeamLead = () => ({}) }) {
         const data = await resp.json();
 
         if (data.status === 200 && data.data) {
-          await db(`UPDATE oms_orders SET don_vi_vc='VTP', ma_van_don=?, trang_thai='Đang ship' WHERE id=?`,
-            [data.data.ORDER_NUMBER || '', o.id]);
+          // Phí VC dịch vụ: MONEY_TOTAL của VTP (chưa đối chiếu với đơn thật)
+          const fee = Math.round(Number(data.data.MONEY_TOTAL) || 0);
+          logOrder(o.id, req.session.omsUser, 'Đăng vận đơn', 'VTP ' + (data.data.ORDER_NUMBER || '') + (fee ? ` · phí ${fee}` : ''));
+          await db(`UPDATE oms_orders SET don_vi_vc='VTP', ma_van_don=?, trang_thai='Đang ship', dang_vc_at=?, phi_vc_dv=IF(?>0, ?, phi_vc_dv) WHERE id=?`,
+            [data.data.ORDER_NUMBER || '', utcStr(), fee, fee, o.id]);
           results.push({ id: o.id, ok: true, label: data.data.ORDER_NUMBER });
         } else {
           results.push({ id: o.id, ok: false, error: data.message });
@@ -1614,7 +1894,9 @@ export function mountOMS(app, { mysql, express, getTeamLead = () => ({}) }) {
     const { id, ma_don_hang } = req.body;
     if (!id) return res.status(400).json({ error: 'Thiếu ID đơn' });
     const newCode = ma_don_hang || `OM${String(Math.floor(100000+Math.random()*900000))}`;
-    await db('UPDATE oms_orders SET ma_don_hang=? WHERE id=?', [newCode, id]);
+    const lk = lockSql(req);
+    const r = await db(`UPDATE oms_orders SET ma_don_hang=? WHERE id=?${lk.sql}`, [newCode, id, ...lk.params]);
+    if (!r.affectedRows) return res.status(403).json({ error: 'Đơn thuộc chi nhánh khác' });
     res.json({ ok: true, ma_don_hang: newCode });
   }));
 
@@ -1623,7 +1905,8 @@ export function mountOMS(app, { mysql, express, getTeamLead = () => ({}) }) {
     const { ids } = req.body;
     if (!ids?.length) return res.status(400).json({ error: 'Chưa chọn đơn' });
 
-    const orders = await db(`SELECT * FROM oms_orders WHERE id IN (${ids.map(()=>'?').join(',')})`, ids);
+    const lk = lockSql(req);
+    const orders = await db(`SELECT * FROM oms_orders WHERE id IN (${ids.map(()=>'?').join(',')})${lk.sql}`, [...ids, ...lk.params]);
     const results = [];
 
     for (const o of orders) {
@@ -1644,7 +1927,8 @@ export function mountOMS(app, { mysql, express, getTeamLead = () => ({}) }) {
         if (data.success) {
           // Sinh mã đơn hàng mới để lần đăng lại không bị trùng
           const newMaDH = `OM${String(Math.floor(100000+Math.random()*900000))}`;
-          await db(`UPDATE oms_orders SET don_vi_vc='', ma_van_don='', ma_don_hang=?, trang_thai='Đã chốt', trang_thai_vc='Đã huỷ GHTK' WHERE id=?`, [newMaDH, o.id]);
+          await db(`UPDATE oms_orders SET don_vi_vc='', ma_van_don='', ma_don_hang=?, trang_thai='Đã chốt', trang_thai_vc='Đã huỷ GHTK', da_dong_goi=0 WHERE id=?`, [newMaDH, o.id]);
+          logOrder(o.id, req.session.omsUser, 'Huỷ vận đơn', 'GHTK ' + o.ma_van_don);
           results.push({ id: o.id, ok: true, message: 'Đã huỷ trên GHTK' });
         } else {
           results.push({ id: o.id, ok: false, error: data.message || 'GHTK từ chối huỷ' });
@@ -1683,6 +1967,7 @@ export function mountOMS(app, { mysql, express, getTeamLead = () => ({}) }) {
             // Luôn cập nhật trang_thai_vc cho mọi trạng thái
             await db('UPDATE oms_orders SET trang_thai=?, trang_thai_vc=? WHERE id=?',
               [newTrangThai, statusText, o.id]);
+            if (newTrangThai !== 'Đang ship') logOrder(o.id, 'Đồng bộ VC', 'Đổi trạng thái', `Đang ship → ${newTrangThai} (${statusText})`);
             if (newTrangThai === 'Ship thành công') {
               try { await pushToMisa(o.id); } catch(e) {}
             }
@@ -1710,6 +1995,7 @@ export function mountOMS(app, { mysql, express, getTeamLead = () => ({}) }) {
             else if (st === 504 || st === 505) newTrangThai = 'Hoàn thành công';
             await db('UPDATE oms_orders SET trang_thai=?, trang_thai_vc=? WHERE id=?',
               [newTrangThai, statusText, o.id]);
+            if (newTrangThai !== 'Đang ship') logOrder(o.id, 'Đồng bộ VC', 'Đổi trạng thái', `Đang ship → ${newTrangThai} (${statusText})`);
             if (newTrangThai === 'Ship thành công') {
               try { await pushToMisa(o.id); } catch(e) {}
             }
@@ -1737,17 +2023,19 @@ export function mountOMS(app, { mysql, express, getTeamLead = () => ({}) }) {
   }));
 
   // ===================== TÍCH HỢP MISA =====================
+  // Mỗi chi nhánh xuất bằng tài khoản MISA (MST) riêng ở oms_branches; chi nhánh chưa cài thì không xuất.
+  // Biến môi trường MISA_* chỉ là dự phòng cho HKD TD (chi nhánh 1).
   async function pushToMisa(orderId) {
-    const cfgRows = await db("SELECT config_key, config_value FROM oms_config WHERE config_key IN ('misa_app_id','misa_access_token','misa_tax_code')");
-    const cfg = {};
-    cfgRows.forEach(r => cfg[r.config_key] = r.config_value);
-
-    const accessToken = cfg.misa_access_token || process.env.MISA_ACCESS_TOKEN || '';
-    const appId = cfg.misa_app_id || process.env.MISA_APP_ID || '';
-    if (!accessToken || !appId) return;
-
     const [order] = await db('SELECT * FROM oms_orders WHERE id=? AND da_xuat_hd=0', [orderId]);
     if (!order) return;
+    const cn = Number(order.chi_nhanh_id) || 1;
+    const [br] = await db('SELECT * FROM oms_branches WHERE id=?', [cn]);
+    const accessToken = br?.misa_access_token || (cn === 1 ? process.env.MISA_ACCESS_TOKEN : '') || '';
+    const appId = br?.misa_app_id || (cn === 1 ? process.env.MISA_APP_ID : '') || '';
+    if (!accessToken || !appId) {
+      console.log(`[OMS] Chi nhánh ${br?.ten || cn} chưa cài MISA, không xuất HĐ đơn ${orderId}`);
+      return;
+    }
 
     const body = {
       inv_date: new Date().toISOString(),
@@ -1780,7 +2068,7 @@ export function mountOMS(app, { mysql, express, getTeamLead = () => ({}) }) {
       if (data.Success || data.Data) {
         await db('UPDATE oms_orders SET da_xuat_hd=1, misa_invoice_id=? WHERE id=?',
           [data.Data?.inv_id || 'OK', orderId]);
-        console.log('[OMS] Misa invoice created for order', orderId);
+        console.log('[OMS] Misa invoice created for order', orderId, 'chi nhánh', br?.ten || cn);
       }
     } catch(e) {
       console.error('[OMS] Misa error:', e.message);
@@ -1792,40 +2080,54 @@ export function mountOMS(app, { mysql, express, getTeamLead = () => ({}) }) {
   app.post('/oms/api/assign-sale', requireRole('admin'), jsonParser, wrap(async (req, res) => {
     const { ids, sale } = req.body;
     if (!ids?.length || !sale) return res.status(400).json({ error: 'Thiếu đơn hoặc tên sale' });
-    await db(`UPDATE oms_orders SET sale_phu_trach=? WHERE id IN (${ids.map(()=>'?').join(',')})`, [sale, ...ids]);
+    await db(`UPDATE oms_orders SET sale_phu_trach=?, sale_nhan_at=?, sale_tac_nghiep_at=NULL WHERE id IN (${ids.map(()=>'?').join(',')})`, [sale, utcStr(), ...ids]);
+    for (const i of ids) logOrder(i, req.session.omsUser, 'Chuyển sale', sale);
     res.json({ ok: true });
   }));
 
   // Phân đơn tự động chia đều cho tất cả Sale
   app.post('/oms/api/auto-assign', requireRole('admin'), jsonParser, wrap(async (req, res) => {
     const { ids } = req.body; // danh sách ID đơn cần phân
-    // Lấy danh sách Sale đang hoạt động
-    const sales = await db("SELECT ho_ten FROM oms_users WHERE role='sale' AND active=1 ORDER BY ho_ten");
-    if (!sales.length) return res.status(400).json({ error: 'Chưa có nhân viên Sale nào' });
+    // Mỗi chi nhánh chia cho sale của chi nhánh đó
+    const sales = await db("SELECT ho_ten, chi_nhanh_id FROM oms_users WHERE role='sale' AND active=1 AND nhan_don=1 ORDER BY ho_ten");
+    if (!sales.length) return res.status(400).json({ error: 'Chưa có Sale nào đang bật nhận đơn' });
 
-    let orderIds = ids;
-    if (!orderIds?.length) {
+    let orders;
+    if (ids?.length) {
+      orders = await db(`SELECT id, chi_nhanh_id FROM oms_orders WHERE id IN (${ids.map(()=>'?').join(',')}) ORDER BY id`, ids);
+    } else {
       // Nếu không truyền IDs → phân tất cả đơn mới chưa phân
-      const unassigned = await db("SELECT id FROM oms_orders WHERE trang_thai='Đơn mới' AND (sale_phu_trach='' OR sale_phu_trach IS NULL) ORDER BY id");
-      orderIds = unassigned.map(r => r.id);
+      orders = await db("SELECT id, chi_nhanh_id FROM oms_orders WHERE trang_thai='Đơn mới' AND (sale_phu_trach='' OR sale_phu_trach IS NULL) ORDER BY id");
     }
-    if (!orderIds.length) return res.json({ ok: true, message: 'Không có đơn nào cần phân' });
+    if (!orders.length) return res.json({ ok: true, message: 'Không có đơn nào cần phân' });
 
-    // Chia đều round-robin
-    const saleNames = sales.map(s => s.ho_ten);
-    let assigned = 0;
-    for (let i = 0; i < orderIds.length; i++) {
-      const saleName = saleNames[i % saleNames.length];
-      await db('UPDATE oms_orders SET sale_phu_trach=? WHERE id=?', [saleName, orderIds[i]]);
+    // Chia đều round-robin trong từng chi nhánh
+    const byCn = {};
+    for (const s of sales) (byCn[Number(s.chi_nhanh_id) || 1] ||= []).push(s.ho_ten);
+    const turn = {};
+    let assigned = 0, skipped = 0;
+    const used = new Set();
+    for (const o of orders) {
+      const cn = Number(o.chi_nhanh_id) || 1;
+      const names = byCn[cn];
+      if (!names?.length) { skipped++; continue; }
+      const saleName = names[(turn[cn] = (turn[cn] ?? -1) + 1) % names.length];
+      await db('UPDATE oms_orders SET sale_phu_trach=?, sale_nhan_at=?, sale_tac_nghiep_at=NULL WHERE id=?', [saleName, utcStr(), o.id]);
+      logOrder(o.id, req.session.omsUser, 'Chia sale', saleName);
+      used.add(saleName);
       assigned++;
     }
 
-    res.json({ ok: true, message: `Đã phân ${assigned} đơn cho ${saleNames.length} Sale`, assigned, sales: saleNames });
+    res.json({ ok: true, message: `Đã phân ${assigned} đơn cho ${used.size} Sale` + (skipped ? ` (${skipped} đơn chưa phân: chi nhánh chưa có Sale đang nhận đơn)` : ''), assigned, sales: [...used] });
   }));
 
   // ===================== QUẢN LÝ KHO (Admin) =====================
   app.get('/oms/api/warehouses', omsAuth, wrap(async (req, res) => {
-    const rows = await db('SELECT * FROM oms_warehouses WHERE active=1 ORDER BY ten_kho');
+    // Sale / kho: kho của các chi nhánh được xem + kho dùng chung (chi_nhanh_id 0)
+    const allow = viewCns(req.session.omsUser);
+    const rows = allow
+      ? await db(`SELECT * FROM oms_warehouses WHERE active=1 AND chi_nhanh_id IN (0, ${allow.map(() => '?').join(',')}) ORDER BY ten_kho`, allow)
+      : await db('SELECT * FROM oms_warehouses WHERE active=1 ORDER BY ten_kho');
     res.json(rows);
   }));
 
@@ -1840,11 +2142,12 @@ export function mountOMS(app, { mysql, express, getTeamLead = () => ({}) }) {
     const result = await db(`INSERT INTO oms_warehouses
       (ten_kho, dia_chi, tinh, quan, sdt,
        ghtk_token, ghtk_pick_name, ghtk_pick_address, ghtk_pick_province, ghtk_pick_district, ghtk_pick_tel,
-       vtp_username, vtp_password, vtp_sender_name, vtp_sender_address, vtp_sender_phone)
-      VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+       vtp_username, vtp_password, vtp_sender_name, vtp_sender_address, vtp_sender_phone, chi_nhanh_id)
+      VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
       [d.ten_kho, d.dia_chi||'', d.tinh||'', d.quan||'', d.sdt||'',
        d.ghtk_token||'', d.ghtk_pick_name||'', d.ghtk_pick_address||'', d.ghtk_pick_province||'', d.ghtk_pick_district||'', d.ghtk_pick_tel||'',
-       d.vtp_username||'', d.vtp_password||'', d.vtp_sender_name||'', d.vtp_sender_address||'', d.vtp_sender_phone||'']);
+       d.vtp_username||'', d.vtp_password||'', d.vtp_sender_name||'', d.vtp_sender_address||'', d.vtp_sender_phone||'',
+       Number(d.chi_nhanh_id) || 0]);
     res.json({ ok: true, id: result.insertId });
   }));
 
@@ -1852,7 +2155,7 @@ export function mountOMS(app, { mysql, express, getTeamLead = () => ({}) }) {
     const d = req.body;
     const fields = ['ten_kho','dia_chi','tinh','quan','sdt','active',
       'ghtk_token','ghtk_pick_name','ghtk_pick_address','ghtk_pick_province','ghtk_pick_district','ghtk_pick_tel',
-      'vtp_username','vtp_password','vtp_token','vtp_sender_name','vtp_sender_address','vtp_sender_phone'];
+      'vtp_username','vtp_password','vtp_token','vtp_sender_name','vtp_sender_address','vtp_sender_phone','chi_nhanh_id'];
     const sets = []; const vals = [];
     for (const f of fields) { if (d[f] !== undefined) { sets.push(`${f}=?`); vals.push(d[f]); } }
     if (!sets.length) return res.status(400).json({ error: 'Không có gì' });
@@ -1866,11 +2169,101 @@ export function mountOMS(app, { mysql, express, getTeamLead = () => ({}) }) {
     res.json({ ok: true });
   }));
 
+  // ===================== KHO: QUÉT MÃ / ĐỐI SOÁT / HÀNG HOÀN =====================
+  // Cài đặt tác nghiệp (mọi tài khoản đọc; admin sửa qua /oms/api/config)
+  app.get('/oms/api/ops-config', omsAuth, wrap(async (req, res) => {
+    res.json({ han_gui_gio: await cfgNum('han_gui_gio', 24), thu_hoi_phut: await cfgNum('thu_hoi_phut', 0) });
+  }));
+
+  // Quét mã khi đóng gói: mã vận đơn / mã đơn hàng / #id → đánh dấu đã đóng gói
+  app.post('/oms/api/kho/quet', requireRole('admin', 'warehouse'), jsonParser, wrap(async (req, res) => {
+    const ma = String(req.body?.ma || '').trim();
+    if (!ma) return res.status(400).json({ error: 'Chưa có mã' });
+    const lk = lockSql(req);
+    const idNum = /^#?\d{1,9}$/.test(ma) ? Number(ma.replace('#', '')) : 0;
+    const [o] = await db(`SELECT * FROM oms_orders WHERE (ma_van_don=? OR ma_don_hang=? OR id=?)${lk.sql}
+      AND trang_thai IN ('Đã chốt','Đang ship') ORDER BY id DESC LIMIT 1`, [ma, ma, idNum, ...lk.params]);
+    if (!o) return res.status(404).json({ error: `Không thấy đơn chờ giao có mã "${ma}" (hoặc đơn thuộc chi nhánh khác)` });
+    const moi = !o.da_dong_goi;
+    if (moi) {
+      await db('UPDATE oms_orders SET da_dong_goi=1 WHERE id=?', [o.id]);
+      await logOrder(o.id, req.session.omsUser, 'Đóng gói', 'Quét mã ' + ma);
+    }
+    res.json({ ok: true, id: o.id, moi, ten_kh: o.ten_kh, san_pham: o.san_pham, so_luong: o.so_luong });
+  }));
+
+  // Đối soát COD: đơn đã giao / đã hoàn. bo=true = bỏ đối soát. phi_vc_dv / phi_hoan: sửa phí nếu gửi lên
+  app.post('/oms/api/kho/doi-soat', requireRole('admin', 'warehouse'), jsonParser, wrap(async (req, res) => {
+    const ids = (req.body?.ids || []).map(Number).filter(Boolean);
+    if (!ids.length) return res.status(400).json({ error: 'Chưa chọn đơn' });
+    const bo = !!req.body.bo;
+    const lk = lockSql(req);
+    const rows = await db(`SELECT id, da_doi_soat FROM oms_orders WHERE id IN (${ids.map(() => '?').join(',')})${lk.sql}
+      AND trang_thai IN ('Ship thành công','Hoàn thành công')`, [...ids, ...lk.params]);
+    const phi = k => req.body[k] === undefined || req.body[k] === '' ? null : Math.max(0, Math.round(Number(req.body[k]) || 0));
+    const phiVc = phi('phi_vc_dv'), phiHoan = phi('phi_hoan');
+    let n = 0;
+    for (const r of rows) {
+      const sets = ['da_doi_soat=?', 'doi_soat_at=?']; const vals = [bo ? 0 : 1, bo ? null : utcStr()];
+      if (phiVc !== null) { sets.push('phi_vc_dv=?'); vals.push(phiVc); }
+      if (phiHoan !== null) { sets.push('phi_hoan=?'); vals.push(phiHoan); }
+      await db(`UPDATE oms_orders SET ${sets.join(',')} WHERE id=?`, [...vals, r.id]);
+      await logOrder(r.id, req.session.omsUser, bo ? 'Bỏ đối soát' : 'Đối soát COD',
+        [phiVc !== null && `phí VC ${phiVc}`, phiHoan !== null && `phí hoàn ${phiHoan}`].filter(Boolean).join(', '));
+      n++;
+    }
+    res.json({ ok: true, n, boQua: ids.length - n });
+  }));
+
+  // Đã nhận lại hàng hoàn (kiểm hàng) + lý do
+  app.post('/oms/api/kho/nhan-hoan', requireRole('admin', 'warehouse'), jsonParser, wrap(async (req, res) => {
+    const id = Number(req.body?.id);
+    const lk = lockSql(req);
+    const [o] = await db(`SELECT id FROM oms_orders WHERE id=? AND trang_thai='Hoàn thành công'${lk.sql}`, [id, ...lk.params]);
+    if (!o) return res.status(404).json({ error: 'Đơn không ở trạng thái Hoàn thành công (hoặc thuộc chi nhánh khác)' });
+    const lyDo = String(req.body.ly_do || '').trim().slice(0, 255);
+    const phiHoan = req.body.phi_hoan === undefined || req.body.phi_hoan === '' ? null : Math.max(0, Math.round(Number(req.body.phi_hoan) || 0));
+    await db(`UPDATE oms_orders SET da_nhan_hoan=1, nhan_hoan_at=?, ly_do_hoan=?${phiHoan !== null ? ', phi_hoan=?' : ''} WHERE id=?`,
+      phiHoan !== null ? [utcStr(), lyDo, phiHoan, id] : [utcStr(), lyDo, id]);
+    await logOrder(id, req.session.omsUser, 'Nhận hàng hoàn', [lyDo, phiHoan !== null && `phí hoàn ${phiHoan}`].filter(Boolean).join(' · '));
+    res.json({ ok: true });
+  }));
+
   // ===================== DANH SÁCH NV (cho dropdown) =====================
   app.get('/oms/api/employees', omsAuth, wrap(async (req, res) => {
-    const sales = await db("SELECT DISTINCT ho_ten FROM oms_users WHERE role='sale' AND active=1");
+    // Sale / kho chỉ thấy sale cùng chi nhánh; salesCN kèm chi nhánh để trang lọc khi chuyển sale
+    const lk = lockSql(req);
+    const sales = await db(`SELECT ho_ten, MIN(chi_nhanh_id) AS chi_nhanh_id FROM oms_users WHERE role='sale' AND active=1${lk.sql} GROUP BY ho_ten`, lk.params);
     const mkts = await db("SELECT DISTINCT ho_ten FROM oms_users WHERE role='marketing' AND active=1");
-    res.json({ sales: sales.map(r => r.ho_ten), marketings: mkts.map(r => r.ho_ten) });
+    res.json({ sales: sales.map(r => r.ho_ten), salesCN: sales.map(r => ({ ten: r.ho_ten, chi_nhanh_id: Number(r.chi_nhanh_id) || 1 })),
+      marketings: mkts.map(r => r.ho_ten) });
+  }));
+
+  // ===================== CHI NHÁNH =====================
+  // Mọi tài khoản: id + tên + MST (để lọc / hiện nhãn). Admin: thêm cấu hình MISA của từng chi nhánh.
+  app.get('/oms/api/branches', omsAuth, wrap(async (req, res) => {
+    await ensureTables(getPool());
+    const rows = await db('SELECT * FROM oms_branches ORDER BY id');
+    const isAdmin = req.session.omsUser.role === 'admin';
+    res.json(rows.map(r => isAdmin ? r : { id: r.id, ten: r.ten, ma_so_thue: r.ma_so_thue, active: r.active }));
+  }));
+  app.post('/oms/api/branches', requireRole('admin'), jsonParser, wrap(async (req, res) => {
+    const ten = String(req.body?.ten || '').trim();
+    if (!ten) return res.status(400).json({ error: 'Thiếu tên chi nhánh' });
+    const r = await db('INSERT INTO oms_branches (ten, ma_so_thue, misa_app_id, misa_access_token) VALUES (?,?,?,?)',
+      [ten, req.body.ma_so_thue || '', req.body.misa_app_id || '', req.body.misa_access_token || '']);
+    res.json({ ok: true, id: r.insertId });
+  }));
+  app.put('/oms/api/branches/:id', requireRole('admin'), jsonParser, wrap(async (req, res) => {
+    const sets = []; const vals = [];
+    for (const f of ['ten', 'ma_so_thue', 'misa_app_id', 'misa_access_token', 'active']) {
+      if (req.body?.[f] !== undefined) { sets.push(`${f}=?`); vals.push(f === 'active' ? (req.body[f] ? 1 : 0) : String(req.body[f]).trim()); }
+    }
+    if (!sets.length) return res.status(400).json({ error: 'Không có gì' });
+    if (req.body.ten !== undefined && !String(req.body.ten).trim()) return res.status(400).json({ error: 'Tên chi nhánh trống' });
+    vals.push(req.params.id);
+    await db(`UPDATE oms_branches SET ${sets.join(',')} WHERE id=?`, vals);
+    res.json({ ok: true });
   }));
 
   // ===================== API ĐỊA CHỈ VIỆT NAM (proxy từ API công khai) =====================
@@ -2125,9 +2518,14 @@ export function mountOMS(app, { mysql, express, getTeamLead = () => ({}) }) {
     const dup = await findDupLink(d.url_pattern);
     if (dup) return res.status(409).json({ error: dupLinkMsg(dup) });
 
-    const result = await db(`INSERT INTO oms_link_registry (url_pattern, product_id, ten_sp, nv_marketing, nguon_du_lieu, ghi_chu)
-      VALUES (?,?,?,?,?,?)`,
-      [d.url_pattern, d.product_id, tenSp, nvName, d.nguon_du_lieu||'', d.ghi_chu||'']);
+    // Chi nhánh nhận đơn của link (mặc định HKD TD)
+    const cn = Number(d.chi_nhanh_id) || 1;
+    const [br] = await db('SELECT id FROM oms_branches WHERE id=?', [cn]);
+    if (!br) return res.status(400).json({ error: 'Chi nhánh không tồn tại' });
+
+    const result = await db(`INSERT INTO oms_link_registry (url_pattern, product_id, ten_sp, nv_marketing, nguon_du_lieu, ghi_chu, chi_nhanh_id)
+      VALUES (?,?,?,?,?,?,?)`,
+      [d.url_pattern, d.product_id, tenSp, nvName, d.nguon_du_lieu||'', d.ghi_chu||'', cn]);
     res.json({ ok: true, id: result.insertId });
   }));
 
@@ -2151,6 +2549,12 @@ export function mountOMS(app, { mysql, express, getTeamLead = () => ({}) }) {
     if (d.nguon_du_lieu !== undefined) { sets.push('nguon_du_lieu=?'); vals.push(d.nguon_du_lieu); }
     if (d.ghi_chu !== undefined) { sets.push('ghi_chu=?'); vals.push(d.ghi_chu); }
     if (d.active !== undefined) { sets.push('active=?'); vals.push(d.active); }
+    if (d.chi_nhanh_id !== undefined) {
+      const cn = Number(d.chi_nhanh_id) || 1;
+      const [br] = await db('SELECT id FROM oms_branches WHERE id=?', [cn]);
+      if (!br) return res.status(400).json({ error: 'Chi nhánh không tồn tại' });
+      sets.push('chi_nhanh_id=?'); vals.push(cn);
+    }
     if (d.nv_marketing && user.role === 'admin') { sets.push('nv_marketing=?'); vals.push(d.nv_marketing); }
     if (!sets.length) return res.status(400).json({ error: 'Không có gì' });
     vals.push(req.params.id);
@@ -2173,6 +2577,8 @@ export function mountOMS(app, { mysql, express, getTeamLead = () => ({}) }) {
       userFilter = ` AND nv_marketing IN (${team.map(()=>'?').join(',')})`;
       params.push(...team);
     }
+    const cw = cnWhere(req);
+    if (cw.sql) { userFilter += ' AND ' + cw.sql; params.push(...cw.params); }
     let dateFilter = '';
     if (tu) { dateFilter += ' AND ngay_ve >= ?'; params.push(omsDateBoundary(tu)); }
     if (den) { dateFilter += ' AND ngay_ve < ?'; params.push(omsDateBoundary(den, true)); }
@@ -2249,6 +2655,58 @@ export function mountOMS(app, { mysql, express, getTeamLead = () => ({}) }) {
 
   // Bắt đầu cronjob
   try { scheduleCronjob(); } catch(e) {}
+
+  // ---- Nhắc hẹn gọi lại + thu hồi đơn sale chưa tác nghiệp (mỗi 2 phút) ----
+  // Nhiều tiến trình: mỗi đơn giành bằng UPDATE có điều kiện (affectedRows) nên không nhắc / thu hồi trùng.
+  async function opsTick() {
+    if (!getPool()) return;
+    await ensureTables(getPool());
+    const now = utcStr();
+    // 1) Tới giờ hẹn gọi lại → báo riêng sale phụ trách
+    const due = await db(`SELECT id, ten_kh, sdt, san_pham, sale_phu_trach FROM oms_orders
+      WHERE hen_goi_bao=0 AND hen_goi_lai IS NOT NULL AND hen_goi_lai <= ? LIMIT 100`, [now]);
+    for (const o of due) {
+      const r = await db('UPDATE oms_orders SET hen_goi_bao=1 WHERE id=? AND hen_goi_bao=0', [o.id]);
+      if (!r.affectedRows || !o.sale_phu_trach || !app._omsPush) continue;
+      const users = await usernamesOf(o.sale_phu_trach);
+      if (users.size) app._omsPush(`⏰ Tới giờ gọi lại đơn #${o.id}`, `${o.ten_kh || ''} ${o.sdt || ''} — ${o.san_pham || ''}`, o.id, users);
+    }
+    // 2) Thu hồi: đơn mới, sale nhận quá N phút chưa tác nghiệp → chia sale khác cùng chi nhánh (7h–22h giờ VN)
+    const phut = await cfgNum('thu_hoi_phut', 0);
+    const gioVN = new Date(Date.now() + 7 * 3600000).getUTCHours();
+    if (phut > 0 && gioVN >= 7 && gioVN < 22) {
+      const han = utcStr(Date.now() - phut * 60000);
+      const late = await db(`SELECT id, ten_kh, san_pham, sale_phu_trach, chi_nhanh_id FROM oms_orders
+        WHERE trang_thai='Đơn mới' AND sale_phu_trach<>'' AND sale_tac_nghiep_at IS NULL
+          AND sale_nhan_at IS NOT NULL AND sale_nhan_at <= ? AND hen_goi_lai IS NULL LIMIT 50`, [han]);
+      for (const o of late) {
+        const moi = await pickSale(Number(o.chi_nhanh_id) || 1, o.sale_phu_trach);
+        if (!moi) continue;
+        const r = await db(`UPDATE oms_orders SET sale_phu_trach=?, sale_nhan_at=? WHERE id=? AND sale_phu_trach=?
+          AND sale_tac_nghiep_at IS NULL AND trang_thai='Đơn mới'`, [moi, utcStr(), o.id, o.sale_phu_trach]);
+        if (!r.affectedRows) continue;
+        await logOrder(o.id, 'Hệ thống', 'Thu hồi', `${o.sale_phu_trach} → ${moi} (quá ${phut} phút chưa tác nghiệp)`);
+        const users = await usernamesOf(moi);
+        if (users.size && app._omsPush) app._omsPush(`Bạn được giao đơn #${o.id} (thu hồi)`, `${o.ten_kh || ''} — ${o.san_pham || ''}`, o.id, users);
+      }
+    }
+  }
+  // Điền sdt_norm cho đơn cũ (báo trùng số / khách cũ), từng lô
+  async function fillSdtNorm() {
+    if (!getPool()) return;
+    await ensureTables(getPool());
+    for (let i = 0; i < 200; i++) {
+      const rows = await db("SELECT id, sdt FROM oms_orders WHERE sdt_norm='' AND sdt<>'' LIMIT 500");
+      const ok = rows.filter(r => normPhone(r.sdt));
+      for (const r of ok) await db('UPDATE oms_orders SET sdt_norm=? WHERE id=?', [normPhone(r.sdt), r.id]);
+      if (ok.length < rows.length) { // SĐT không có chữ số → đánh dấu để khỏi quét lại
+        for (const r of rows.filter(r => !normPhone(r.sdt))) await db("UPDATE oms_orders SET sdt_norm='-' WHERE id=?", [r.id]);
+      }
+      if (rows.length < 500) break;
+    }
+  }
+  setTimeout(() => fillSdtNorm().catch(e => console.error('[OMS] Điền sdt_norm lỗi:', e.message)), 20000);
+  setInterval(() => opsTick().catch(e => console.error('[OMS] Nhắc hẹn / thu hồi lỗi:', e.message)), 2 * 60 * 1000);
   if (getPool()) setTimeout(syncAdsUsersOnce, 5000);
 
   // ---- Inject nút "Lưu đơn VN" vào trang chủ dashboard ----
@@ -2506,14 +2964,19 @@ export function mountOMS(app, { mysql, express, getTeamLead = () => ({}) }) {
   async function orderPushRecipients(orderId) {
     const recipients = new Set();
     if (!orderId) return recipients;
-    const [order] = await db('SELECT nv_marketing, sale_phu_trach, trang_thai FROM oms_orders WHERE id=?', [orderId]);
+    const [order] = await db('SELECT nv_marketing, sale_phu_trach, trang_thai, chi_nhanh_id FROM oms_orders WHERE id=?', [orderId]);
     if (!order) return recipients;
-    const users = await db('SELECT username, ho_ten, role FROM oms_users WHERE active=1');
+    const users = await db('SELECT username, ho_ten, role, chi_nhanh_id, xem_chi_nhanh FROM oms_users WHERE active=1');
+    // Chi nhánh của đơn nằm trong quyền xem: chi nhánh chính, '*' = mọi chi nhánh, hoặc danh sách thêm
+    const sameCn = user => {
+      const ocn = Number(order.chi_nhanh_id) || 1, xem = String(user.xem_chi_nhanh || '').trim();
+      return xem === '*' || (Number(user.chi_nhanh_id) || 1) === ocn || xem.split(',').map(Number).includes(ocn);
+    };
     for (const user of users) {
       if (user.role === 'admin'
           || (user.role === 'marketing' && order.nv_marketing && getMktTeam(user).includes(order.nv_marketing))
-          || (user.role === 'sale' && order.sale_phu_trach && user.ho_ten === order.sale_phu_trach)
-          || (user.role === 'warehouse' && ['Đã chốt', 'Đang ship'].includes(order.trang_thai))) {
+          || (user.role === 'sale' && order.sale_phu_trach && user.ho_ten === order.sale_phu_trach && sameCn(user))
+          || (user.role === 'warehouse' && ['Đã chốt', 'Đang ship'].includes(order.trang_thai) && sameCn(user))) {
         recipients.add(user.username);
       }
     }
@@ -2523,9 +2986,10 @@ export function mountOMS(app, { mysql, express, getTeamLead = () => ({}) }) {
     return recipients;
   }
 
-  async function sendPushToAll(title, body, orderId) {
+  // onlyUsers (Set username) = chỉ gửi những người này (nhắc hẹn gọi, giao đơn); không có = theo quyền xem đơn
+  async function sendPushToAll(title, body, orderId, onlyUsers = null) {
     let recipients;
-    try { recipients = await orderPushRecipients(orderId); }
+    try { recipients = onlyUsers || await orderPushRecipients(orderId); }
     catch (e) { console.error('[OMS] Push recipients error:', e.message); return; }
     try { await sendApnsToAll(title, body, recipients); } catch(e) { console.error('[OMS] APNs error:', e.message); }
     try { await sendFcmToAll(title, body, recipients); } catch(e) { console.error('[OMS] FCM error:', e.message); }
