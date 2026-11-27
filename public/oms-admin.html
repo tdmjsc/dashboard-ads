@@ -182,6 +182,8 @@
     html body .tab-content > .flex.justify-between { flex-wrap: wrap; gap: 8px; }
     html body #omsToastContainer { left: 12px; right: 12px; max-width: none; top: 64px; }
   }
+  .ship-box { border: 1px solid var(--line); border-radius: 12px; background: #fff; }
+  .ship-box-h { padding: 10px 16px; border-bottom: 1px solid var(--line); font-weight: 600; font-size: 14px; }
   .tc-opt { display: flex; gap: 8px; align-items: flex-start; border: 1.5px solid var(--line); border-radius: 12px; padding: 10px; cursor: pointer; transition: border-color .15s, background .15s; }
   .tc-opt:has(input:checked) { border-color: var(--brand); background: var(--brand-50); }
   .tc-opt input { margin-top: 3px; accent-color: var(--brand); }
@@ -553,6 +555,7 @@
     <button onclick="whBulkPush('ghtk')" class="bg-green-600 text-white px-4 py-1.5 rounded text-sm font-medium">🚚 Đẩy GHTK</button>
     <button onclick="whBulkPush('vtp')" class="bg-red-500 text-white px-4 py-1.5 rounded text-sm font-medium">🚚 Đẩy VTP</button>
     <button onclick="openGiaoTC(getWhSelectedIds())" class="bg-indigo-600 text-white px-4 py-1.5 rounded text-sm font-medium">🛵 Giao thủ công</button>
+    <button onclick="whBulkDangDon()" class="bg-indigo-700 text-white px-4 py-1.5 rounded text-sm font-medium">🚚 Đăng theo phương án đã chọn</button>
     <button onclick="whBulkCancel()" class="bg-red-100 text-red-700 px-4 py-1.5 rounded text-sm font-medium">❌ Huỷ đăng</button>
     <button onclick="whPrintSelected()" class="bg-blue-600 text-white px-4 py-1.5 rounded text-sm font-medium">🖨️ In phiếu giao</button>
     <button onclick="whBulkDoiSoat()" class="bg-emerald-600 text-white px-4 py-1.5 rounded text-sm font-medium">💰 Đối soát đã chọn</button>
@@ -908,12 +911,16 @@
 
     <!-- Địa chỉ giao hàng -->
     <div class="bg-gray-50 rounded-lg p-4 mb-4">
-      <h3 class="text-sm font-semibold text-gray-600 mb-2">Địa chỉ giao hàng</h3>
+      <div class="flex flex-wrap items-center justify-between gap-2 mb-2">
+        <h3 class="text-sm font-semibold text-gray-600">Địa chỉ giao hàng</h3>
+        <label class="flex items-center gap-2 text-sm font-medium text-gray-700 cursor-pointer" title="Địa chỉ mới sau sáp nhập 7/2025: Tỉnh/TP → Phường/Xã, không có Quận/Huyện">
+          <input type="checkbox" id="cdCap2" onchange="setDiaChiCap(this.checked?2:3)"> Lưu theo địa chỉ 2 cấp</label>
+      </div>
       <div><label class="text-xs text-gray-500">Địa chỉ gốc (tin nhắn)</label><input type="text" id="cdDiaChiFull" class="w-full text-sm mb-2 bg-white" readonly></div>
-      <div class="grid grid-cols-2 md:grid-cols-4 gap-2">
+      <div class="grid grid-cols-2 md:grid-cols-4 gap-2" id="cdAddrGrid">
         <div><label class="text-xs text-gray-500">Tỉnh/TP *</label>
           <div id="ssTinh" class="ss-wrap"></div></div>
-        <div><label class="text-xs text-gray-500">Quận/Huyện *</label>
+        <div id="cdQuanWrap"><label class="text-xs text-gray-500">Quận/Huyện *</label>
           <div id="ssQuan" class="ss-wrap"></div></div>
         <div><label class="text-xs text-gray-500">Phường/Xã</label>
           <div id="ssPhuong" class="ss-wrap"></div></div>
@@ -953,15 +960,39 @@
       </div>
     </div>
 
-    <!-- Ghi chú -->
-    <div class="grid grid-cols-2 gap-3 mb-4">
-      <div>
-        <label class="text-xs text-gray-500">Chọn kho xuất hàng</label>
-        <select id="cdKho" class="w-full text-sm"><option value="0">-- Chọn kho --</option></select>
-      </div>
-      <div>
-        <label class="text-xs text-gray-500">Ghi chú giao hàng</label>
-        <textarea id="cdGhiChu" class="w-full text-sm" rows="2" placeholder="Cho xem và cho thử, gọi trước khi giao..."></textarea>
+    <!-- Vận chuyển (như Sandbox): lưu phương án theo đơn, kho bấm "Đăng đơn" là đẩy theo phương án này -->
+    <div class="ship-box mb-4">
+      <div class="ship-box-h">🚚 Vận chuyển</div>
+      <div class="grid grid-cols-1 sm:grid-cols-2 gap-x-4 gap-y-3 p-4">
+        <div><label class="text-xs text-gray-500">Kho</label>
+          <select id="cdKho" class="w-full text-sm" onchange="cdShipRefresh()"><option value="0">-- Chọn kho --</option></select></div>
+        <div><label class="text-xs text-gray-500">Địa chỉ lấy hàng</label>
+          <input type="text" id="cdPickAddr" class="w-full text-sm bg-gray-50 text-gray-500" readonly></div>
+        <div><label class="text-xs text-gray-500">Đơn vị giao hàng</label>
+          <select id="cdDvvc" class="w-full text-sm" onchange="cdShipRefresh()">
+            <option value="thu_cong">Giao hàng thủ công</option>
+            <option value="ghtk">Giao hàng tiết kiệm</option>
+            <option value="vtp">ViettelPost</option>
+          </select></div>
+        <div class="cd-api"><label class="text-xs text-gray-500">Tài khoản kết nối</label>
+          <input type="text" id="cdTaiKhoan" class="w-full text-sm bg-gray-50" readonly></div>
+        <div class="cd-tc hidden"><label class="text-xs text-gray-500">Hình thức</label>
+          <select id="cdHinhThuc" class="w-full text-sm" onchange="cdShipRefresh()">
+            <option value="ship_ngoai">Ship ngoài (shipper riêng, xe nhà…)</option>
+            <option value="khach_lay">Khách đến lấy tại cửa hàng</option>
+          </select></div>
+        <div class="cd-ghtk"><label class="text-xs text-gray-500">Phương thức giao hàng</label>
+          <select id="cdPtGiao" class="w-full text-sm"><option value="road">Giao thường</option><option value="fly">Giao nhanh (bay)</option></select></div>
+        <div class="cd-tc-ship hidden"><label class="text-xs text-gray-500">Người giao / SĐT shipper</label>
+          <input type="text" id="cdNguoiGiao" list="tcNguoiList" class="w-full text-sm" placeholder="VD: Anh Tuấn 0912…"></div>
+        <div class="cd-api"><label class="text-xs text-gray-500">Sử dụng bảo hiểm</label>
+          <label class="flex items-center gap-2 text-sm mt-2"><input type="checkbox" id="cdBaoHiem" checked> Khai giá = tổng tiền đơn</label></div>
+        <div><label class="text-xs text-gray-500">Nhãn đơn hàng</label>
+          <input type="text" id="cdNhan" class="w-full text-sm" placeholder="VD: Hàng dễ vỡ, Giao gấp…"></div>
+        <div class="cd-ghtk"><label class="text-xs text-gray-500">Thời gian lấy hàng</label>
+          <select id="cdCaLay" class="w-full text-sm"><option value="0">Mặc định</option><option value="1">Ca sáng</option><option value="2">Ca chiều</option><option value="3">Ca tối</option></select></div>
+        <div class="sm:col-span-2"><label class="text-xs text-gray-500">Ghi chú giao hàng</label>
+          <textarea id="cdGhiChu" class="w-full text-sm" rows="2" placeholder="Cho xem và cho thử, gọi trước khi giao..."></textarea></div>
       </div>
     </div>
 
@@ -1710,7 +1741,7 @@ function initAddressSelects() {
     onChange: (name, code) => {
       ssQuan.setItems([]); ssQuan.clear();
       ssPhuong.setItems([]); ssPhuong.clear();
-      if (code) loadDistricts(code);
+      if (code) (cdCap === 2 ? loadWards2(code) : loadDistricts(code));
     }
   });
   ssQuan = new SearchableSelect('ssQuan', {
@@ -1721,6 +1752,64 @@ function initAddressSelects() {
     }
   });
   ssPhuong = new SearchableSelect('ssPhuong', { placeholder: 'Gõ phường/xã...' });
+}
+
+// ---- Địa chỉ 3 cấp (mặc định) / 2 cấp (sau sáp nhập) ----
+let cdCap = 3, addressProvinces2 = [];
+// So tên địa danh: bỏ dấu, bỏ tiền tố (Thành phố, Tỉnh, TP, Quận, Huyện, Phường, Xã…), không phân biệt hoa thường
+function placeKey(s){
+  return String(s||'').normalize('NFD').replace(/[\u0300-\u036f]/g,'').replace(/[đĐ]/g,'d').toLowerCase()
+    .replace(/^\s*(thanh pho|tinh|tp\.?|t\.p\.?|quan|huyen|thi xa|tx\.?|phuong|xa|thi tran|tt\.?|p\.|q\.)\s+/,'')
+    .replace(/[^a-z0-9]+/g,' ').trim();
+}
+function findPlace(list, name){
+  const k = placeKey(name); if (!k) return null;
+  return list.find(i => placeKey(i.name) === k)
+    || (list.filter(i => { const ik = placeKey(i.name); return ik.length > 2 && (k.includes(ik) || ik.includes(k)); }).sort((a,b)=>placeKey(b.name).length-placeKey(a.name).length)[0]) || null;
+}
+// Đoán địa danh nằm trong chuỗi địa chỉ khách gõ (lấy tên dài nhất xuất hiện)
+function guessPlace(list, text){
+  const t = ' ' + placeKey(text).replace(/\s+/g,' ') + ' ';
+  return list.filter(i => { const k = placeKey(i.name); return k.length > 2 && t.includes(' ' + k + ' '); })
+    .sort((a,b)=>placeKey(b.name).length-placeKey(a.name).length)[0] || null;
+}
+async function loadProvinces2(){
+  if (!addressProvinces2.length) { try { addressProvinces2 = await (await fetch(API+'/address/v2/provinces')).json(); } catch(e) {} }
+  ssTinh.setItems(addressProvinces2);
+}
+async function loadWards2(provCode){
+  try { ssPhuong.setItems([{name:'Đang tải...', code:''}]); addressWards = await (await fetch(API+'/address/v2/wards/'+provCode)).json(); ssPhuong.setItems(addressWards); }
+  catch(e) { ssPhuong.setItems([]); }
+}
+// Điền Tỉnh → (Quận) → Phường theo tên đã lưu; tên không khớp thì đoán từ địa chỉ gốc
+async function fillAddress(tinh, quan, phuong, rawText){
+  ssTinh.setValue(''); ssQuan.setValue(''); ssQuan.setItems([]); ssPhuong.setValue(''); ssPhuong.setItems([]);
+  const provs = cdCap === 2 ? addressProvinces2 : addressProvinces;
+  const prov = findPlace(provs, tinh) || guessPlace(provs, rawText);
+  if (!prov) { ssTinh.setValue(tinh || ''); return; }
+  ssTinh.setValue(prov.name);
+  if (cdCap === 2) {
+    await loadWards2(prov.code);
+    const w = findPlace(addressWards, phuong) || guessPlace(addressWards, rawText);
+    if (w) ssPhuong.setValue(w.name);
+    return;
+  }
+  await loadDistricts(prov.code);
+  const dist = findPlace(addressDistricts, quan) || guessPlace(addressDistricts, rawText);
+  if (!dist) { if (quan) ssQuan.setValue(quan); return; }
+  ssQuan.setValue(dist.name);
+  await loadWards(dist.code);
+  const w = findPlace(addressWards, phuong) || guessPlace(addressWards, rawText);
+  if (w) ssPhuong.setValue(w.name);
+}
+async function setDiaChiCap(cap){
+  const keep = { t: ssTinh?.value, q: ssQuan?.value, p: ssPhuong?.value };
+  cdCap = cap;
+  document.getElementById('cdCap2').checked = cap === 2;
+  document.getElementById('cdQuanWrap').classList.toggle('hidden', cap === 2);
+  if (!ssTinh) return;
+  if (cap === 2) await loadProvinces2(); else await loadProvinces();
+  await fillAddress(keep.t, keep.q, keep.p, document.getElementById('cdDiaChiFull').value);
 }
 
 // ---- Load danh sách tỉnh ----
@@ -1776,41 +1865,57 @@ async function openChotDon(id){
   cdCalc();
   // Kho xuất hàng: kho của chi nhánh đơn + kho dùng chung
   const cdKho = document.getElementById('cdKho'), cnO = Number(o.chi_nhanh_id)||1;
-  cdKho.innerHTML = '<option value="0">-- Chọn kho --</option>' + allWarehouses
-    .filter(w => w.active && (!Number(w.chi_nhanh_id) || Number(w.chi_nhanh_id) === cnO))
-    .map(w => `<option value="${w.id}">${esc(w.ten_kho)} — ${esc(w.dia_chi||'')}</option>`).join('');
+  const khoList = allWarehouses.filter(w => w.active && (!Number(w.chi_nhanh_id) || Number(w.chi_nhanh_id) === cnO));
+  cdKho.innerHTML = '<option value="0">-- Chọn kho --</option>' + khoList.map(w => `<option value="${w.id}">${esc(w.ten_kho)}</option>`).join('');
   cdKho.value = String(o.kho_id||0);
   if (cdKho.value === '') cdKho.value = '0';
+  if (cdKho.value === '0' && khoList.length === 1) cdKho.value = String(khoList[0].id); // 1 kho thì chọn sẵn
+  // Phương án vận chuyển: đơn đã có thì giữ, chưa có thì lấy lựa chọn lần trước của trình duyệt (mặc định GHTK)
+  const plan = o.dvvc_chon || localStorage.getItem('omsDvvc') || 'ghtk';
+  document.getElementById('cdDvvc').value = ['ship_ngoai','khach_lay'].includes(plan) ? 'thu_cong' : plan;
+  document.getElementById('cdHinhThuc').value = plan === 'khach_lay' ? 'khach_lay' : 'ship_ngoai';
+  document.getElementById('cdPtGiao').value = o.pt_giao === 'fly' ? 'fly' : 'road';
+  document.getElementById('cdBaoHiem').checked = Number(o.bao_hiem ?? 1) !== 0;
+  document.getElementById('cdCaLay').value = String(Number(o.ca_lay_hang)||0);
+  document.getElementById('cdNhan').value = o.nhan_dh || '';
+  document.getElementById('cdNguoiGiao').value = o.nguoi_giao || '';
+  cdShipRefresh();
+  fetch(API+'/kho/nguoi-giao').then(r=>r.ok?r.json():[]).then(l=>{ document.getElementById('tcNguoiList').innerHTML = l.map(n=>`<option value="${esc(n)}">`).join(''); }).catch(()=>{});
 
-  // Init address selects + load provinces
+  // Địa chỉ: mặc định 3 cấp; đơn đã lưu 2 cấp thì mở lại 2 cấp. Tên đã lưu / tách từ tin nhắn có thể viết khác
+  // danh sách ("TP Hà Nội", "hà đông") → so gần đúng, không khớp thì đoán từ địa chỉ gốc.
   initAddressSelects();
-  await loadProvinces();
-
-  // Set existing address values and cascade-load districts/wards
-  const tinhName = o.tinh || '';
-  const quanName = o.quan || '';
-  const phuongName = o.phuong || '';
-
-  ssTinh.setValue(tinhName);
-  ssQuan.setValue(''); ssQuan.setItems([]);
-  ssPhuong.setValue(''); ssPhuong.setItems([]);
-
-  if (tinhName) {
-    const prov = addressProvinces.find(p => p.name === tinhName);
-    if (prov) {
-      await loadDistricts(prov.code);
-      ssQuan.setValue(quanName);
-      if (quanName) {
-        const dist = addressDistricts.find(d => d.name === quanName);
-        if (dist) {
-          await loadWards(dist.code);
-          ssPhuong.setValue(phuongName);
-        }
-      }
-    }
-  }
+  const cap = Number(o.dia_chi_cap) === 2 ? 2 : 3;
+  cdCap = cap;
+  document.getElementById('cdCap2').checked = cap === 2;
+  document.getElementById('cdQuanWrap').classList.toggle('hidden', cap === 2);
+  if (cap === 2) await loadProvinces2(); else await loadProvinces();
+  await fillAddress(o.tinh, o.quan, o.phuong, o.dia_chi_full || o.tin_nhan_goc || '');
 
   document.getElementById('chotDonModal').classList.remove('hidden');
+}
+// Mục Vận chuyển: hiện ô theo đơn vị giao hàng + địa chỉ lấy hàng / tài khoản kết nối của kho
+function cdShipRefresh(){
+  const dv = document.getElementById('cdDvvc').value, hinh = document.getElementById('cdHinhThuc').value;
+  const w = allWarehouses.find(x => String(x.id) === document.getElementById('cdKho').value);
+  const show = (sel, on) => document.querySelectorAll('#chotDonModal ' + sel).forEach(el => el.classList.toggle('hidden', !on));
+  show('.cd-api', dv !== 'thu_cong'); show('.cd-ghtk', dv === 'ghtk');
+  show('.cd-tc', dv === 'thu_cong'); show('.cd-tc-ship', dv === 'thu_cong' && hinh === 'ship_ngoai');
+  document.getElementById('cdPickAddr').value = w ? (dv === 'vtp' ? (w.vtp_sender_address || w.dia_chi) : (w.ghtk_pick_address || w.dia_chi)) || '' : '';
+  document.getElementById('cdTaiKhoan').value = dv === 'ghtk'
+    ? (w ? (w.ghtk_token ? `GHTK ${w.ten_kho}` : `Kho "${w.ten_kho}" chưa có token GHTK`) : 'GHTK (cấu hình chung)')
+    : dv === 'vtp' ? 'ViettelPost (cấu hình chung)' : '';
+}
+function cdShipPlan(){
+  const dv = document.getElementById('cdDvvc').value;
+  return {
+    dvvc_chon: dv === 'thu_cong' ? document.getElementById('cdHinhThuc').value : dv,
+    pt_giao: document.getElementById('cdPtGiao').value,
+    bao_hiem: document.getElementById('cdBaoHiem').checked ? 1 : 0,
+    ca_lay_hang: parseInt(document.getElementById('cdCaLay').value) || 0,
+    nhan_dh: document.getElementById('cdNhan').value,
+    nguoi_giao: document.getElementById('cdNguoiGiao').value,
+  };
 }
 function cdSelectProduct(){
   const sel = document.getElementById('cdSanPhamSelect');
@@ -1838,15 +1943,19 @@ async function submitChotDon(trangThai){
   const sl = parseInt(document.getElementById('cdSoLuong').value)||1;
   const diaChi = document.getElementById('cdDiaChi').value;
   const tinh = ssTinh ? ssTinh.value : '';
-  const quan = ssQuan ? ssQuan.value : '';
+  const quan = cdCap === 2 ? '' : (ssQuan ? ssQuan.value : '');
   const phuong = ssPhuong ? ssPhuong.value : '';
   const diaChiFull = [diaChi, phuong, quan, tinh].filter(Boolean).join(', ');
+  if (tt === 'Đã chốt' && (!tinh || (cdCap === 3 && !quan))) {
+    if (!confirm(cdCap === 2 ? 'Chưa chọn Tỉnh/TP. Vẫn chốt đơn?' : 'Chưa chọn đủ Tỉnh/TP và Quận/Huyện. Vẫn chốt đơn?')) return;
+  }
 
   const body = {
     trang_thai: tt,
     ten_kh: document.getElementById('cdTen').value,
     sdt: document.getElementById('cdSdt').value,
     dia_chi_full: diaChiFull,
+    tinh, quan, phuong, dia_chi: diaChi, dia_chi_cap: cdCap,
     san_pham: document.getElementById('cdSanPham').value,
     gia_ban: gia,
     so_luong: sl,
@@ -1855,7 +1964,9 @@ async function submitChotDon(trangThai){
     dat_coc: parseInt(document.getElementById('cdDatCoc').value)||0,
     ghi_chu: document.getElementById('cdGhiChu').value,
     kho_id: parseInt(document.getElementById('cdKho').value)||0,
+    ...cdShipPlan(),
   };
+  localStorage.setItem('omsDvvc', body.dvvc_chon);
   const r = await fetch(API+'/orders/'+chotDonId,{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});
   const d = await r.json();
   if(d.ok){
@@ -2027,6 +2138,48 @@ function whBulkDoiSoat(){
   if(!confirm(`Đánh dấu đã đối soát COD ${ids.length} đơn?`)) return;
   whDoiSoat(ids);
 }
+// ---- Phương án vận chuyển chọn lúc chốt đơn ----
+const DVVC_TEN = { ghtk:'GHTK', vtp:'ViettelPost', ship_ngoai:'Ship ngoài', khach_lay:'Khách đến lấy' };
+function planLine(o){
+  if (!o.dvvc_chon) return '';
+  const p = [DVVC_TEN[o.dvvc_chon]||o.dvvc_chon];
+  if (o.dvvc_chon==='ghtk') { p.push(o.pt_giao==='fly'?'Giao nhanh':'Giao thường'); if (Number(o.ca_lay_hang)) p.push(['','Ca sáng','Ca chiều','Ca tối'][o.ca_lay_hang]); }
+  if (['ghtk','vtp'].includes(o.dvvc_chon) && Number(o.bao_hiem)===0) p.push('không bảo hiểm');
+  if (o.dvvc_chon==='ship_ngoai' && o.nguoi_giao) p.push(o.nguoi_giao);
+  return `<div class="text-xs text-indigo-700 bg-indigo-50 rounded-lg px-2 py-1 mb-2">🚚 Dự kiến: ${esc(p.join(' · '))}${o.nhan_dh?` <span class="ml-1 px-1.5 rounded bg-white text-indigo-600">🏷 ${esc(o.nhan_dh)}</span>`:''}</div>`;
+}
+async function giaoTheoPlan(ids, hinh){
+  const r = await fetch(API+'/kho/giao-thu-cong',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({ids, hinh_thuc:hinh})});
+  const d = await r.json().catch(()=>({}));
+  return d.results || [{ ok:false, error: d.error||'Lỗi' }];
+}
+async function whDangDon(id, btn){
+  const o = whOrders.find(x=>x.id===id); if (!o) return;
+  const plan = o.dvvc_chon;
+  if (plan==='ghtk' || plan==='vtp') return whPushSingle(id, plan, btn);
+  if (!confirm(`Đơn #${id}: ${plan==='khach_lay'?'khách đã đến lấy hàng (→ Ship thành công)':'giao bằng ship ngoài'+(o.nguoi_giao?' — '+o.nguoi_giao:'')}?`)) return;
+  const res = (await giaoTheoPlan([id], plan))[0];
+  if (!res?.ok) alert('❌ ' + (res?.error||'Lỗi'));
+  loadWhView();
+}
+async function whBulkDangDon(){
+  const sel = getWhSelectedIds().map(id=>whOrders.find(x=>x.id===id)).filter(o=>o && o.trang_thai==='Đã chốt' && !o.ma_van_don);
+  const groups = {}; sel.forEach(o => { if (o.dvvc_chon) (groups[o.dvvc_chon] ||= []).push(o.id); });
+  const n = Object.values(groups).flat().length;
+  if (!n) return alert('Chọn đơn đã chốt chưa có vận đơn và đã chọn đơn vị giao hàng lúc chốt');
+  if (!confirm('Đăng ' + n + ' đơn theo phương án đã chọn:\n' + Object.entries(groups).map(([k,v])=>`• ${DVVC_TEN[k]}: ${v.length} đơn`).join('\n') + (sel.length>n?`\n(${sel.length-n} đơn chưa chọn đơn vị giao hàng → bỏ qua)`:''))) return;
+  const out = [];
+  for (const [k, ids] of Object.entries(groups)) {
+    if (k==='ghtk' || k==='vtp') {
+      const r = await fetch(API+(k==='ghtk'?'/push-ghtk':'/push-vtp'),{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({ids})});
+      out.push(...((await r.json().catch(()=>({}))).results||[]));
+    } else out.push(...await giaoTheoPlan(ids, k));
+  }
+  const fail = out.filter(x=>!x.ok);
+  alert(`✅ ${out.length-fail.length}/${n} đơn` + (fail.length ? '\n❌ Lỗi:\n' + fail.map(f=>`#${f.id}: ${f.error}`).join('\n') : ''));
+  loadWhView();
+}
+
 // ---- Giao hàng thủ công (ship ngoài / khách đến lấy) ----
 const isTC = o => ['Ship ngoài','Khách lấy'].includes(o.don_vi_vc);
 let tcIds = [];
@@ -2195,7 +2348,9 @@ async function loadWhView() {
                 <code class="text-[10px] font-mono text-gray-500">${esc(o.ma_don_hang||'(tự sinh)')}</code>
                 <button onclick="whChangeOrderCode(${o.id})" class="text-[10px] text-blue-600 hover:underline">✏️ Đổi mã</button>
               </div>
+              ${planLine(o)}
               <div class="flex gap-2 flex-wrap">
+                ${o.dvvc_chon?`<button onclick="whDangDon(${o.id},this)" class="bg-indigo-600 text-white px-3 py-1 rounded text-xs font-semibold">🚚 Đăng đơn (${esc(DVVC_TEN[o.dvvc_chon]||o.dvvc_chon)})</button>`:''}
                 <button onclick="whPushSingle(${o.id},'ghtk',this)" class="bg-green-100 text-green-700 px-3 py-1 rounded text-xs font-medium hover:bg-green-200">🚚 GHTK</button>
                 <button onclick="whPushSingle(${o.id},'vtp',this)" class="bg-red-100 text-red-700 px-3 py-1 rounded text-xs font-medium hover:bg-red-200">🚚 VTP</button>
                 <button onclick="openGiaoTC([${o.id}])" class="bg-indigo-100 text-indigo-700 px-3 py-1 rounded text-xs font-medium hover:bg-indigo-200">🛵 Thủ công</button>

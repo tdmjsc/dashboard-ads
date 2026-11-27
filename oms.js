@@ -5,6 +5,7 @@
 // =====================================================================
 import { sendApns, apnsConfigured } from './apns.js';
 import { sendFcm, fcmConfigured } from './fcm.js';
+import fs from 'node:fs';
 import { omsDateBoundary } from './oms-date.js';
 import { adRefFromUtm, hasUtm, findFbclid, adIdFromFbclid, utmFromUrl, landingKey, guessByLanding, landingCands, campLandings, addLandingHist, AD_REF_FROM } from './oms-ad-ref.js';
 
@@ -260,6 +261,13 @@ async function ensureTablesNow(pool) {
     "nhan_hoan_at DATETIME NULL",
     "ly_do_hoan VARCHAR(255) DEFAULT ''",
     "nguoi_giao VARCHAR(120) DEFAULT ''",    // giao thủ công: shipper ngoài / người giao
+    "dia_chi_cap TINYINT DEFAULT 3",
+    // ---- Phương án vận chuyển chọn lúc chốt (mục "Vận chuyển" như Sandbox); kho bấm "Đăng đơn" là đẩy theo phương án này ----
+    "dvvc_chon VARCHAR(20) DEFAULT ''",      // ghtk | vtp | ship_ngoai | khach_lay ('' = chưa chọn)
+    "pt_giao VARCHAR(10) DEFAULT 'road'",    // GHTK transport: road = Giao thường (bộ), fly = Giao nhanh (bay)
+    "bao_hiem TINYINT DEFAULT 1",            // 1 = gửi value = tổng tiền (khai giá như trước), 0 = value 0
+    "ca_lay_hang TINYINT DEFAULT 0",         // GHTK pick_work_shift: 0 mặc định, 1 sáng, 2 chiều, 3 tối
+    "nhan_dh VARCHAR(120) DEFAULT ''",       // nhãn đơn hàng (nội bộ, hiện trên thẻ kho)         // 3 = Tỉnh/Quận/Phường (cũ), 2 = Tỉnh/Phường (sau sáp nhập 7/2025, quan trống)
   ];
   for (const col of addCols) {
     try { await pool.query(`ALTER TABLE oms_orders ADD COLUMN ${col}`); } catch(e) {}
@@ -1360,7 +1368,9 @@ export function mountOMS(app, { mysql, express, getTeamLead = () => ({}) }) {
   }));
 
   // ===================== CẬP NHẬT ĐƠN =====================
-  const INFO_FIELDS = { ten_kh: 'tên KH', sdt: 'SĐT', dia_chi_full: 'địa chỉ', san_pham: 'SP', so_luong: 'SL', gia_ban: 'giá',
+  const SHIP_PLAN = ['dvvc_chon', 'pt_giao', 'bao_hiem', 'ca_lay_hang', 'nhan_dh', 'nguoi_giao'];
+  const DVVC_TEN = { ghtk: 'GHTK', vtp: 'ViettelPost', ship_ngoai: 'Ship ngoài', khach_lay: 'Khách đến lấy' };
+  const INFO_FIELDS = { dvvc_chon: 'ĐVVC dự kiến', pt_giao: 'phương thức giao', bao_hiem: 'bảo hiểm', ca_lay_hang: 'ca lấy hàng', nhan_dh: 'nhãn đơn', nguoi_giao: 'người giao', ten_kh: 'tên KH', sdt: 'SĐT', dia_chi_full: 'địa chỉ', san_pham: 'SP', so_luong: 'SL', gia_ban: 'giá',
     tong_tien: 'tổng tiền', phi_ship: 'phí ship', dat_coc: 'đặt cọc', kho_id: 'kho', nv_marketing: 'NV MKT',
     don_vi_vc: 'ĐVVC', ma_van_don: 'mã vận đơn', trang_thai_vc: 'TT vận chuyển', da_thanh_toan: 'đã thanh toán' };
   const same = (a, b) => String(a ?? '') === String(b ?? '');
@@ -1379,7 +1389,7 @@ export function mountOMS(app, { mysql, express, getTeamLead = () => ({}) }) {
     if (user.role === 'sale') {
       // Sale: sửa được thông tin đơn + chốt/huỷ chốt/không mua/quay lại đơn mới
       allowed = ['trang_thai','ghi_chu','sale_phu_trach','ten_kh','sdt',
-        'dia_chi_full','san_pham','so_luong','gia_ban','tong_tien','phi_ship','dat_coc','kho_id'];
+        'dia_chi_full','san_pham','so_luong','gia_ban','tong_tien','phi_ship','dat_coc','kho_id', ...SHIP_PLAN];
       const saleStatuses = ['Đơn mới','Đã chốt','Không mua','KNM lần 1','KNM lần 2','KNM lần 3','KNM lần 4','KNM lần 5','KNM lần 6'];
       if (d.trang_thai && !saleStatuses.includes(d.trang_thai)) {
         return res.status(403).json({ error: 'Sale không được đổi sang trạng thái này' });
@@ -1388,8 +1398,15 @@ export function mountOMS(app, { mysql, express, getTeamLead = () => ({}) }) {
       // Admin/Warehouse có thể cập nhật hầu hết trường
       allowed = ['trang_thai','ghi_chu','sale_phu_trach','don_vi_vc','ma_van_don',
         'trang_thai_vc','nv_marketing','ten_kh','sdt','dia_chi_full','san_pham',
-        'so_luong','gia_ban','tong_tien','phi_ship','dat_coc','da_thanh_toan','kho_id'];
+        'so_luong','gia_ban','tong_tien','phi_ship','dat_coc','da_thanh_toan','kho_id', ...SHIP_PLAN];
     }
+    // Phương án vận chuyển: kiểm giá trị
+    if (d.dvvc_chon !== undefined && !['', 'ghtk', 'vtp', 'ship_ngoai', 'khach_lay'].includes(d.dvvc_chon)) return res.status(400).json({ error: 'Đơn vị giao hàng không hợp lệ' });
+    if (d.pt_giao !== undefined && !['road', 'fly'].includes(d.pt_giao)) return res.status(400).json({ error: 'Phương thức giao không hợp lệ' });
+    if (d.bao_hiem !== undefined) d.bao_hiem = d.bao_hiem ? 1 : 0;
+    if (d.ca_lay_hang !== undefined) d.ca_lay_hang = [0, 1, 2, 3].includes(Number(d.ca_lay_hang)) ? Number(d.ca_lay_hang) : 0;
+    if (d.nhan_dh !== undefined) d.nhan_dh = String(d.nhan_dh || '').trim().slice(0, 120);
+    if (d.nguoi_giao !== undefined) d.nguoi_giao = String(d.nguoi_giao || '').trim().slice(0, 120);
 
     const sets = []; const vals = [];
     const set = (f, v) => { sets.push(`${f}=?`); vals.push(v); };
@@ -1397,9 +1414,16 @@ export function mountOMS(app, { mysql, express, getTeamLead = () => ({}) }) {
       if (d[f] === undefined) continue;
       set(f, d[f]);
       if (f === 'dia_chi_full') {
-        const addr = parseAddress(d[f]);
-        sets.push('tinh=?', 'quan=?', 'phuong=?', 'dia_chi=?');
-        vals.push(addr.tinh, addr.quan, addr.phuong, addr.diaChi);
+        if (d.tinh !== undefined) {
+          // Hộp chốt đơn gửi kèm Tỉnh / Quận / Phường đã chọn → lưu thẳng (không tách lại từ chuỗi)
+          const cap = Number(d.dia_chi_cap) === 2 ? 2 : 3;
+          set('tinh', String(d.tinh || '')); set('quan', cap === 2 ? '' : String(d.quan || ''));
+          set('phuong', String(d.phuong || '')); set('dia_chi', String(d.dia_chi || '')); set('dia_chi_cap', cap);
+        } else {
+          const addr = parseAddress(d[f]);
+          sets.push('tinh=?', 'quan=?', 'phuong=?', 'dia_chi=?');
+          vals.push(addr.tinh, addr.quan, addr.phuong, addr.diaChi);
+        }
       }
       if (f === 'sdt') set('sdt_norm', normPhone(d[f]));
     }
@@ -1765,13 +1789,17 @@ export function mountOMS(app, { mysql, express, getTeamLead = () => ({}) }) {
             name: o.ten_kh,
             address: o.dia_chi || o.dia_chi_full,
             province: recvProvince,
-            district: recvDistrict,
+            // Địa chỉ 2 cấp không có quận/huyện: gửi trống (chưa kiểm chứng GHTK nhận đơn không quận với đơn thật)
+            district: Number(o.dia_chi_cap) === 2 ? '' : recvDistrict,
             ward: recvWard,
             tel: o.sdt,
             email: '',
             hamlet: 'Khác',
             is_freeship: 1,
-            value: o.tong_tien || 0,
+            // Bảo hiểm (khai giá): tắt thì value 0 (chưa kiểm chứng GHTK nhận value 0 với đơn thật)
+            value: Number(o.bao_hiem) === 0 ? 0 : (o.tong_tien || 0),
+            transport: o.pt_giao === 'fly' ? 'fly' : 'road',
+            ...(Number(o.ca_lay_hang) ? { pick_work_shift: Number(o.ca_lay_hang) } : {}),
             pick_option: 'cod',
             note: o.ghi_chu || '',
           }
@@ -1854,7 +1882,7 @@ export function mountOMS(app, { mysql, express, getTeamLead = () => ({}) }) {
           SENDER_ADDRESS: process.env.VTP_SENDER_ADDRESS || '',
           SENDER_PHONE: process.env.VTP_SENDER_PHONE || '',
           RECEIVER_FULLNAME: o.ten_kh,
-          RECEIVER_ADDRESS: o.dia_chi_full || `${o.dia_chi}, ${o.phuong}, ${o.quan}, ${o.tinh}`,
+          RECEIVER_ADDRESS: o.dia_chi_full || [o.dia_chi, o.phuong, o.quan, o.tinh].filter(Boolean).join(', '),
           RECEIVER_PHONE: o.sdt,
           PRODUCT_NAME: o.san_pham || 'Sản phẩm',
           PRODUCT_QUANTITY: o.so_luong || 1,
@@ -2236,7 +2264,7 @@ export function mountOMS(app, { mysql, express, getTeamLead = () => ({}) }) {
   // Đồng bộ VC (syncShippingStatus) chỉ hỏi GHTK / VTP nên không đụng các đơn này.
   const GIAO_TC = { ship_ngoai: 'Ship ngoài', khach_lay: 'Khách lấy' };
   const isThuCong = vc => Object.values(GIAO_TC).includes(vc);
-  app.get('/oms/api/kho/nguoi-giao', requireRole('admin', 'warehouse'), wrap(async (req, res) => {
+  app.get('/oms/api/kho/nguoi-giao', requireRole('admin', 'warehouse', 'sale'), wrap(async (req, res) => {
     const rows = await db(`SELECT nguoi_giao, COUNT(*) AS n FROM oms_orders WHERE nguoi_giao<>''
       GROUP BY nguoi_giao ORDER BY n DESC LIMIT 30`);
     res.json(rows.map(r => r.nguoi_giao));
@@ -2248,16 +2276,17 @@ export function mountOMS(app, { mysql, express, getTeamLead = () => ({}) }) {
     if (!ids.length) return res.status(400).json({ error: 'Chưa chọn đơn' });
     if (!vc) return res.status(400).json({ error: 'Chọn hình thức giao' });
     if (d.ma_van_don && ids.length > 1) return res.status(400).json({ error: 'Mã vận đơn tự nhập chỉ dùng khi giao 1 đơn' });
-    const nguoi = String(d.nguoi_giao || '').trim().slice(0, 120);
+    const nguoiNhap = String(d.nguoi_giao || '').trim().slice(0, 120);
     const phi = Math.max(0, Math.round(Number(d.phi) || 0));
     const note = String(d.ghi_chu || '').trim().slice(0, 300);
     const lk = lockSql(req);
-    const orders = await db(`SELECT id, ma_van_don FROM oms_orders WHERE id IN (${ids.map(() => '?').join(',')})${lk.sql}
+    const orders = await db(`SELECT id, ma_van_don, nguoi_giao FROM oms_orders WHERE id IN (${ids.map(() => '?').join(',')})${lk.sql}
       AND trang_thai='Đã chốt'`, [...ids, ...lk.params]);
     const results = [];
     for (const o of orders) {
       if (o.ma_van_don) { results.push({ id: o.id, ok: false, error: 'Đơn đã có mã vận đơn' }); continue; }
       const ma = String(d.ma_van_don || '').trim().slice(0, 100) || `TC${o.id}`;
+      const nguoi = d.hinh_thuc === 'khach_lay' ? '' : (nguoiNhap || o.nguoi_giao || ''); // người giao chọn lúc chốt
       const xong = d.hinh_thuc === 'khach_lay';
       const now = utcStr();
       const r = await db(`UPDATE oms_orders SET don_vi_vc=?, ma_van_don=?, nguoi_giao=?, phi_vc_dv=?, dang_vc_at=?,
@@ -2336,28 +2365,39 @@ export function mountOMS(app, { mysql, express, getTeamLead = () => ({}) }) {
 
   // ===================== API ĐỊA CHỈ VIỆT NAM (proxy từ API công khai) =====================
   // Frontend gọi endpoint này → server fetch từ provinces.open-api.vn
+  // ---- Địa giới hành chính (Tỉnh / Quận / Phường) cho hộp chốt đơn ----
+  // Đọc từ dia-gioi-vn.json đi kèm code (63 tỉnh, 696 quận/huyện, 10.051 phường/xã; cấu trúc trước sáp nhập 7/2025,
+  // lấy từ provinces.open-api.vn/api/v1 ngày 27/11/2026, dạng [mã, tên, [con…]]). Trước đây gọi API đó mỗi lần mở hộp:
+  // API đổi đường dẫn (/api/ → 302 /api/v1/) và gọi từ máy chủ lỗi → trả danh sách tỉnh dự phòng mã sai → không ra quận / phường.
+  // Địa chỉ 2 cấp (34 tỉnh, 3.321 phường/xã sau sáp nhập): dia-gioi-vn-2cap.json, từ /api/v2 cùng ngày, dạng [mã, tên, [phường…]].
+  let DIA_GIOI = null, DIA_GIOI_2 = null;
+  const readDG = f => JSON.parse(fs.readFileSync(new URL(f, import.meta.url), 'utf8'));
+  function diaGioi() { return DIA_GIOI || (DIA_GIOI = readDG('./dia-gioi-vn.json')); }
+  function diaGioi2() { return DIA_GIOI_2 || (DIA_GIOI_2 = readDG('./dia-gioi-vn-2cap.json')); }
+  app.get('/oms/api/address/v2/provinces', wrap(async (req, res) => {
+    res.set('Cache-Control', 'public, max-age=86400');
+    res.json(diaGioi2().map(([code, name]) => ({ code, name })));
+  }));
+  app.get('/oms/api/address/v2/wards/:provinceCode', wrap(async (req, res) => {
+    const p = diaGioi2().find(x => x[0] === Number(req.params.provinceCode));
+    res.json((p?.[2] || []).map(([code, name]) => ({ code, name })));
+  }));
+  const dgItems = arr => (arr || []).map(([code, name]) => ({ code, name }));
   app.get('/oms/api/address/provinces', wrap(async (req, res) => {
-    try {
-      const r = await fetch('https://provinces.open-api.vn/api/?depth=1');
-      const data = await r.json();
-      res.json(data);
-    } catch(e) { res.json(TINH_TP.map((t,i) => ({ code: i+1, name: t }))); }
+    res.set('Cache-Control', 'public, max-age=86400');
+    res.json(dgItems(diaGioi()));
   }));
-
   app.get('/oms/api/address/districts/:provinceCode', wrap(async (req, res) => {
-    try {
-      const r = await fetch(`https://provinces.open-api.vn/api/p/${req.params.provinceCode}?depth=2`);
-      const data = await r.json();
-      res.json(data.districts || []);
-    } catch(e) { res.json([]); }
+    const p = diaGioi().find(x => x[0] === Number(req.params.provinceCode));
+    res.json(dgItems(p?.[2]));
   }));
-
   app.get('/oms/api/address/wards/:districtCode', wrap(async (req, res) => {
-    try {
-      const r = await fetch(`https://provinces.open-api.vn/api/d/${req.params.districtCode}?depth=2`);
-      const data = await r.json();
-      res.json(data.wards || []);
-    } catch(e) { res.json([]); }
+    const code = Number(req.params.districtCode);
+    for (const p of diaGioi()) {
+      const d = p[2].find(x => x[0] === code);
+      if (d) return res.json(dgItems(d[2]));
+    }
+    res.json([]);
   }));
 
   // ===================== WEBHOOK LOG =====================
