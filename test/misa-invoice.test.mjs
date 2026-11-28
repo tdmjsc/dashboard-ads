@@ -91,3 +91,10 @@ test('client: lỗi MISA → MisaError có mã; 429 → TooManyRequests', async 
   await assert.rejects(c.templates('T'), e => e.code === 'TooManyRequests');
   assert.throws(() => misaClient({ clientId: '', clientSecret: '' }), e => e.code === 'NoClient');
 });
+
+test('hoá đơn bán hàng (ký hiệu 2…) luôn không thuế dù cài thuế suất %', () => {
+  const inv = buildInvoice({ ...order, phi_ship: 0 }, { series: '2C26TYY', vat: '8%' });
+  assert.equal(inv.TotalVATAmountOC, 0);
+  assert.equal(inv.OriginalInvoiceDetail[0].VATRateName, 'KCT');
+  assert.equal(inv.TotalAmountOC, 450000);
+});

@@ -40,7 +40,9 @@ const r2 = n => Math.round((Number(n) || 0) * 100) / 100;
 export function buildInvoice(o, cfg) {
   const series = String(cfg.series || '').trim();
   const info = seriesInfo(series);
-  const vatName = cfg.vat || 'KCT';
+  // Hoá đơn bán hàng (ký hiệu 2…, hộ / cá nhân kinh doanh) không có thuế GTGT → luôn KCT, bỏ qua thuế suất cài đặt.
+  // Thuế suất % chỉ áp cho hoá đơn GTGT (ký hiệu 1…) của doanh nghiệp khai thuế GTGT.
+  const vatName = info.loai === '2' ? 'KCT' : (cfg.vat || 'KCT');
   const pct = vatPercent(vatName);
   const lines = [];
   const qty = Math.max(1, Number(o.so_luong) || 1);

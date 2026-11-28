@@ -1183,10 +1183,11 @@ function renderBranchList(){
         <div><label class="text-xs text-gray-500">Tài khoản meInvoice (email / SĐT)</label><input type="text" id="br_user_${b.id}" value="${esc(b.misa_username||'')}" class="w-full text-sm" autocomplete="off"></div>
         <div><label class="text-xs text-gray-500">Mật khẩu meInvoice</label><input type="password" id="br_pass_${b.id}" class="w-full text-sm" autocomplete="new-password" placeholder="${b.co_mat_khau ? 'Đã lưu — để trống = giữ' : ''}"></div>
         <div><label class="text-xs text-gray-500">Ký hiệu hoá đơn</label>
-          <input type="text" id="br_series_${b.id}" value="${esc(b.misa_inv_series||'')}" list="br_series_list_${b.id}" class="w-full text-sm" placeholder="Bấm Kiểm tra để tải ký hiệu" onchange="pickSeries(${b.id})">
+          <input type="text" id="br_series_${b.id}" value="${esc(b.misa_inv_series||'')}" list="br_series_list_${b.id}" class="w-full text-sm" placeholder="Bấm Kiểm tra để tải ký hiệu" onchange="pickSeries(${b.id})" oninput="pickSeries(${b.id})">
           <datalist id="br_series_list_${b.id}"></datalist></div>
         <div><label class="text-xs text-gray-500">Thuế suất trên hoá đơn</label>
-          <select id="br_vat_${b.id}" class="w-full text-sm">${VATS.map(v=>`<option ${v===(b.misa_vat||'KCT')?'selected':''}>${v}</option>`).join('')}</select></div>
+          <select id="br_vat_${b.id}" class="w-full text-sm ${String(b.misa_inv_series||'').startsWith('2')?'hidden':''}">${VATS.map(v=>`<option ${v===(b.misa_vat||'KCT')?'selected':''}>${v}</option>`).join('')}</select>
+          <div id="br_vat_note_${b.id}" class="text-xs text-gray-500 mt-2 ${String(b.misa_inv_series||'').startsWith('2')?'':'hidden'}">Hoá đơn bán hàng (hộ / cá nhân kinh doanh): không có thuế GTGT, OMS luôn xuất không thuế.</div></div>
       </div>
       <div class="flex flex-wrap gap-x-4 gap-y-1 mt-2 text-sm">
         <label class="flex items-center gap-2"><input type="checkbox" id="br_sum_${b.id}" ${b.misa_summary?'checked':''}> Gửi theo bảng tổng hợp</label>
@@ -1225,7 +1226,8 @@ async function testMisa(id, btn){
     const d = await r.json().catch(()=>({}));
     if (!r.ok) { st.className = 'text-xs mt-2 text-red-600'; st.textContent = '❌ ' + (d.error || 'Lỗi'); return; }
     MISA_TPL[id] = d.templates || [];
-    const act = MISA_TPL[id].filter(x => !x.Inactive);
+    // Hoá đơn bán hàng (2…) lên đầu: hộ / cá nhân kinh doanh dùng loại này
+    const act = MISA_TPL[id].filter(x => !x.Inactive).sort((a, b) => (b.InvSeries[0] === '2') - (a.InvSeries[0] === '2'));
     document.getElementById('br_series_list_' + id).innerHTML = act.map(x => `<option value="${esc(x.InvSeries)}">${esc(x.TemplateName||'')}${x.IsSendSummary?' · bảng tổng hợp':''}</option>`).join('');
     st.className = 'text-xs mt-2 text-green-600';
     st.textContent = `✅ Kết nối được MISA. Ký hiệu đang dùng: ${act.map(x=>x.InvSeries).join(', ') || '(không có)'}` + (act.length ? ' — chọn ở ô Ký hiệu rồi bấm Lưu' : '');
@@ -1236,6 +1238,11 @@ async function testMisa(id, btn){
 // Chọn ký hiệu → tự đánh dấu "bảng tổng hợp" theo mẫu MISA
 function pickSeries(id){
   const v = document.getElementById('br_series_' + id).value.trim();
+  // Ký hiệu 2… = hoá đơn bán hàng: ẩn thuế suất (luôn không thuế)
+  const banHang = v.startsWith('2');
+  document.getElementById('br_vat_' + id).classList.toggle('hidden', banHang);
+  document.getElementById('br_vat_note_' + id).classList.toggle('hidden', !banHang);
+  if (banHang) document.getElementById('br_vat_' + id).value = 'KCT';
   const tpl = (MISA_TPL[id] || []).find(x => x.InvSeries === v);
   if (tpl) document.getElementById('br_sum_' + id).checked = !!tpl.IsSendSummary;
 }
