@@ -98,3 +98,10 @@ test('hoá đơn bán hàng (ký hiệu 2…) luôn không thuế dù cài thu�
   assert.equal(inv.OriginalInvoiceDetail[0].VATRateName, 'KCT');
   assert.equal(inv.TotalAmountOC, 450000);
 });
+
+test('lỗi đăng nhập MISA: UserNotExist / MisaIdError ra thông báo dễ hiểu', async () => {
+  const mk = errs => misaClient({ clientId: 'C', clientSecret: 'S', fetchImpl: fakeFetch({
+    '/invoice/token': () => ({ status: 400, body: { Success: false, ErrorCode: 'UnAuthorize', DescriptionErrorCode: 'User chưa được phân quyền', Errors: errs } }) }) });
+  await assert.rejects(mk(['UserNotExist']).token({ taxcode: 'x', username: 'u', password: 'p' }), e => e.code === 'UserNotExist' && /EMAIL hoặc SĐT/.test(e.message));
+  await assert.rejects(mk(['MisaIdError']).token({ taxcode: 'x', username: 'u', password: 'p' }), e => e.code === 'MisaIdError');
+});

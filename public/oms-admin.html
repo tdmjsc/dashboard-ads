@@ -1180,7 +1180,7 @@ function renderBranchList(){
       <div class="grid sm:grid-cols-2 gap-2">
         <div><label class="text-xs text-gray-500">Tên chi nhánh (#${b.id})</label><input type="text" id="br_ten_${b.id}" value="${esc(b.ten)}" class="w-full text-sm"></div>
         <div><label class="text-xs text-gray-500">Mã số thuế (hộ kinh doanh)</label><input type="text" id="br_mst_${b.id}" value="${esc(b.ma_so_thue||'')}" class="w-full text-sm"></div>
-        <div><label class="text-xs text-gray-500">Tài khoản meInvoice (email / SĐT)</label><input type="text" id="br_user_${b.id}" value="${esc(b.misa_username||'')}" class="w-full text-sm" autocomplete="off"></div>
+        <div><label class="text-xs text-gray-500">Tài khoản đăng nhập meInvoice (email / SĐT MISA ID, không phải MST)</label><input type="text" id="br_user_${b.id}" value="${esc(b.misa_username||'')}" class="w-full text-sm" autocomplete="off"></div>
         <div><label class="text-xs text-gray-500">Mật khẩu meInvoice</label><input type="password" id="br_pass_${b.id}" class="w-full text-sm" autocomplete="new-password" placeholder="${b.co_mat_khau ? 'Đã lưu — để trống = giữ' : ''}"></div>
         <div><label class="text-xs text-gray-500">Ký hiệu hoá đơn</label>
           <input type="text" id="br_series_${b.id}" value="${esc(b.misa_inv_series||'')}" list="br_series_list_${b.id}" class="w-full text-sm" placeholder="Bấm Kiểm tra để tải ký hiệu" onchange="pickSeries(${b.id})" oninput="pickSeries(${b.id})">

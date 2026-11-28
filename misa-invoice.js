@@ -134,6 +134,10 @@ export function misaClient({ clientId, clientSecret, fetchImpl = fetch }) {
       const tok = pick(d, 'Data');
       if (ok(d) && typeof tok === 'string' && tok) return tok;
       if (ok(d)) throw new MisaError('TwoFactor', 'Tài khoản meInvoice đang bật xác thực 2 bước. Tắt xác thực 2 bước cho tài khoản dùng để kết nối.', { customData: pick(d, 'CustomData') });
+      // Lỗi đăng nhập: MISA trả UnAuthorize cho nhiều trường hợp, phân biệt bằng Errors (đã thử 28/11/2026)
+      const sub = [].concat(pick(d, 'Errors') || []).join(',');
+      if (/UserNotExist/i.test(sub)) throw new MisaError('UserNotExist', 'Tài khoản không có quyền trên mã số thuế này (MISA: "User chưa được phân quyền"). Kiểm tra: ô Tài khoản phải là EMAIL hoặc SĐT dùng để đăng nhập meInvoice (MISA ID), không phải MST; tài khoản đó phải được thêm vào đơn vị có đúng MST trên meInvoice.');
+      if (/MisaIdError/i.test(sub)) throw new MisaError('MisaIdError', 'Sai tài khoản hoặc mật khẩu meInvoice (MISA ID).');
       throw fail(d);
     },
     async templates(token, { withCode, year } = {}) {
