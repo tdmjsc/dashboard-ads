@@ -6,6 +6,8 @@
 import { sendApns, apnsConfigured } from './apns.js';
 import { sendFcm, fcmConfigured } from './fcm.js';
 import fs from 'node:fs';
+import crypto from 'node:crypto';
+import { misaClient, buildInvoice, seriesInfo, isTokenError, isRetryError, MisaError } from './misa-invoice.js';
 import { omsDateBoundary } from './oms-date.js';
 import { adRefFromUtm, hasUtm, findFbclid, adIdFromFbclid, utmFromUrl, landingKey, guessByLanding, landingCands, campLandings, addLandingHist, AD_REF_FROM } from './oms-ad-ref.js';
 
@@ -266,7 +268,13 @@ async function ensureTablesNow(pool) {
     "ly_do_hoan VARCHAR(255) DEFAULT ''",
     "nguoi_giao VARCHAR(120) DEFAULT ''",    // giao thủ công: shipper ngoài / người giao
     "dia_chi_cap TINYINT DEFAULT 3",
-    "giam_gia BIGINT DEFAULT 0",             // giảm giá lúc chốt; tong_tien = gia_ban × so_luong − giam_gia
+    "giam_gia BIGINT DEFAULT 0",
+    // ---- Hoá đơn điện tử MISA (misa-invoice.js). da_xuat_hd: 0 chưa, 1 đã phát hành, 2 đang phát hành ----
+    "misa_ref_id VARCHAR(64) DEFAULT ''",    // RefID gửi MISA (sinh 1 lần, gửi lại cùng RefID → MISA chặn trùng)
+    "so_hd VARCHAR(30) DEFAULT ''",          // số hoá đơn
+    "hd_series VARCHAR(20) DEFAULT ''",      // ký hiệu đã dùng
+    "hd_at DATETIME NULL",                   // lúc phát hành / lúc bắt đầu phát hành (da_xuat_hd = 2)
+    "misa_loi VARCHAR(500) DEFAULT ''",      // lỗi lần phát hành gần nhất             // giảm giá lúc chốt; tong_tien = gia_ban × so_luong − giam_gia
     // ---- Phương án vận chuyển chọn lúc chốt (mục "Vận chuyển" như Sandbox); kho bấm "Đăng đơn" là đẩy theo phương án này ----
     "dvvc_chon VARCHAR(20) DEFAULT ''",      // ghtk | vtp | ship_ngoai | khach_lay ('' = chưa chọn)
     "pt_giao VARCHAR(10) DEFAULT 'road'",    // GHTK transport: road = Giao thường (bộ), fly = Giao nhanh (bay)
@@ -414,6 +422,12 @@ async function ensureTablesNow(pool) {
   try { await pool.query('ALTER TABLE oms_warehouses ADD COLUMN chi_nhanh_id INT NOT NULL DEFAULT 0'); } catch(e) {}
   // Quyền xem đơn của sale / kho: '' = chỉ chi nhánh chính (chi_nhanh_id), '*' = mọi chi nhánh, '2,3' = thêm các chi nhánh này
   try { await pool.query("ALTER TABLE oms_users ADD COLUMN xem_chi_nhanh VARCHAR(100) NOT NULL DEFAULT ''"); } catch(e) {}
+  // Hoá đơn MISA theo chi nhánh: tài khoản meInvoice của hộ, ký hiệu, thuế suất, tự xuất khi giao thành công
+  for (const col of ["misa_username VARCHAR(120) DEFAULT ''", "misa_password VARCHAR(255) DEFAULT ''",
+    "misa_inv_series VARCHAR(20) DEFAULT ''", "misa_summary TINYINT DEFAULT 0", "misa_vat VARCHAR(20) DEFAULT 'KCT'",
+    "misa_auto TINYINT DEFAULT 0", "misa_token TEXT", "misa_token_at DATETIME NULL"]) {
+    try { await pool.query(`ALTER TABLE oms_branches ADD COLUMN ${col}`); } catch(e) {}
+  }
   // Sale đang nhận đơn tự chia (0 = tạm ngừng: nghỉ, hết ca)
   try { await pool.query('ALTER TABLE oms_users ADD COLUMN nhan_don TINYINT NOT NULL DEFAULT 1'); } catch(e) {}
   try { await pool.query('ALTER TABLE oms_orders ADD INDEX idx_cn (chi_nhanh_id)'); } catch(e) {}
@@ -2068,55 +2082,155 @@ export function mountOMS(app, { mysql, express, getTeamLead = () => ({}) }) {
   // ===================== TÍCH HỢP MISA =====================
   // Mỗi chi nhánh xuất bằng tài khoản MISA (MST) riêng ở oms_branches; chi nhánh chưa cài thì không xuất.
   // Biến môi trường MISA_* chỉ là dự phòng cho HKD TD (chi nhánh 1).
-  async function pushToMisa(orderId) {
-    const [order] = await db('SELECT * FROM oms_orders WHERE id=? AND da_xuat_hd=0', [orderId]);
-    if (!order) return;
-    const cn = Number(order.chi_nhanh_id) || 1;
-    const [br] = await db('SELECT * FROM oms_branches WHERE id=?', [cn]);
-    const accessToken = br?.misa_access_token || (cn === 1 ? process.env.MISA_ACCESS_TOKEN : '') || '';
-    const appId = br?.misa_app_id || (cn === 1 ? process.env.MISA_APP_ID : '') || '';
-    if (!accessToken || !appId) {
-      console.log(`[OMS] Chi nhánh ${br?.ten || cn} chưa cài MISA, không xuất HĐ đơn ${orderId}`);
-      return;
-    }
-
-    const body = {
-      inv_date: new Date().toISOString(),
-      buyer_name: order.ten_kh,
-      buyer_phone: order.sdt,
-      buyer_address: order.dia_chi_full,
-      payment_method: order.da_thanh_toan ? 'TM' : 'CK',
-      inv_details: [{
-        item_name: order.san_pham || 'Sản phẩm',
-        unit_name: 'Cái',
-        quantity: order.so_luong || 1,
-        unit_price: order.gia_ban || 0,
-        amount: order.tong_tien || 0,
-        vat_rate: 8,
-        vat_amount: Math.round((order.tong_tien || 0) * 0.08),
-      }]
-    };
-
-    try {
-      const resp = await fetch('https://api.meinvoice.vn/api/v1/invoices', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'Authorization': `Bearer ${accessToken}`,
-          'X-MISA-AppID': appId,
-        },
-        body: JSON.stringify(body)
-      });
-      const data = await resp.json();
-      if (data.Success || data.Data) {
-        await db('UPDATE oms_orders SET da_xuat_hd=1, misa_invoice_id=? WHERE id=?',
-          [data.Data?.inv_id || 'OK', orderId]);
-        console.log('[OMS] Misa invoice created for order', orderId, 'chi nhánh', br?.ten || cn);
-      }
-    } catch(e) {
-      console.error('[OMS] Misa error:', e.message);
-    }
+  // ===================== HOÁ ĐƠN ĐIỆN TỬ MISA (misa-invoice.js, docs/misa-meinvoice-api.md) =====================
+  // ClientID / ClientSecret của ứng dụng: oms_config misa_client_id / misa_client_secret (hoặc .env MISA_CLIENT_ID / MISA_CLIENT_SECRET).
+  // Mỗi chi nhánh = 1 hộ kinh doanh: MST + tài khoản meInvoice + ký hiệu. Phát hành LẦN LƯỢT (MISA yêu cầu tuần tự theo
+  // ký hiệu, nghỉ ~3 giây), giành đơn bằng UPDATE da_xuat_hd 0 → 2 nên nhiều tiến trình không phát hành trùng; gửi lại
+  // cùng RefID nên MISA chặn trùng (DuplicateInvoiceRefID → tra trạng thái theo RefID).
+  async function misaApp() {
+    const rows = await db("SELECT config_key, config_value FROM oms_config WHERE config_key IN ('misa_client_id','misa_client_secret')");
+    const c = Object.fromEntries(rows.map(r => [r.config_key, r.config_value]));
+    return misaClient({ clientId: c.misa_client_id || process.env.MISA_CLIENT_ID, clientSecret: c.misa_client_secret || process.env.MISA_CLIENT_SECRET });
   }
+  const misaReady = br => !!(br && br.ma_so_thue && br.misa_username && br.misa_password && br.misa_inv_series);
+  // Token lưu theo chi nhánh (hạn 14 ngày → dùng tối đa 13 ngày), lỗi token thì lấy mới 1 lần rồi gọi lại
+  async function misaWithToken(br, client, fn) {
+    const fresh = async () => {
+      const tok = await client.token({ taxcode: br.ma_so_thue, username: br.misa_username, password: br.misa_password });
+      await db('UPDATE oms_branches SET misa_token=?, misa_token_at=? WHERE id=?', [tok, utcStr(), br.id]);
+      br.misa_token = tok; return tok;
+    };
+    const age = br.misa_token_at ? Date.now() - new Date(br.misa_token_at).getTime() : Infinity;
+    let tok = br.misa_token && age < 13 * 86400000 ? br.misa_token : await fresh();
+    try { return await fn(tok); }
+    catch (e) { if (!isTokenError(e.code)) throw e; tok = await fresh(); return fn(tok); }
+  }
+  const sleep = ms => new Promise(r => setTimeout(r, ms));
+  let misaChain = Promise.resolve();
+
+  // Phát hành 1 đơn (đã giành da_xuat_hd = 2). Trả { ok, so_hd } hoặc { ok:false, error }
+  async function misaPublishOne(id, user) {
+    const [o] = await db('SELECT * FROM oms_orders WHERE id=?', [id]);
+    const done = async (sets, vals) => db(`UPDATE oms_orders SET ${sets} WHERE id=?`, [...vals, id]);
+    const fail = async msg => {
+      await done('da_xuat_hd=0, misa_loi=?', [String(msg).slice(0, 500)]);
+      await logOrder(id, user, 'Xuất HĐ lỗi', msg);
+      return { id, ok: false, error: msg };
+    };
+    if (!o) return { id, ok: false, error: 'Không có đơn' };
+    const [br] = await db('SELECT * FROM oms_branches WHERE id=?', [Number(o.chi_nhanh_id) || 1]);
+    if (!misaReady(br)) return fail(`Chi nhánh ${br?.ten || ''} chưa cài đủ MISA (MST, tài khoản, mật khẩu, ký hiệu)`);
+    let client;
+    try { client = await misaApp(); } catch (e) { return fail(e.message); }
+    // RefID sinh 1 lần cho đơn: gửi lại vẫn cùng RefID
+    if (!o.misa_ref_id) {
+      const ref = crypto.randomUUID();
+      await db("UPDATE oms_orders SET misa_ref_id=? WHERE id=? AND misa_ref_id=''", [ref, id]);
+      const [r] = await db('SELECT misa_ref_id FROM oms_orders WHERE id=?', [id]);
+      o.misa_ref_id = r.misa_ref_id;
+    }
+    const info = seriesInfo(br.misa_inv_series);
+    const inv = buildInvoice(o, { series: br.misa_inv_series, vat: br.misa_vat, summary: !!br.misa_summary });
+    const saveOk = async (tran, soHd) => {
+      await done('da_xuat_hd=1, misa_invoice_id=?, so_hd=?, hd_series=?, hd_at=?, misa_loi=?',
+        [String(tran || '').slice(0, 100), String(soHd || '').slice(0, 30), br.misa_inv_series, utcStr(), '']);
+      await logOrder(id, user, 'Xuất HĐ', `${br.misa_inv_series} số ${soHd || '?'} · mã tra cứu ${tran || '?'} · ${br.ten}`);
+      return { id, ok: true, so_hd: soHd || '', tran };
+    };
+    // Tra trạng thái theo RefID (khi MISA báo trùng RefID / mất phản hồi)
+    const byRef = async () => {
+      const st = await misaWithToken(br, client, t => client.status(t, [o.misa_ref_id], { byRef: true, withCode: info.coMa, mayTinhTien: info.mayTinhTien }));
+      const s0 = st.find(x => x?.TransactionID) || st[0];
+      return s0 && s0.TransactionID ? s0 : null;
+    };
+    for (let lan = 1; lan <= 3; lan++) {
+      try {
+        const results = await misaWithToken(br, client, t => client.publish(t, info.signType, [inv]));
+        const r0 = results.find(x => (x.RefID || x.refID) === o.misa_ref_id) || results[0] || {};
+        const code = r0.ErrorCode || r0.errorCode;
+        if (!code) return saveOk(r0.TransactionID || r0.transactionID, r0.InvNo || r0.invNo || r0.InvoiceNumber);
+        if (code === 'DuplicateInvoiceRefID') {
+          const s0 = await byRef();
+          if (s0) return saveOk(s0.TransactionID, s0.InvNo || s0.InvoiceNumber || '');
+          return fail('MISA báo trùng RefID nhưng không tra được hoá đơn — kiểm tra trên meInvoice');
+        }
+        if (isRetryError(code) && lan < 3) { await sleep(3000 * lan); continue; }
+        return fail(`${code}: ${r0.DescriptionErrorCode || r0.descriptionErrorCode || ''}`);
+      } catch (e) {
+        if (isRetryError(e.code) && lan < 3) { await sleep(3000 * lan); continue; }
+        return fail(e.message);
+      }
+    }
+    return fail('Thử 3 lần không được');
+  }
+  // Xếp hàng phát hành (tuần tự trong tiến trình). manual = admin / kho bấm, bỏ qua cờ "tự xuất".
+  function misaQueue(ids, { manual = false, user = 'Hệ thống' } = {}) {
+    const job = misaChain.then(async () => {
+      const out = [];
+      for (const id of ids) {
+        const [o] = await db('SELECT o.id, o.trang_thai, o.da_xuat_hd, b.misa_auto FROM oms_orders o LEFT JOIN oms_branches b ON b.id = o.chi_nhanh_id WHERE o.id=?', [id]);
+        if (!o) { out.push({ id, ok: false, error: 'Không có đơn' }); continue; }
+        if (Number(o.da_xuat_hd) === 1) { out.push({ id, ok: false, error: 'Đơn đã có hoá đơn' }); continue; }
+        if (o.trang_thai !== 'Ship thành công') { out.push({ id, ok: false, error: 'Chỉ xuất HĐ cho đơn Ship thành công' }); continue; }
+        if (!manual && !Number(o.misa_auto)) continue;
+        // Giành đơn: 0 → 2 (tiến trình khác đang làm thì bỏ qua)
+        const r = await db('UPDATE oms_orders SET da_xuat_hd=2, hd_at=? WHERE id=? AND da_xuat_hd=0', [utcStr(), id]);
+        if (!r.affectedRows) { out.push({ id, ok: false, error: 'Đơn đang được phát hành' }); continue; }
+        out.push(await misaPublishOne(id, user));
+        await sleep(3000); // MISA: nghỉ giữa các lần phát hành cùng ký hiệu
+      }
+      return out;
+    });
+    misaChain = job.catch(() => {});
+    return job;
+  }
+  // Gọi khi đơn chuyển Ship thành công: chỉ xuất nếu chi nhánh bật "tự xuất HĐ"; không chờ
+  async function pushToMisa(orderId) {
+    misaQueue([Number(orderId)]).catch(e => console.error('[OMS] Xuất HĐ MISA lỗi:', e.message));
+  }
+
+  // ---- API ----
+  app.get('/oms/api/misa/config', requireRole('admin'), wrap(async (req, res) => {
+    const rows = await db("SELECT config_key, config_value FROM oms_config WHERE config_key IN ('misa_client_id','misa_client_secret')");
+    const c = Object.fromEntries(rows.map(r => [r.config_key, r.config_value]));
+    res.json({ client_id: c.misa_client_id || '', co_secret: !!(c.misa_client_secret || process.env.MISA_CLIENT_SECRET),
+      env: !!process.env.MISA_CLIENT_ID });
+  }));
+  app.post('/oms/api/misa/config', requireRole('admin'), jsonParser, wrap(async (req, res) => {
+    const set = async (k, v) => db('INSERT INTO oms_config (config_key, config_value) VALUES (?,?) ON DUPLICATE KEY UPDATE config_value=?', [k, v, v]);
+    if (req.body?.client_id !== undefined) await set('misa_client_id', String(req.body.client_id).trim());
+    if (req.body?.client_secret) await set('misa_client_secret', String(req.body.client_secret).trim()); // trống = giữ
+    await db('UPDATE oms_branches SET misa_token=NULL, misa_token_at=NULL');
+    res.json({ ok: true });
+  }));
+  // Kiểm tra kết nối 1 chi nhánh: lấy token + danh sách ký hiệu (có mã / không mã)
+  app.post('/oms/api/misa/test', requireRole('admin'), jsonParser, wrap(async (req, res) => {
+    const [br] = await db('SELECT * FROM oms_branches WHERE id=?', [Number(req.body?.cn) || 1]);
+    if (!br) return res.status(404).json({ error: 'Không có chi nhánh' });
+    if (!br.ma_so_thue || !br.misa_username || !br.misa_password) return res.status(400).json({ error: 'Nhập MST, tài khoản, mật khẩu meInvoice rồi bấm Lưu trước' });
+    try {
+      const client = await misaApp();
+      br.misa_token = null; // kiểm tra = luôn lấy token mới
+      const list = [];
+      for (const withCode of [false, true]) {
+        const t = await misaWithToken(br, client, tok => client.templates(tok, { withCode }));
+        for (const x of t) if (!list.some(y => y.InvSeries === x.InvSeries)) list.push(x);
+      }
+      res.json({ ok: true, templates: list.map(x => ({ InvSeries: x.InvSeries, TemplateName: x.TemplateName, Inactive: !!x.Inactive,
+        IsSendSummary: !!x.IsSendSummary, IsMoreVATRate: !!x.IsMoreVATRate })) });
+    } catch (e) { res.status(400).json({ error: e.message, code: e.code }); }
+  }));
+  // Xuất HĐ bằng tay (admin / kho): đơn Ship thành công chưa có HĐ, trong quyền xem chi nhánh
+  app.post('/oms/api/misa/publish', requireRole('admin', 'warehouse'), jsonParser, wrap(async (req, res) => {
+    const ids = (req.body?.ids || []).map(Number).filter(Boolean).slice(0, 30);
+    if (!ids.length) return res.status(400).json({ error: 'Chưa chọn đơn' });
+    const lk = lockSql(req);
+    const rows = await db(`SELECT id FROM oms_orders WHERE id IN (${ids.map(() => '?').join(',')})${lk.sql}`, [...ids, ...lk.params]);
+    const allowed = new Set(rows.map(r => r.id));
+    const out = await misaQueue(ids.filter(i => allowed.has(i)), { manual: true, user: req.session.omsUser });
+    for (const i of ids) if (!allowed.has(i)) out.push({ id: i, ok: false, error: 'Đơn thuộc chi nhánh khác' });
+    res.json({ ok: true, results: out });
+  }));
 
   // ===================== PHÂN CÔNG SALE (Admin) =====================
   // Phân đơn thủ công
@@ -2356,7 +2470,11 @@ export function mountOMS(app, { mysql, express, getTeamLead = () => ({}) }) {
     await ensureTables(getPool());
     const rows = await db('SELECT * FROM oms_branches ORDER BY id');
     const isAdmin = req.session.omsUser.role === 'admin';
-    res.json(rows.map(r => isAdmin ? r : { id: r.id, ten: r.ten, ma_so_thue: r.ma_so_thue, active: r.active }));
+    res.json(rows.map(r => isAdmin
+      ? { id: r.id, ten: r.ten, ma_so_thue: r.ma_so_thue, active: r.active, misa_username: r.misa_username,
+          co_mat_khau: !!r.misa_password, misa_inv_series: r.misa_inv_series, misa_summary: r.misa_summary,
+          misa_vat: r.misa_vat || 'KCT', misa_auto: r.misa_auto, misa_token_at: r.misa_token_at }
+      : { id: r.id, ten: r.ten, ma_so_thue: r.ma_so_thue, active: r.active }));
   }));
   app.post('/oms/api/branches', requireRole('admin'), jsonParser, wrap(async (req, res) => {
     const ten = String(req.body?.ten || '').trim();
@@ -2367,8 +2485,16 @@ export function mountOMS(app, { mysql, express, getTeamLead = () => ({}) }) {
   }));
   app.put('/oms/api/branches/:id', requireRole('admin'), jsonParser, wrap(async (req, res) => {
     const sets = []; const vals = [];
-    for (const f of ['ten', 'ma_so_thue', 'misa_app_id', 'misa_access_token', 'active']) {
-      if (req.body?.[f] !== undefined) { sets.push(`${f}=?`); vals.push(f === 'active' ? (req.body[f] ? 1 : 0) : String(req.body[f]).trim()); }
+    for (const f of ['ten', 'ma_so_thue', 'active', 'misa_username', 'misa_inv_series', 'misa_vat', 'misa_summary', 'misa_auto']) {
+      if (req.body?.[f] === undefined) continue;
+      sets.push(`${f}=?`);
+      vals.push(['active', 'misa_summary', 'misa_auto'].includes(f) ? (req.body[f] ? 1 : 0) : String(req.body[f]).trim());
+    }
+    // Mật khẩu meInvoice: để trống = giữ mật khẩu cũ
+    if (req.body?.misa_password) { sets.push('misa_password=?'); vals.push(String(req.body.misa_password)); }
+    // Đổi MST / tài khoản / mật khẩu → bỏ token cũ
+    if (['ma_so_thue', 'misa_username', 'misa_password'].some(f => req.body?.[f] !== undefined && req.body[f] !== '')) {
+      sets.push('misa_token=NULL', 'misa_token_at=NULL');
     }
     if (!sets.length) return res.status(400).json({ error: 'Không có gì' });
     if (req.body.ten !== undefined && !String(req.body.ten).trim()) return res.status(400).json({ error: 'Tên chi nhánh trống' });
@@ -2793,6 +2919,10 @@ export function mountOMS(app, { mysql, express, getTeamLead = () => ({}) }) {
       const users = await usernamesOf(o.sale_phu_trach);
       if (users.size) app._omsPush(`⏰ Tới giờ gọi lại đơn #${o.id}`, `${o.ten_kh || ''} ${o.sdt || ''} — ${o.san_pham || ''}`, o.id, users);
     }
+    // 1b) Đơn kẹt "đang phát hành HĐ" > 15 phút (tiến trình chết giữa chừng) → trả về chưa xuất để bấm Xuất lại
+    //     (gửi lại cùng RefID: nếu MISA đã phát hành thì báo trùng RefID → OMS tra trạng thái, không ra 2 hoá đơn)
+    await db(`UPDATE oms_orders SET da_xuat_hd=0, misa_loi='Phát hành bị gián đoạn, bấm Xuất HĐ lại'
+      WHERE da_xuat_hd=2 AND hd_at < ?`, [utcStr(Date.now() - 15 * 60000)]);
     // 2) Thu hồi: đơn mới, sale nhận quá N phút chưa tác nghiệp → chia sale khác cùng chi nhánh (7h–22h giờ VN)
     const phut = await cfgNum('thu_hoi_phut', 0);
     const gioVN = new Date(Date.now() + 7 * 3600000).getUTCHours();

@@ -524,7 +524,7 @@
       <div class="text-2xl font-bold text-blue-600" id="whStatTotal">0</div><div class="text-xs text-gray-500">Tổng</div>
     </div>
   </div>
-  <div class="grid grid-cols-3 gap-3 mb-4">
+  <div class="grid grid-cols-2 md:grid-cols-4 gap-3 mb-4">
     <div class="bg-white rounded-xl p-3 shadow-sm text-center border-l-4 border-red-500 cursor-pointer hover:shadow-md" onclick="whFilterSpecial('quahan')">
       <div class="text-xl font-bold text-red-600" id="whStatQuaHan">0</div><div class="text-xs text-gray-500">⚠ Quá hạn gửi (<span id="whHanGio">24</span>h)</div>
     </div>
@@ -533,6 +533,9 @@
     </div>
     <div class="bg-white rounded-xl p-3 shadow-sm text-center border-l-4 border-purple-500 cursor-pointer hover:shadow-md" onclick="whFilterSpecial('hoan')">
       <div class="text-xl font-bold text-purple-600" id="whStatHoan">0</div><div class="text-xs text-gray-500">📥 Hoàn chưa nhận hàng</div>
+    </div>
+    <div class="bg-white rounded-xl p-3 shadow-sm text-center border-l-4 border-sky-500 cursor-pointer hover:shadow-md" onclick="whFilterSpecial('chuahd')">
+      <div class="text-xl font-bold text-sky-600" id="whStatChuaHd">0</div><div class="text-xs text-gray-500">🧾 Đã giao chưa có HĐ <span id="whHdLoi" class="text-red-600"></span></div>
     </div>
   </div>
   <div class="bg-white rounded-xl p-3 shadow-sm mb-4 flex flex-wrap items-center gap-2">
@@ -564,6 +567,7 @@
     <button onclick="whBulkCancel()" class="bg-red-100 text-red-700 px-4 py-1.5 rounded text-sm font-medium">❌ Huỷ đăng</button>
     <button onclick="whPrintSelected()" class="bg-blue-600 text-white px-4 py-1.5 rounded text-sm font-medium">🖨️ In phiếu giao</button>
     <button onclick="whBulkDoiSoat()" class="bg-emerald-600 text-white px-4 py-1.5 rounded text-sm font-medium">💰 Đối soát đã chọn</button>
+    <button onclick="whBulkXuatHd()" class="bg-sky-600 text-white px-4 py-1.5 rounded text-sm font-medium">🧾 Xuất HĐ đã chọn</button>
     <span id="whSelectedInfo" class="text-sm text-gray-500 leading-8 ml-2"></span>
   </div>
   <div id="whOrderGrid" class="grid md:grid-cols-2 gap-3"></div>
@@ -687,8 +691,17 @@
     </div>
   </div>
   <div class="bg-white rounded-xl p-5 shadow-sm mb-4">
-    <h3 class="font-semibold text-blue-700 mb-1">🏢 Chi nhánh + hoá đơn điện tử MISA</h3>
-    <p class="text-xs text-gray-400 mb-3">Mỗi chi nhánh xuất hoá đơn bằng mã số thuế + tài khoản MISA riêng. Đơn "Ship thành công" xuất theo chi nhánh của đơn; chi nhánh chưa nhập App ID / Token thì không xuất. Mỗi chi nhánh có nút Lưu riêng.</p>
+    <h3 class="font-semibold text-blue-700 mb-1">🏢 Chi nhánh + hoá đơn điện tử MISA meInvoice</h3>
+    <p class="text-xs text-gray-400 mb-3">Ứng dụng "TDMJSC Internal app" trên developer.misa.vn (Quản lý ứng dụng → Hóa đơn điện tử) cấp Client ID / Client Secret. Mỗi chi nhánh là 1 hộ kinh doanh: MST + tài khoản meInvoice + ký hiệu hoá đơn riêng. Chi nhánh đang xuất HĐ qua Sandbox thì <b>không bật</b> "Tự xuất HĐ" để tránh xuất trùng.</p>
+    <div class="border rounded-lg p-3 mb-3 bg-gray-50">
+      <div class="text-sm font-semibold mb-2">🔑 Ứng dụng MISA (dùng chung mọi chi nhánh)</div>
+      <div class="grid sm:grid-cols-2 gap-2">
+        <div><label class="text-xs text-gray-500">Client ID</label><input type="text" id="misaClientId" class="w-full text-sm" autocomplete="off"></div>
+        <div><label class="text-xs text-gray-500">Client Secret</label><input type="password" id="misaClientSecret" class="w-full text-sm" autocomplete="new-password"></div>
+      </div>
+      <div class="flex justify-between items-center mt-2"><span id="misaAppState" class="text-xs text-gray-500"></span>
+        <button onclick="saveMisaApp()" class="bg-blue-600 text-white px-3 py-1 rounded text-sm">💾 Lưu ứng dụng</button></div>
+    </div>
     <div id="branchList" class="grid gap-3"></div>
   </div>
   <div class="bg-white rounded-xl p-5 shadow-sm mb-4">
@@ -1159,23 +1172,79 @@ function onCnFilterChange(){
 function renderBranchList(){
   const el = document.getElementById('branchList'); if (!el) return;
   if (currentUser?.role !== 'admin') { el.innerHTML = ''; return; }
-  el.innerHTML = BRANCHES.map(b => `
+  const VATS = ['KCT','KKKNT','0%','5%','8%','10%'];
+  el.innerHTML = BRANCHES.map(b => {
+    const du = b.ma_so_thue && b.misa_username && b.co_mat_khau && b.misa_inv_series;
+    return `
     <div class="border rounded-lg p-3">
-      <div class="grid grid-cols-2 gap-2">
+      <div class="grid sm:grid-cols-2 gap-2">
         <div><label class="text-xs text-gray-500">Tên chi nhánh (#${b.id})</label><input type="text" id="br_ten_${b.id}" value="${esc(b.ten)}" class="w-full text-sm"></div>
-        <div><label class="text-xs text-gray-500">Mã số thuế</label><input type="text" id="br_mst_${b.id}" value="${esc(b.ma_so_thue||'')}" class="w-full text-sm"></div>
-        <div><label class="text-xs text-gray-500">MISA App ID</label><input type="text" id="br_app_${b.id}" value="${esc(b.misa_app_id||'')}" class="w-full text-sm"></div>
-        <div><label class="text-xs text-gray-500">MISA Access Token</label><input type="text" id="br_tok_${b.id}" value="${esc(b.misa_access_token||'')}" class="w-full text-sm"></div>
+        <div><label class="text-xs text-gray-500">Mã số thuế (hộ kinh doanh)</label><input type="text" id="br_mst_${b.id}" value="${esc(b.ma_so_thue||'')}" class="w-full text-sm"></div>
+        <div><label class="text-xs text-gray-500">Tài khoản meInvoice (email / SĐT)</label><input type="text" id="br_user_${b.id}" value="${esc(b.misa_username||'')}" class="w-full text-sm" autocomplete="off"></div>
+        <div><label class="text-xs text-gray-500">Mật khẩu meInvoice</label><input type="password" id="br_pass_${b.id}" class="w-full text-sm" autocomplete="new-password" placeholder="${b.co_mat_khau ? 'Đã lưu — để trống = giữ' : ''}"></div>
+        <div><label class="text-xs text-gray-500">Ký hiệu hoá đơn</label>
+          <input type="text" id="br_series_${b.id}" value="${esc(b.misa_inv_series||'')}" list="br_series_list_${b.id}" class="w-full text-sm" placeholder="Bấm Kiểm tra để tải ký hiệu" onchange="pickSeries(${b.id})">
+          <datalist id="br_series_list_${b.id}"></datalist></div>
+        <div><label class="text-xs text-gray-500">Thuế suất trên hoá đơn</label>
+          <select id="br_vat_${b.id}" class="w-full text-sm">${VATS.map(v=>`<option ${v===(b.misa_vat||'KCT')?'selected':''}>${v}</option>`).join('')}</select></div>
       </div>
-      <div class="flex justify-between items-center mt-2">
-        <span class="text-xs ${b.misa_app_id && b.misa_access_token ? 'text-green-600' : 'text-gray-400'}">${b.misa_app_id && b.misa_access_token ? '✅ Đã cài MISA' : 'Chưa cài MISA: không tự xuất HĐ'}</span>
+      <div class="flex flex-wrap gap-x-4 gap-y-1 mt-2 text-sm">
+        <label class="flex items-center gap-2"><input type="checkbox" id="br_sum_${b.id}" ${b.misa_summary?'checked':''}> Gửi theo bảng tổng hợp</label>
+        <label class="flex items-center gap-2 font-medium"><input type="checkbox" id="br_auto_${b.id}" ${b.misa_auto?'checked':''}> Tự xuất HĐ khi đơn Ship thành công</label>
+      </div>
+      <div id="br_state_${b.id}" class="text-xs mt-2 ${du ? 'text-green-600' : 'text-gray-400'}">${du ? `✅ Đã cài MISA${b.misa_token_at ? ' · kết nối được lúc ' + fmtDate(b.misa_token_at) : ''}${b.misa_auto ? '' : ' · chưa bật tự xuất (vẫn bấm Xuất HĐ tay được)'}` : 'Chưa cài đủ MISA: cần MST, tài khoản, mật khẩu, ký hiệu'}</div>
+      <div class="flex flex-wrap justify-end gap-2 mt-2">
+        <button onclick="testMisa(${b.id}, this)" class="bg-gray-100 px-3 py-1 rounded text-sm">🔌 Kiểm tra &amp; tải ký hiệu</button>
         <button onclick="saveBranch(${b.id})" class="bg-blue-600 text-white px-3 py-1 rounded text-sm">💾 Lưu chi nhánh</button>
       </div>
-    </div>`).join('') || '<div class="text-sm text-gray-400">Chưa đọc được danh sách chi nhánh</div>';
+    </div>`; }).join('') || '<div class="text-sm text-gray-400">Chưa đọc được danh sách chi nhánh</div>';
+  loadMisaApp();
+}
+let MISA_TPL = {};
+async function loadMisaApp(){
+  try {
+    const d = await (await fetch(API + '/misa/config')).json();
+    document.getElementById('misaClientId').value = d.client_id || '';
+    document.getElementById('misaClientSecret').placeholder = d.co_secret ? 'Đã lưu — để trống = giữ' : '';
+    document.getElementById('misaAppState').textContent = d.client_id && d.co_secret ? '✅ Đã có Client ID / Secret' : (d.env ? 'Đang dùng MISA_CLIENT_ID trong .env' : 'Chưa nhập');
+  } catch(e) {}
+}
+async function saveMisaApp(){
+  const body = { client_id: document.getElementById('misaClientId').value.trim() };
+  const sec = document.getElementById('misaClientSecret').value.trim(); if (sec) body.client_secret = sec;
+  const r = await fetch(API + '/misa/config', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify(body) });
+  const d = await r.json().catch(()=>({}));
+  document.getElementById('misaClientSecret').value = '';
+  if (d.ok) { alert('✅ Đã lưu ứng dụng MISA'); loadMisaApp(); } else alert('❌ ' + (d.error||'Lỗi'));
+}
+async function testMisa(id, btn){
+  btn.disabled = true; const t = btn.textContent; btn.textContent = '⏳ Đang kết nối…';
+  const st = document.getElementById('br_state_' + id);
+  try {
+    const r = await fetch(API + '/misa/test', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ cn: id }) });
+    const d = await r.json().catch(()=>({}));
+    if (!r.ok) { st.className = 'text-xs mt-2 text-red-600'; st.textContent = '❌ ' + (d.error || 'Lỗi'); return; }
+    MISA_TPL[id] = d.templates || [];
+    const act = MISA_TPL[id].filter(x => !x.Inactive);
+    document.getElementById('br_series_list_' + id).innerHTML = act.map(x => `<option value="${esc(x.InvSeries)}">${esc(x.TemplateName||'')}${x.IsSendSummary?' · bảng tổng hợp':''}</option>`).join('');
+    st.className = 'text-xs mt-2 text-green-600';
+    st.textContent = `✅ Kết nối được MISA. Ký hiệu đang dùng: ${act.map(x=>x.InvSeries).join(', ') || '(không có)'}` + (act.length ? ' — chọn ở ô Ký hiệu rồi bấm Lưu' : '');
+    const cur = document.getElementById('br_series_' + id);
+    if (!cur.value && act.length === 1) { cur.value = act[0].InvSeries; pickSeries(id); }
+  } finally { btn.disabled = false; btn.textContent = t; }
+}
+// Chọn ký hiệu → tự đánh dấu "bảng tổng hợp" theo mẫu MISA
+function pickSeries(id){
+  const v = document.getElementById('br_series_' + id).value.trim();
+  const tpl = (MISA_TPL[id] || []).find(x => x.InvSeries === v);
+  if (tpl) document.getElementById('br_sum_' + id).checked = !!tpl.IsSendSummary;
 }
 async function saveBranch(id){
   const v = k => document.getElementById(`br_${k}_${id}`).value.trim();
-  const body = { ten: v('ten'), ma_so_thue: v('mst'), misa_app_id: v('app'), misa_access_token: v('tok') };
+  const body = { ten: v('ten'), ma_so_thue: v('mst'), misa_username: v('user'), misa_inv_series: v('series'), misa_vat: v('vat'),
+    misa_summary: document.getElementById(`br_sum_${id}`).checked, misa_auto: document.getElementById(`br_auto_${id}`).checked };
+  const pass = document.getElementById(`br_pass_${id}`).value; if (pass) body.misa_password = pass;
+  if (body.misa_auto && !confirm('Bật tự xuất HĐ cho chi nhánh này? Nếu chi nhánh đang xuất HĐ qua Sandbox sẽ bị xuất trùng.')) return;
   if (!body.ten) return alert('❌ Tên chi nhánh trống');
   const r = await fetch(API + '/branches/' + id, { method:'PUT', headers:{'Content-Type':'application/json'}, body: JSON.stringify(body) });
   const d = await r.json().catch(() => ({}));
@@ -2283,6 +2352,25 @@ async function whKetQuaTC(id, kq){
   if (!r.ok) return alert('❌ ' + (d.error||'Lỗi'));
   loadWhView();
 }
+// ---- Xuất hoá đơn MISA ----
+async function whXuatHd(ids, btn){
+  if (btn) { btn.disabled = true; btn.textContent = '⏳ Đang xuất…'; }
+  try {
+    const r = await fetch(API+'/misa/publish',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({ids})});
+    const d = await r.json().catch(()=>({}));
+    if (!r.ok) return alert('❌ ' + (d.error||'Lỗi'));
+    const ok = (d.results||[]).filter(x=>x.ok), fail = (d.results||[]).filter(x=>!x.ok);
+    alert(`🧾 Xuất HĐ: ${ok.length}/${ids.length} đơn` + (ok.length ? '\n' + ok.map(x=>`#${x.id} → số ${x.so_hd||'(chờ cấp số)'}`).join('\n') : '')
+      + (fail.length ? '\n\n❌ Lỗi:\n' + fail.map(f=>`#${f.id}: ${f.error}`).join('\n') : ''));
+  } finally { loadWhView(); }
+}
+function whBulkXuatHd(){
+  const ids = getWhSelectedIds().filter(id=>{const o=whOrders.find(x=>x.id===id); return o && o.trang_thai==='Ship thành công' && Number(o.da_xuat_hd)!==1;});
+  if (!ids.length) return alert('Chọn đơn Ship thành công chưa có hoá đơn');
+  if (ids.length > 30) return alert('Tối đa 30 đơn mỗi lần (giới hạn của MISA)');
+  if (!confirm(`Xuất hoá đơn điện tử MISA cho ${ids.length} đơn? Mỗi đơn mất khoảng 3–5 giây (MISA yêu cầu phát hành lần lượt).`)) return;
+  whXuatHd(ids);
+}
 async function whNhanHoan(id){
   const o=whOrders.find(x=>x.id===id);
   const ly=prompt(`Đã nhận lại hàng hoàn đơn #${id}.\nLý do hoàn / tình trạng hàng:`, o?.ly_do_hoan||o?.trang_thai_vc||'');
@@ -2327,6 +2415,10 @@ async function loadWhView() {
   document.getElementById('whStatDoiSoat').textContent = chuaDS.length;
   document.getElementById('whCodChua').textContent = fmt(chuaDS.reduce((s,o)=>s+(Number(o.tong_tien)||0),0));
   document.getElementById('whStatHoan').textContent = whOrders.filter(o=>o.trang_thai==='Hoàn thành công' && !o.da_nhan_hoan).length;
+  const chuaHd = whOrders.filter(o=>o.trang_thai==='Ship thành công' && Number(o.da_xuat_hd)!==1);
+  document.getElementById('whStatChuaHd').textContent = chuaHd.length;
+  const nLoi = chuaHd.filter(o=>o.misa_loi).length;
+  document.getElementById('whHdLoi').textContent = nLoi ? `· ${nLoi} lỗi` : '';
 
   // Đếm theo trang_thai_vc
   const vcCounts = {};
@@ -2361,6 +2453,7 @@ async function loadWhView() {
   if (whSpecial === 'quahan') filtered = filtered.filter(whQuaHan);
   if (whSpecial === 'doisoat') filtered = filtered.filter(o => o.trang_thai==='Ship thành công' && !o.da_doi_soat);
   if (whSpecial === 'hoan') filtered = filtered.filter(o => o.trang_thai==='Hoàn thành công' && !o.da_nhan_hoan);
+  if (whSpecial === 'chuahd') filtered = filtered.filter(o => o.trang_thai==='Ship thành công' && Number(o.da_xuat_hd)!==1);
 
   if(!filtered.length){ document.getElementById('whOrderGrid').innerHTML='<div class="col-span-2 text-center text-gray-400 py-8">Không có đơn nào</div>'; return; }
 
@@ -2436,6 +2529,13 @@ function whOpsLine(o){
     b.push(o.da_doi_soat
       ? `<span class="px-1.5 py-0.5 rounded bg-emerald-50 text-emerald-700">💰 Đã đối soát${o.phi_vc_dv?` · phí VC ${fmt(o.phi_vc_dv)}`:''}${o.phi_hoan?` · phí hoàn ${fmt(o.phi_hoan)}`:''}</span> <button onclick="if(confirm('Bỏ đối soát đơn #${o.id}?'))whDoiSoat([${o.id}],{bo:true})" class="text-gray-400 hover:underline">bỏ</button>`
       : `<button onclick="whDoiSoatOne(${o.id})" class="px-2 py-0.5 rounded bg-emerald-600 text-white">💰 Đối soát</button>${o.phi_vc_dv?` <span class="text-gray-500">phí VC ${fmt(o.phi_vc_dv)}</span>`:''}`);
+  }
+  // Hoá đơn điện tử MISA
+  if(o.trang_thai==='Ship thành công'){
+    const hd = Number(o.da_xuat_hd);
+    if (hd===1) b.push(`<span class="px-1.5 py-0.5 rounded bg-sky-50 text-sky-700" title="Mã tra cứu ${esc(o.misa_invoice_id||'')}">🧾 HĐ ${esc(o.hd_series||'')} ${esc(o.so_hd||'')}</span>`);
+    else if (hd===2) b.push('<span class="px-1.5 py-0.5 rounded bg-gray-100 text-gray-600">⏳ Đang xuất HĐ…</span>');
+    else b.push(`<button onclick="whXuatHd([${o.id}], this)" class="px-2 py-0.5 rounded bg-sky-600 text-white">🧾 ${o.misa_loi?'Xuất HĐ lại':'Xuất HĐ'}</button>${o.misa_loi?` <span class="text-red-600" title="${esc(o.misa_loi)}">⚠ ${esc(o.misa_loi.slice(0,80))}</span>`:''}`);
   }
   if(o.trang_thai==='Hoàn thành công'){
     b.push(o.da_nhan_hoan
