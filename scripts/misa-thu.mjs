@@ -28,7 +28,9 @@ for (const withCode of [false, true]) {
   catch (e) { console.log('templates withCode=' + withCode, '→', e.message); }
 }
 console.log('Ký hiệu:', tpls.map(t => `${t.InvSeries}${t.Inactive ? '(ngừng)' : ''}${t.IsSendSummary ? '(bảng TH)' : ''} ${t.TemplateName || ''}`).join(' | ') || '(không có)');
-const pickT = tpls.find(t => !t.Inactive && t.InvSeries?.[0] === '2') || tpls.find(t => !t.Inactive);
+// --ky-hieu=2C26TYY để chọn ký hiệu; mặc định ký hiệu hoá đơn bán hàng đầu tiên
+const want = (process.argv.find(a => a.startsWith('--ky-hieu=')) || '').split('=')[1];
+const pickT = (want && tpls.find(t => t.InvSeries === want)) || tpls.find(t => !t.Inactive && t.InvSeries?.[0] === '2') || tpls.find(t => !t.Inactive);
 if (!pickT) process.exit(0);
 
 const info = seriesInfo(pickT.InvSeries);

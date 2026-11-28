@@ -52,6 +52,13 @@ mật khẩu meInvoice của từng hộ** (HKD TD, HKD Thắng…).
 - Chưa rõ với hộ kinh doanh: ký hiệu / `VATRateName` / `TaxRateInfo` dùng giá trị nào → lấy từ `/invoice/templates`
   của tài khoản thật và thử bằng tài khoản kiểm thử trước.
 
+## Đã kiểm chứng (28/11/2026, tài khoản kiểm thử MISA)
+- `/invoice/token` + `/invoice/templates` chạy; tài khoản thử có các ký hiệu 1C/1K (GTGT), 2C26MYT (bán hàng MTT), 2C26TYY (bán hàng thường), 6C (PXK).
+- `/invoice/publishing` thành công với 2C26MYT (SignType 5), 2C26TYY (SignType 2), 1C26TYY thuế 8%; `InvTemplateNo` = ký tự đầu ký hiệu.
+  Kết quả: `[{ RefID, TransactionID, InvTemplateNo, InvSeries, InvNo, InvCode, InvDate, ErrorCode: "", DescriptionErrorCode: "" }]`.
+- Gửi lại cùng RefID → `ErrorCode: DuplicateInvoiceRefID` (kèm `InvNo` của hoá đơn đã có).
+- `/invoice/status?inputType=2` với body `[RefID]` trả hoá đơn (`TransactionID, InvNo, PublishStatus 1, InvoiceCode, SendTaxStatus…`).
+
 ## Tra cứu
 - `POST /invoice/status?inputType=1|2&invoiceWithCode=…&invoiceCalcu=…` body `["TransactionID…"]` (1 = TransactionID, 2 = RefID).
   `Data[]`: `TransactionID, PublishStatus, InvoiceCode, SendTaxStatus, IsDelete, …`. Đang xử lý → hỏi lại sau 3–5 giây, tối đa 3 lần.
